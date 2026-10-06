@@ -13,9 +13,12 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.rak.impostergame"
     },
     "android": {
+      "package": "com.yourname.impostergame",
+      "versionCode": 1,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
@@ -25,6 +28,15 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "b808483f-b267-46ae-b19a-87e971c51442"
+      }
+    },
+    "plugins": [
+      "expo-status-bar",
+      "expo-audio"
+    ]
   }
 }
