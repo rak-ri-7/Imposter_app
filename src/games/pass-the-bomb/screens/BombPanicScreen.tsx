@@ -17,7 +17,6 @@ import {
   endGhostWindow,
   passBomb,
   syncBombTimer,
-  getLiarHint,
   forceEndRound,
   placeBet,
   declineBet,
@@ -64,7 +63,6 @@ export default function BombPanicScreen({ group, playerId }: Props) {
   const [timeLeft, setTimeLeft] = useState(5);
   const lastSyncedSecondRef = useRef<number | null>(null);
   const [flashAnim] = useState(new Animated.Value(0));
-  const [liarHint, setLiarHint] = useState("");
   const holderName =
     group.players.find((p) => p.id === gameState.currentHolderId)?.name ??
     "Someone";
@@ -184,32 +182,49 @@ export default function BombPanicScreen({ group, playerId }: Props) {
     return () => clearTimeout(timeout);
   }, [isHost, gameState.ghostWindowEndsAt, gameState.panicStartedAt, group.id]);
 
-  // ── Real 5s panic countdown — only runs once panicStartedAt is set.
-  // Host resolves via resolvePanicOutcome(), which also handles the
-  // betting payout and kicks off a ghost tournament if anyone won. ─────
-  useEffect(() => {
-    if (gameState.ghostWindowEndsAt) return; // still in the ghost window
-    if (!gameState.panicStartedAt) return; // real countdown hasn't begun yet
+  // True only once the real 5s countdown is running (ghost window over).
+  const countdownRunning =
+    !gameState.ghostWindowEndsAt && !!gameState.panicStartedAt;
 
-    Vibration.vibrate([200, 100, 200, 100, 200]);
-    Animated.loop(
+  // ── Flash — every player, one loop for the whole countdown. Keyed on
+  // countdownRunning (not panicStartedAt), so passes during panic don't
+  // stack extra loops on the same value. Stopped on unmount. ───────────
+  useEffect(() => {
+    if (!countdownRunning) return;
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(flashAnim, {
           toValue: 1,
           duration: 300,
-          useNativeDriver: true,
+          useNativeDriver: false, // backgroundColor can't use the native driver
         }),
         Animated.timing(flashAnim, {
           toValue: 0,
           duration: 300,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
       ]),
-    ).start();
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+      flashAnim.setValue(0);
+    };
+  }, [countdownRunning]);
 
-    if (!isHost) return;
+  // ── Buzz — every player, once per countdown start (including the fresh
+  // 5s after each pass). Cancelled if the screen leaves mid-buzz. ──────
+  useEffect(() => {
+    if (!countdownRunning) return;
+    Vibration.vibrate([200, 100, 200, 100, 200]);
+    return () => Vibration.cancel();
+  }, [gameState.panicStartedAt, countdownRunning]);
 
-    const startedAt = gameState.panicStartedAt;
+  // ── Host-only: drive the 5s countdown and resolve when it ends. ───────
+  useEffect(() => {
+    if (!isHost || !countdownRunning) return;
+
+    const startedAt = gameState.panicStartedAt!;
     const remainingMs = Math.max(0, 5000 - (Date.now() - startedAt));
 
     const updateCountdown = () => {
@@ -232,28 +247,12 @@ export default function BombPanicScreen({ group, playerId }: Props) {
       clearInterval(countdown);
       clearTimeout(timeout);
     };
-  }, [
-    gameState.currentHolderId,
-    gameState.ghostWindowEndsAt,
-    gameState.panicStartedAt,
-    isHost,
-    group.id,
-  ]);
+  }, [isHost, countdownRunning, gameState.panicStartedAt, group.id]);
 
   useEffect(() => {
     if (isHost) return;
     setTimeLeft(gameState.timerRemaining);
   }, [gameState.timerRemaining, isHost]);
-
-  useEffect(() => {
-    if (
-      gameState.personalityEffect === "liar" &&
-      isHolder &&
-      gameState.correctWire
-    ) {
-      setLiarHint(getLiarHint(gameState.correctWire));
-    }
-  }, [gameState.currentHolderId, gameState.personalityEffect]);
 
   useEffect(() => {
     if (!gameState.clingy || gameState.clingy.holderId !== playerId) {
@@ -366,13 +365,7 @@ export default function BombPanicScreen({ group, playerId }: Props) {
   };
 
   const showBombInfo = () => {
-    const hasLiarTip =
-      gameState.personalityEffect === "liar" && isHolder && liarHint !== "";
-    Alert.alert(
-      gameState.personalityName,
-      gameState.personalityDescription +
-        (hasLiarTip ? `\n\n🎭 Insider tip: ${liarHint}` : ""),
-    );
+    Alert.alert(gameState.personalityName, gameState.personalityDescription);
   };
 
   const handleForceEnd = () => {
@@ -529,14 +522,6 @@ export default function BombPanicScreen({ group, playerId }: Props) {
             </Text>
           </View>
 
-          {gameState.personalityEffect === "liar" && liarHint !== "" && (
-            <TouchableOpacity onPress={showBombInfo} style={styles.liarChip}>
-              <Text style={styles.liarChipText}>
-                🎭 Insider tip available — tap ℹ️
-              </Text>
-            </TouchableOpacity>
-          )}
-
           {!gameState.panicStartedAt ? (
             <View style={styles.waitingBox}>
               <Text style={styles.waitingText}>Hold tight...</Text>
@@ -631,7 +616,7 @@ export default function BombPanicScreen({ group, playerId }: Props) {
         <View style={styles.watcherBox}>
           {gameState.personalityEffect === "liar" && (
             <Text style={styles.liarWarning}>
-              🎭 This bomb lies. The holder got a tip — it may be wrong!
+              🎭 The lying stops here — these last 5 seconds are real.
             </Text>
           )}
           <Text style={styles.watchingEmoji}>👀</Text>
@@ -761,17 +746,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     lineHeight: 19,
   },
-
-  liarChip: {
-    backgroundColor: "#1A0A2A",
-    borderRadius: 8,
-    padding: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: "#9B59B6",
-    alignItems: "center",
-  },
-  liarChipText: { color: "#9B59B6", fontSize: 11, fontStyle: "italic" },
 
   lockedInBox: {
     flex: 1,

@@ -2,12 +2,15 @@ import { doc, updateDoc, deleteField, getDoc, runTransaction } from 'firebase/fi
 import { db } from '../../../shared/firebase/config';
 import { Group, BombGameState, ActiveQuiz } from '../../../shared/types';
 import { getRandomQuestion, generateQuizInstance } from '../data/quizQuestions';
+import { addScore } from '../../../shared/firebase/groups';
+import { ROUND_WIN_SCORE } from './bombHelpers';
 
 const DUEL_FFF_IDLE_TIMEOUT_MS = 8000; // silent-skip window
 const DUEL_FFF_LOCK_MS = 3000;         // holder lock duration on failure
 const DUEL_FFF_HIDDEN_TIMER_MIN = 25;  // seconds — never shown to players
 const DUEL_FFF_HIDDEN_TIMER_MAX = 45;
 const MAX_PASS_HISTORY = 50;
+const MAX_USED_QUIZ_QUESTIONS = 40;
 
 const getRandomHiddenDuration = () =>
     Math.floor(
@@ -29,11 +32,10 @@ const rollNextQuestion = (usedQuizQuestions: string[]) => {
     return { activeQuiz, usedQuestionId: question.id };
 };
 
-export type DuelFffDecision = 'too-slow' | 'holder-correct' | 'holder-wrong';
+
 
 // ── START (first question of the duel) ────────────────────────────
 export const startDuelFastestFinger = async (group: Group): Promise<void> => {
-    console.log('[startDuelFastestFinger] called');
     const groupRef = doc(db, 'groups', group.id);
     const gameState = group.gameState as BombGameState;
     const { activeQuiz, usedQuestionId } = rollNextQuestion(
@@ -49,18 +51,17 @@ export const startDuelFastestFinger = async (group: Group): Promise<void> => {
             'gameState.usedQuizQuestions': [
                 ...(gameState.usedQuizQuestions ?? []),
                 usedQuestionId,
-            ],
+            ].slice(-MAX_USED_QUIZ_QUESTIONS),
             'gameState.duelFffLockedUntil': deleteField(),
             'gameState.duelFffHolderCanPass': deleteField(),
             'gameState.duelFffLockReason': deleteField(),
-        }); console.log('[startDuelFastestFinger] write succeeded');
-
+        });
     } catch (e) {
-        console.log('[startDuelFastestFinger] WRITE FAILED:', e);
+        console.log('[startDuelFastestFinger] write failed:', e);
     }
-
-
 };
+
+export type DuelFffDecision = 'too-slow' | 'holder-correct' | 'holder-wrong';
 
 export const decideDuelFastestFinger = (
     activeQuiz: ActiveQuiz,
@@ -153,14 +154,13 @@ export const skipIdleDuelQuestion = async (
                 'gameState.usedQuizQuestions': [
                     ...(gameState.usedQuizQuestions ?? []),
                     usedQuestionId,
-                ],
+                ].slice(-MAX_USED_QUIZ_QUESTIONS),
             });
         });
     } catch {
         // transient contention — the host's screen retries shortly
     }
 };
-;
 
 // ── LOCK EXPIRY (host-only) ───────────────────────────────────────
 // A transaction, so several quick calls roll exactly one question: the
@@ -185,7 +185,7 @@ export const continueDuelFastestFinger = async (group: Group): Promise<void> => 
                 'gameState.usedQuizQuestions': [
                     ...(gameState.usedQuizQuestions ?? []),
                     usedQuestionId,
-                ],
+                ].slice(-MAX_USED_QUIZ_QUESTIONS),
                 'gameState.duelFffLockedUntil': deleteField(),
                 'gameState.duelFffLockReason': deleteField(),
                 'gameState.duelFffHolderCanPass': deleteField(),
@@ -239,7 +239,7 @@ export const duelFffManualPass = async (
                 'gameState.usedQuizQuestions': [
                     ...(gameState.usedQuizQuestions ?? []),
                     usedQuestionId,
-                ],
+                ].slice(-MAX_USED_QUIZ_QUESTIONS),
                 'gameState.duelFffHolderCanPass': deleteField(),
                 'gameState.duelFffLockedUntil': deleteField(),
                 'gameState.duelFffLockReason': deleteField(),
@@ -248,7 +248,7 @@ export const duelFffManualPass = async (
     } catch {
         // the holder can simply tap again
     }
-};;
+};
 
 // ── Hidden-timer hint tiers — unchanged from before ────────────────────
 export const getDuelFffHint = (fractionRemaining: number): string => {
@@ -288,7 +288,7 @@ export const startTrialByCombat = async (group: Group): Promise<void> => {
         'gameState.usedQuizQuestions': [
             ...(gameState.usedQuizQuestions ?? []),
             question.id,
-        ],
+        ].slice(-MAX_USED_QUIZ_QUESTIONS),
         'gameState.duelFffLockedUntil': deleteField(),
         'gameState.duelFffHolderCanPass': deleteField(),
         'gameState.duelFffLockReason': deleteField(),
@@ -325,7 +325,7 @@ export const tbcManualPass = async (
                 'gameState.usedQuizQuestions': [
                     ...(gameState.usedQuizQuestions ?? []),
                     usedQuestionId,
-                ],
+                ].slice(-MAX_USED_QUIZ_QUESTIONS),
                 'gameState.duelFffHolderCanPass': deleteField(),
                 'gameState.duelFffLockedUntil': deleteField(),
                 'gameState.duelFffLockReason': deleteField(),
@@ -334,7 +334,7 @@ export const tbcManualPass = async (
     } catch {
         // the holder can simply tap again
     }
-};;
+};
 
 // ── TIMEOUT — hidden timer ran out, whoever's holding the TBC risk
 // loses. This is TBC's equivalent of explodeBomb(), but it must NOT
@@ -379,6 +379,17 @@ export const resolveTbcTimeout = async (group: Group): Promise<void> => {
         'gameState.duelFffHolderCanPass': deleteField(),
         'gameState.duelFffLockReason': deleteField(),
     });
+    // The other combatant wins the duel — leaderboard points, same as a defuse.
+    const challenge = gameState.tbcChallenge;
+    const winnerId =
+        challenge && loserId === challenge.accusedId
+            ? challenge.opponentId
+            : challenge && loserId === challenge.opponentId
+                ? challenge.accusedId
+                : undefined;
+    if (winnerId) {
+        await addScore(group.id, winnerId, ROUND_WIN_SCORE, group.scores);
+    }
 };
 
 // ── CLEANUP — host taps "Back to Replay" from the TBC result screen ───

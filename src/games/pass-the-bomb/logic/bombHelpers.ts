@@ -6,19 +6,20 @@ export const FUSE_POINTS = {
     WIRE_DEFUSED: 15,
     WIRE_EXPLODED_SELF: -5,
     SURVIVED_HOLD_AND_PASSED: 2,
-    DUEL_WIN: 25,
-    DUEL_LOSS: 5,
+    // DUEL_WIN: 25,
+    // DUEL_LOSS: 5,
     LIFE_MISSION: 10,
     NON_LIFE_MISSION: 20,
     CLINGY_WRONG_PASS: -5,
     CALLOUT_VOTED_OUT: -10,
-    CALLOUT_SURVIVED: 5,
+    // CALLOUT_SURVIVED: 5,
     GAME_WIN: 30,
 
 } as const;
 
 export const ROUND_WIN_SCORE = 3;       // defusing, or a ghost reclaiming their life
 export const GAME_WIN_SCORE_BONUS = 15;
+export const RUNNER_UP_SCORE_BONUS = 5;
 
 export const applyLifeGain = (
     updates: Record<string, unknown>,

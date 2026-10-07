@@ -131,6 +131,7 @@ export type PassEvent = {
     to: string;
     timestamp: number;
     instruction: string;
+    boomerang?: boolean
     usedFallback?: boolean;
     fallback?: string; // the fallback text at the time, kept because it gets overwritten on the player's next hold
 
@@ -276,6 +277,9 @@ export type BombGameState = {
     lifePurchases?: Record<string, number>;
     lifeBoughtRound?: Record<string, number>;
     stipendPaidForRound?: number;
+    runnerUpId?: string;
+    scoresAwarded?: boolean;
+
 
 
 

@@ -15,9 +15,9 @@ import {
   passBomb,
   pauseTimer,
   resumeTimer,
-  getLiarHint,
   forceEndRound,
 } from "../logic/game";
+import { liarOffset, liarDisplayedRemaining } from "../logic/liarClock";
 import BombAlleyScreen from "./BombAlleyScreen";
 import MissionsButton from "./MissionsButton";
 
@@ -41,7 +41,6 @@ export default function BombPlayScreen({ group, playerId }: Props) {
   const [instructionSlide, setInstructionSlide] = useState<0 | 1>(0);
   const [pulseAnim] = useState(new Animated.Value(1));
   const [shakeAnim] = useState(new Animated.Value(0));
-  const [liarHint, setLiarHint] = useState<string>("");
 
   const [clingyRemaining, setClingyRemaining] = useState(0);
   const isClingyLocked =
@@ -66,16 +65,6 @@ export default function BombPlayScreen({ group, playerId }: Props) {
     // Reset to the main instruction slide whenever the instruction changes
     setInstructionSlide(0);
   }, [myInstruction]);
-
-  useEffect(() => {
-    if (
-      gameState.personalityEffect === "liar" &&
-      isHolder &&
-      gameState.correctWire
-    ) {
-      setLiarHint(getLiarHint(gameState.correctWire));
-    }
-  }, [gameState.currentHolderId, gameState.personalityEffect]);
 
   useEffect(() => {
     if (!gameState.clingy || gameState.clingy.holderId !== playerId) {
@@ -290,23 +279,39 @@ export default function BombPlayScreen({ group, playerId }: Props) {
   };
 
   const showBombInfo = () => {
-    const hasLiarTip =
-      gameState.personalityEffect === "liar" && isHolder && liarHint !== "";
+    const liarNote =
+      gameState.personalityEffect === "liar" && !canSeeTimer
+        ? "\n\nYour timer is hidden right now, so the lie doesn't reach you."
+        : "";
     Alert.alert(
       gameState.personalityName,
-      gameState.personalityDescription +
-        (hasLiarTip ? `\n\n🎭 Insider tip: ${liarHint}` : ""),
+      gameState.personalityDescription + liarNote,
     );
   };
 
+  // The Liar: what's SHOWN is wrong, re-rolled on every pass. The real timer
+  // (timeLeft) is untouched — only the number on screen changes, and only
+  // for players who can see a timer in the first place.
+  const shownTime =
+    timeLeft !== null && gameState.personalityEffect === "liar"
+      ? liarDisplayedRemaining(
+          timeLeft,
+          liarOffset(gameState.roundNumber, gameState.passHistory.length),
+        )
+      : timeLeft;
+
   const timerLabel =
-    canSeeTimer && timeLeft !== null
-      ? `${Math.ceil(timeLeft)}s`
+    canSeeTimer && shownTime !== null
+      ? `${Math.ceil(shownTime)}s`
       : gameState.timerMode === "off"
         ? "???"
         : myLives === 1
           ? "💀"
           : "???";
+
+  // Boomerang: only offered to someone who has just been handed the bomb.
+  const lastPass = gameState.passHistory[gameState.passHistory.length - 1];
+  const boomerangGiver = lastPass?.to === playerId ? lastPass.from : undefined;
 
   return (
     <View style={styles.container}>
@@ -356,8 +361,8 @@ export default function BombPlayScreen({ group, playerId }: Props) {
             style={[
               styles.statusTimerText,
               canSeeTimer &&
-                timeLeft !== null &&
-                timeLeft <= 10 &&
+                shownTime !== null &&
+                shownTime <= 10 &&
                 styles.statusTimerUrgent,
             ]}
           >
@@ -440,29 +445,23 @@ export default function BombPlayScreen({ group, playerId }: Props) {
           )}
 
           {gameState.personalityEffect === "boomerang" &&
-            !gameState.boomerangUsed[playerId] &&
-            gameState.passHistory.length > 0 && (
+            !gameState.boomerangUsed?.[playerId] &&
+            boomerangGiver && (
               <TouchableOpacity
                 style={[
                   styles.boomerangBtn,
                   isClingyLocked && styles.disabledBtn,
                 ]}
-                onPress={() => {
-                  const lastPasser =
-                    gameState.passHistory[gameState.passHistory.length - 1]
-                      .from;
-                  if (lastPasser) handlePass(lastPasser);
-                }}
+                onPress={() => handlePass(boomerangGiver)}
                 disabled={passing || isClingyLocked}
               >
                 <Text style={styles.boomerangBtnText}>
-                  🪃 Pass back to{" "}
-                  {group.players.find(
-                    (p) =>
-                      p.id ===
-                      gameState.passHistory[gameState.passHistory.length - 1]
-                        ?.from,
-                  )?.name ?? "previous player"}
+                  🪃 Boomerang — send it back to{" "}
+                  {group.players.find((p) => p.id === boomerangGiver)?.name ??
+                    "previous player"}
+                </Text>
+                <Text style={styles.boomerangBtnSub}>
+                  skips your instruction · once only
                 </Text>
               </TouchableOpacity>
             )}
@@ -786,5 +785,11 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontStyle: "italic",
     marginTop: 6,
+  },
+  boomerangBtnSub: {
+    color: "#4CAF50",
+    fontSize: 10,
+    opacity: 0.8,
+    marginTop: 2,
   },
 });

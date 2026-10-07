@@ -10,6 +10,8 @@ import {
 import { Group, BombGameState, BombMission } from "../../../shared/types";
 import { returnToMenu } from "../../../shared/firebase/groups";
 import BombWinnerBetResults from "./BombWinnerBetResults";
+import { standingsOrder } from "../logic/placings";
+import { RUNNER_UP_SCORE_BONUS } from "../logic/bombHelpers";
 
 type Props = {
   group: Group;
@@ -28,11 +30,6 @@ export default function BombResultScreen({ group, playerId }: Props) {
   const winner = activePlayers[0];
   const isWinner = winner?.id === playerId;
 
-  const myMissions = gameState.missions[playerId];
-  const completedMissions = myMissions
-    ? [myMissions.mission1, myMissions.mission2].filter((m) => m.completed)
-    : [];
-
   useEffect(() => {
     Animated.parallel([
       Animated.timing(fadeAnim, {
@@ -48,6 +45,13 @@ export default function BombResultScreen({ group, playerId }: Props) {
       }),
     ]).start();
   }, []);
+
+  const standings = standingsOrder(
+    group.players.map((p) => p.id),
+    winner?.id,
+    gameState.ghostEvents,
+    gameState.lives,
+  ).map((id) => group.players.find((p) => p.id === id)!);
 
   return (
     <View style={styles.container}>
@@ -68,50 +72,53 @@ export default function BombResultScreen({ group, playerId }: Props) {
           {/* Final standings */}
           <Text style={styles.sectionLabel}>FINAL STANDINGS</Text>
           <View style={styles.standingsCard}>
-            {group.players
-              .sort((a, b) => {
-                const aGhost = gameState.ghosts.includes(a.id);
-                const bGhost = gameState.ghosts.includes(b.id);
-                if (!aGhost && bGhost) return -1;
-                if (aGhost && !bGhost) return 1;
-                return (
-                  (gameState.lives[b.id] ?? 0) - (gameState.lives[a.id] ?? 0)
-                );
-              })
-              .map((player, index) => {
-                const isElim = gameState.ghosts.includes(player.id);
-                const lives = gameState.lives[player.id] ?? 0;
-                const isThisWinner = player.id === winner?.id;
-                return (
-                  <View
-                    key={player.id}
-                    style={[
-                      styles.standingRow,
-                      isThisWinner && styles.standingRowWinner,
-                    ]}
-                  >
-                    <Text style={styles.standingRank}>
-                      {isThisWinner ? "🏆" : isElim ? "💀" : `${index + 1}.`}
+            {standings.map((player, index) => {
+              const isElim = gameState.ghosts.includes(player.id);
+              const lives = gameState.lives[player.id] ?? 0;
+              const isThisWinner = player.id === winner?.id;
+              const isRunnerUp = player.id === gameState.runnerUpId;
+              return (
+                <View
+                  key={player.id}
+                  style={[
+                    styles.standingRow,
+                    isThisWinner && styles.standingRowWinner,
+                  ]}
+                >
+                  <Text style={styles.standingRank}>
+                    {isThisWinner
+                      ? "🏆"
+                      : isRunnerUp
+                        ? "🥈"
+                        : isElim
+                          ? "💀"
+                          : `${index + 1}.`}
+                  </Text>
+                  <Text style={styles.standingName}>
+                    {player.name}
+                    {player.id === playerId ? " (you)" : ""}
+                  </Text>
+                  {isRunnerUp && (
+                    <Text style={styles.runnerUpTag}>
+                      +{RUNNER_UP_SCORE_BONUS} pts
                     </Text>
-                    <Text style={styles.standingName}>
-                      {player.name}
-                      {player.id === playerId ? " (you)" : ""}
-                    </Text>
-                    {isElim ? (
-                      <Text style={styles.eliminatedTag}>Eliminated</Text>
-                    ) : (
-                      <View style={styles.livesRow}>
-                        {[1, 2, 3].map((i) => (
-                          <Text key={i} style={styles.heart}>
-                            {i <= lives ? "❤️" : "🖤"}
-                          </Text>
-                        ))}
-                      </View>
-                    )}
-                  </View>
-                );
-              })}
+                  )}
+                  {isElim ? (
+                    <Text style={styles.eliminatedTag}>Eliminated</Text>
+                  ) : (
+                    <View style={styles.livesRow}>
+                      {[1, 2, 3].map((i) => (
+                        <Text key={i} style={styles.heart}>
+                          {i <= lives ? "❤️" : "🖤"}
+                        </Text>
+                      ))}
+                    </View>
+                  )}
+                </View>
+              );
+            })}
           </View>
+          <BombWinnerBetResults group={group} playerId={playerId} />
 
           {/* Mission reveals */}
           <Text style={styles.sectionLabel}>MISSION REVEALS</Text>
@@ -152,7 +159,6 @@ export default function BombResultScreen({ group, playerId }: Props) {
           </View>
         </ScrollView>
       </Animated.View>
-      <BombWinnerBetResults group={group} playerId={playerId} />
 
       {isHost && (
         <TouchableOpacity
@@ -258,4 +264,6 @@ const styles = StyleSheet.create({
   },
   menuBtnText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
   waitingText: { color: "#888", fontSize: 14, textAlign: "center" },
+
+  runnerUpTag: { color: "#C0C0C0", fontSize: 11, fontWeight: "700" },
 });

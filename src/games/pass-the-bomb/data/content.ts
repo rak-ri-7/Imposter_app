@@ -58,7 +58,7 @@ export const bombPersonalities: BombPersonality[] = [
         id: 'liar',
         name: 'THE LIAR',
         emoji: '🎭',
-        description: 'Shows false wire colour hints',
+        description: 'The clock on your screen is lying — by how much, nobody knows',
         effect: 'liar',
     },
     {
@@ -1688,20 +1688,21 @@ export const getRandomInstruction = (
 
 export const getRandomPersonality = (
     usedIds: string[],
-    playerCount: number = 6
+    playerCount: number = 6,
+    timerMode: 'on' | 'off' | 'mixed' = 'on'
 ): BombPersonality => {
     const MIN_PLAYERS_FOR_CHAIN = 6;
 
-    const available = bombPersonalities.filter((p) => {
-        if (usedIds.includes(p.id)) return false;
+    // The Liar only lies about a clock people can see, so it is never dealt
+    // when the host has hidden the timer.
+    const allowed = (p: BombPersonality) => {
         if (p.id === 'chain' && playerCount < MIN_PLAYERS_FOR_CHAIN) return false;
+        if (p.id === 'liar' && timerMode === 'off') return false;
         return true;
-    });
+    };
 
-    const pool = available.length > 0 ? available : bombPersonalities.filter((p) => {
-        if (p.id === 'chain' && playerCount < MIN_PLAYERS_FOR_CHAIN) return false;
-        return true;
-    });
+    const available = bombPersonalities.filter((p) => !usedIds.includes(p.id) && allowed(p));
+    const pool = available.length > 0 ? available : bombPersonalities.filter(allowed);
 
     return pool[Math.floor(Math.random() * pool.length)];
 };

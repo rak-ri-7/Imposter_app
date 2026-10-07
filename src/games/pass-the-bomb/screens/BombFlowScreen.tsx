@@ -27,7 +27,6 @@ import BombDuelFastestFingerScreen from "../screens/BombDuelFastestFingerScreen"
 import BombGhostTournamentScreen from "../screens/BombGhostTournamentScreen";
 import {
   triggerPanic,
-  explodeBomb,
   syncBombTimer,
   endPersonalityReveal,
 } from "../logic/game";
@@ -76,6 +75,47 @@ export default function BombFlowScreen({ navigation, route }: Props) {
   const myMissions = gameState?.missions?.[playerId];
   const { unseen, flashKey, toast, markSeen } = useMissionAlerts(myMissions);
 
+  // One confirmation for both the on-screen button and Android's back
+  // button. The ref stops repeated back presses stacking several alerts.
+  const leaveAlertOpenRef = useRef(false);
+
+  const confirmLeave = () => {
+    if (!group || endingGame || leaveAlertOpenRef.current) return;
+    leaveAlertOpenRef.current = true;
+    Alert.alert(
+      "Leave game?",
+      "This will end Pass the Bomb and return everyone to the Game Menu.",
+      [
+        {
+          text: "Stay",
+          style: "cancel",
+          onPress: () => {
+            leaveAlertOpenRef.current = false;
+          },
+        },
+        {
+          text: "Leave Game",
+          style: "destructive",
+          onPress: async () => {
+            leaveAlertOpenRef.current = false;
+            setEndingGame(true);
+            try {
+              await returnToMenu(group.id);
+            } finally {
+              setEndingGame(false);
+            }
+          },
+        },
+      ],
+      {
+        cancelable: true,
+        onDismiss: () => {
+          leaveAlertOpenRef.current = false;
+        },
+      },
+    );
+  };
+
   useEffect(() => {
     if (showMissions) markSeen();
   }, [showMissions, flashKey]);
@@ -86,10 +126,6 @@ export default function BombFlowScreen({ navigation, route }: Props) {
     flashKey,
     open: () => setShowMissions(true),
   };
-
-  useEffect(() => {
-    if (showMissions) markSeen();
-  }, [showMissions, flashKey]);
 
   useEffect(() => {
     if (group?.currentGame === "menu") {
@@ -103,16 +139,13 @@ export default function BombFlowScreen({ navigation, route }: Props) {
     const backHandler = BackHandler.addEventListener(
       "hardwareBackPress",
       () => {
-        if (!endingGame) {
-          setEndingGame(true);
-          returnToMenu(group.id).finally(() => setEndingGame(false));
-        }
-        return true;
+        confirmLeave();
+        return true; // always handled — never let Android pop the screen silently
       },
     );
 
     return () => backHandler.remove();
-  }, [endingGame, group, playerId]);
+  }, [endingGame, group?.id]);
 
   useEffect(() => {
     if (!isHost || !gameState?.revealEndsAt) return;
@@ -153,11 +186,6 @@ export default function BombFlowScreen({ navigation, route }: Props) {
       if (remaining <= 5 && !panicTriggeredRef.current) {
         panicTriggeredRef.current = true;
         triggerPanic(currentGroup.id);
-      }
-
-      if (remaining <= 0) {
-        clearInterval(timerRef.current);
-        explodeBomb(currentGroup);
       }
     };
 
@@ -243,27 +271,7 @@ export default function BombFlowScreen({ navigation, route }: Props) {
             <TouchableOpacity
               style={styles.backToMenuBtn}
               disabled={endingGame}
-              onPress={() => {
-                Alert.alert(
-                  "Leave game?",
-                  "This will end Pass the Bomb and return everyone to the Game Menu.",
-                  [
-                    { text: "Stay", style: "cancel" },
-                    {
-                      text: "Leave Game",
-                      style: "destructive",
-                      onPress: async () => {
-                        setEndingGame(true);
-                        try {
-                          await returnToMenu(group.id);
-                        } finally {
-                          setEndingGame(false);
-                        }
-                      },
-                    },
-                  ],
-                );
-              }}
+              onPress={confirmLeave}
             >
               <Text style={styles.backToMenuText}>
                 {endingGame ? "Leaving game..." : "← Leave Game"}

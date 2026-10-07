@@ -8,7 +8,7 @@ import {
   Vibration,
 } from "react-native";
 import { Group, BombGameState } from "../../../shared/types";
-import { duelPass, cutWire, getLiarHint } from "../logic/game";
+import { duelPass, cutDuelWire, getLiarHint } from "../logic/game";
 
 type Props = {
   group: Group;
@@ -29,20 +29,9 @@ export default function BombDuelScreen({ group, playerId }: Props) {
   const [acting, setActing] = useState(false);
   const [pulseAnim] = useState(new Animated.Value(1));
   const forcedRef = useRef(false);
-  const [liarHint, setLiarHint] = useState("");
 
   const holdSeconds = gameState.duelHoldSeconds ?? 4;
   const holdStartedAt = gameState.duelHoldStartedAt ?? Date.now();
-
-  useEffect(() => {
-    if (
-      gameState.personalityEffect === "liar" &&
-      isHolder &&
-      gameState.correctWire
-    ) {
-      setLiarHint(getLiarHint(gameState.correctWire));
-    }
-  }, [gameState.currentHolderId, gameState.personalityEffect]);
 
   useEffect(() => {
     Animated.loop(
@@ -73,9 +62,10 @@ export default function BombDuelScreen({ group, playerId }: Props) {
       if (remaining <= 0 && isHolder && !forcedRef.current) {
         forcedRef.current = true;
         const randomWire = Math.random() < 0.5 ? "red" : "blue";
-        cutWire(group, playerId, randomWire);
+        cutDuelWire(group, playerId, randomWire);
       }
     };
+    ``;
 
     tick();
     const interval = setInterval(tick, 100);
@@ -96,7 +86,7 @@ export default function BombDuelScreen({ group, playerId }: Props) {
     if (!isHolder || acting) return;
     setActing(true);
     try {
-      await cutWire(group, playerId, wire);
+      await cutDuelWire(group, playerId, wire);
     } finally {
       setActing(false);
     }
@@ -132,12 +122,6 @@ export default function BombDuelScreen({ group, playerId }: Props) {
 
       {isHolder ? (
         <>
-          {gameState.personalityEffect === "liar" && liarHint !== "" && (
-            <View style={styles.liarHintBox}>
-              <Text style={styles.liarHintText}>🎭 {liarHint}</Text>
-            </View>
-          )}
-
           <TouchableOpacity
             style={styles.passBtn}
             onPress={handlePass}

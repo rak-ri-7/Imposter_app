@@ -13,9 +13,9 @@ import { Group, BombGameState } from "../../../shared/types";
 import { startNextRound, endBombGame, toggleDisputeVote } from "../logic/game";
 import BombAlleyScreen from "./BombAlleyScreen";
 import MissionsButton from "./MissionsButton";
-import { debugStartGhostTournament } from "../logic/ghostTournament";
 import BombBetSheet, { betPickLabel } from "./BombBetSheet";
 import { settleBets } from "../logic/betEngine";
+import { liarOffset } from "../logic/liarClock";
 
 type Props = {
   group: Group;
@@ -47,6 +47,45 @@ export default function BombReplayScreen({ group, playerId }: Props) {
   const openBetCount = (gameState.matchBets ?? []).filter(
     (b) => b.status === "open",
   ).length;
+  const lie = liarOffset(gameState.roundNumber, gameState.passHistory.length);
+  const lieText =
+    lie > 0
+      ? `it showed ${lie}s more than was really left`
+      : `it showed ${-lie}s less than was really left`;
+
+  const getPlayerName = (id: string) =>
+    group.players.find((p) => p.id === id)?.name ?? "Unknown";
+
+  const handleNext = async () => {
+    setLoading(true);
+    try {
+      if (gameOver) {
+        await endBombGame(group);
+      } else {
+        await startNextRound(group);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCallout = async (passIndex: number) => {
+    await toggleDisputeVote(group, passIndex, playerId);
+  };
+
+  const finalInstruction = gameState.explodedPlayerId
+    ? gameState.instructions[gameState.explodedPlayerId]
+    : undefined;
+
+  const funkyCalloutLines = [
+    "Chaos has entered the chat.",
+    "The jury has been summoned.",
+    "Time to pick a side.",
+    "Drama o'clock.",
+    "Someone's about to regret that pass.",
+  ];
+
+  //Effects
   useEffect(() => {
     if (isHost && openBetCount > 0) settleBets(group);
   }, [
@@ -84,14 +123,6 @@ export default function BombReplayScreen({ group, playerId }: Props) {
       ]),
     ).start();
   }, []);
-
-  const funkyCalloutLines = [
-    "Chaos has entered the chat.",
-    "The jury has been summoned.",
-    "Time to pick a side.",
-    "Drama o'clock.",
-    "Someone's about to regret that pass.",
-  ];
 
   useEffect(() => {
     for (const dispute of disputes) {
@@ -132,30 +163,6 @@ export default function BombReplayScreen({ group, playerId }: Props) {
     }
   }, [disputes]);
 
-  const getPlayerName = (id: string) =>
-    group.players.find((p) => p.id === id)?.name ?? "Unknown";
-
-  const handleNext = async () => {
-    setLoading(true);
-    try {
-      if (gameOver) {
-        await endBombGame(group);
-      } else {
-        await startNextRound(group);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCallout = async (passIndex: number) => {
-    await toggleDisputeVote(group, passIndex, playerId);
-  };
-
-  const finalInstruction = gameState.explodedPlayerId
-    ? gameState.instructions[gameState.explodedPlayerId]
-    : undefined;
-
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
@@ -193,6 +200,11 @@ export default function BombReplayScreen({ group, playerId }: Props) {
               Safe wire was:{" "}
               {gameState.correctWire === "red" ? "🔴 RED" : "🔵 BLUE"}
             </Text>
+            {gameState.personalityEffect === "liar" && (
+              <Text style={styles.liarReplayText}>
+                🎭 At the end the clock was lying: {lieText}
+              </Text>
+            )}
           </View>
         </View>
 
@@ -246,7 +258,19 @@ export default function BombReplayScreen({ group, playerId }: Props) {
                       {getPlayerName(event.to)}
                     </Text>
                   </Text>
-                  {event.usedFallback && event.fallback ? (
+                  {event.boomerang ? (
+                    <>
+                      <Text style={styles.journeyBoomerang}>
+                        🪃 BOOMERANG — sent it straight back
+                      </Text>
+                      <Text
+                        style={styles.journeyInstructionSkipped}
+                        numberOfLines={1}
+                      >
+                        Instruction skipped: "{event.instruction}"
+                      </Text>
+                    </>
+                  ) : event.usedFallback && event.fallback ? (
                     <TouchableOpacity
                       activeOpacity={0.7}
                       onPress={() =>
@@ -281,7 +305,11 @@ export default function BombReplayScreen({ group, playerId }: Props) {
                     </Text>
                   )}
 
-                  {guiltyVerdict ? (
+                  {event.boomerang ? (
+                    <Text style={styles.boomerangTag}>
+                      🪃 Fair play — a boomerang can't be called out
+                    </Text>
+                  ) : guiltyVerdict ? (
                     <View style={styles.guiltyTag}>
                       <Text style={styles.guiltyTagText}>
                         🔨 Found guilty — paid the price
@@ -430,16 +458,7 @@ export default function BombReplayScreen({ group, playerId }: Props) {
           })}
         </View>
       </Animated.View>
-      {isHost && (
-        <TouchableOpacity
-          style={styles.debugBtn}
-          onPress={() => debugStartGhostTournament(group)}
-        >
-          <Text style={styles.debugBtnText}>
-            🧪 Test Ghost Challenge (temporary)
-          </Text>
-        </TouchableOpacity>
-      )}
+
       {isHost && (
         <TouchableOpacity
           style={[styles.nextBtn, gameOver && styles.nextBtnEnd]}
@@ -643,10 +662,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
     marginBottom: 2,
   },
-  debugBtn: { padding: 10, alignItems: "center", marginBottom: 8 },
-  debugBtnText: { color: "#555", fontSize: 12 },
 
-  journeyInstructionDim: { opacity: 0.6 },
   journeyFallback: {
     color: "#888",
     fontSize: 11,
@@ -668,4 +684,21 @@ const styles = StyleSheet.create({
   betResultWon: { color: "#4CAF50" },
   betResultLost: { color: "#E63946" },
   betResultMore: { color: "#555", fontSize: 10 },
+
+  journeyBoomerang: { color: "#4DD0E1", fontSize: 12, fontWeight: "700" },
+  journeyInstructionSkipped: {
+    color: "#555",
+    fontSize: 11,
+    fontStyle: "italic",
+    textDecorationLine: "line-through",
+    marginTop: 2,
+  },
+  boomerangTag: { color: "#4DD0E1", fontSize: 11, marginTop: 6 },
+
+  liarReplayText: {
+    color: "#9B59B6",
+    fontSize: 11,
+    marginTop: 2,
+    fontStyle: "italic",
+  },
 });

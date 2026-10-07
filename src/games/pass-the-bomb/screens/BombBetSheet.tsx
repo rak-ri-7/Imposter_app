@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -6,15 +6,17 @@ import {
   StyleSheet,
   ScrollView,
   Alert,
+  Animated,
+  Platform,
 } from "react-native";
 import { Group, BombGameState, BetMarket } from "../../../shared/types";
 import {
   buildMarkets,
   maxStakeFor,
-  MIN_STAKE,
-  BET_CHARGES_PER_TICKET,
   isGameLongMarket,
   winnerBetPoints,
+  MIN_STAKE,
+  BET_CHARGES_PER_TICKET,
 } from "../data/betOdds";
 import { placeMatchBet } from "../logic/betEngine";
 
@@ -31,8 +33,8 @@ export const betPickLabel = (
   players: { id: string; name: string }[],
   viewerId: string,
 ): string => {
-  if (pick === "boom") return "💥 Boom";
-  if (pick === "defuse") return "🧯 Defuse";
+  if (pick === "boom") return "💥 It blows";
+  if (pick === "defuse") return "🧯 It's defused";
   if (pick === "nobody") return "🕊️ Nobody";
   const name = players.find((p) => p.id === pick)?.name ?? "Unknown";
   return pick === viewerId ? `${name} (you)` : name;
@@ -40,41 +42,48 @@ export const betPickLabel = (
 
 const MARKET_INFO: Record<BetMarket, { title: string; blurb: string }> = {
   "boom-or-defuse": {
-    title: "💥 Boom or defuse?",
-    blurb: "Next round: does the bomb explode, or does someone defuse it?",
+    title: "💥 BOOM OR DEFUSE?",
+    blurb: "Next round. Either the bomb goes off, or somebody keeps it quiet.",
   },
   "round-victim": {
-    title: "🎯 Who loses a life?",
-    blurb: "Next round: who gets blown up — or does nobody?",
+    title: "🎯 WHO LOSES A LIFE?",
+    blurb: "Next round. Who takes the hit — or does everybody walk?",
   },
   "first-ghost": {
-    title: "👻 First ghost",
-    blurb:
-      "Who will be the first player to run out of lives? Stays open until it happens.",
+    title: "👻 FIRST GHOST",
+    blurb: "Who runs out of lives first? Stays live till it happens.",
   },
   "next-ghost": {
-    title: "👻 Next ghost",
-    blurb:
-      "Who will be the next player to run out of lives? Stays open until it happens.",
+    title: "👻 NEXT GHOST",
+    blurb: "Who goes down next? Stays live till it happens.",
   },
   "game-winner": {
-    title: "🏆 Who wins the game?",
+    title: "🏆 WHO WINS THE GAME?",
     blurb:
-      "Settles when the game ends and pays leaderboard points, not FP. Your stake stays locked until then. One bet per game.",
+      "Last one standing. Pays leaderboard points, not FP. Your stake's locked till the end. One bet a game.",
   },
 };
 
 const FAIL_MESSAGES: Record<string, string> = {
-  "between-rounds-only": "Bets can only be placed between rounds.",
-  "market-closed": "That market is closed right now.",
-  "option-unavailable": "That pick isn't available any more.",
-  "stake-too-low": `The minimum stake is ${MIN_STAKE} FP.`,
-  "not-enough-fp": "You don't have enough Fuse Points for that stake.",
-  "stake-too-high": "That stake is over the limit for this bet.",
-  "already-bet": "You already have a bet on this.",
-  "no-ticket":
-    "You need a Betting Ticket. Your first one is free in the Alley.",
+  "between-rounds-only": "Action only goes down between rounds.",
+  "market-closed": "That table's closed.",
+  "option-unavailable": "That pick's gone. Try another.",
+  "stake-too-low": `Minimum's ${MIN_STAKE} FP. Don't waste my time.`,
+  "not-enough-fp": "You're light on FP, friend.",
+  "stake-too-high": "That's more than the house will cover.",
+  "already-bet": "You've already got money on that.",
+  "no-ticket": "No pass, no seat. Your first one's free at the Alley.",
 };
+
+const TAGLINES = [
+  "Cash only. No names. No refunds.",
+  "What's said in here stays in here.",
+  "The house doesn't lose. You might.",
+  "Walk in with a plan. Walk out with a story.",
+  "Everybody's watching. Nobody's talking.",
+];
+
+const MONO = Platform.select({ ios: "Courier", android: "monospace" });
 
 export default function BombBetSheet({
   group,
@@ -89,6 +98,41 @@ export default function BombBetSheet({
   } | null>(null);
   const [stake, setStake] = useState(MIN_STAKE);
   const [busy, setBusy] = useState(false);
+  const [tagline] = useState(
+    () => TAGLINES[Math.floor(Math.random() * TAGLINES.length)],
+  );
+
+  // The sign over the door doesn't quite work.
+  const flicker = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.delay(2200),
+        Animated.timing(flicker, {
+          toValue: 0.3,
+          duration: 70,
+          useNativeDriver: true,
+        }),
+        Animated.timing(flicker, {
+          toValue: 1,
+          duration: 90,
+          useNativeDriver: true,
+        }),
+        Animated.timing(flicker, {
+          toValue: 0.55,
+          duration: 60,
+          useNativeDriver: true,
+        }),
+        Animated.timing(flicker, {
+          toValue: 1,
+          duration: 120,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
 
   const activeIds = group.players
     .map((p) => p.id)
@@ -151,9 +195,9 @@ export default function BombBetSheet({
       if (result.success) setSelection(null);
       else
         Alert.alert(
-          "Bet not placed",
+          "House says no",
           FAIL_MESSAGES[result.reason ?? ""] ??
-            "Something went wrong — try again.",
+            "Something went sideways — try again.",
         );
     } finally {
       setBusy(false);
@@ -162,22 +206,34 @@ export default function BombBetSheet({
 
   const ticketLine =
     charges > 0
-      ? `${charges} bet${charges === 1 ? "" : "s"} left on your ticket${tickets > 0 ? ` · ${tickets} more ticket${tickets === 1 ? "" : "s"}` : ""}`
+      ? `${charges} bet${charges === 1 ? "" : "s"} left on your pass${tickets > 0 ? ` · ${tickets} spare` : ""}`
       : tickets > 0
-        ? `Your next bet opens a ticket (${BET_CHARGES_PER_TICKET} bets) · ${tickets} in hand`
-        : "No Betting Ticket";
+        ? `Next bet burns a pass (${BET_CHARGES_PER_TICKET} bets) · ${tickets} in hand`
+        : "No pass. No seat.";
+
+  const profitNow = Math.floor(stakeNow * (multiplier ?? 1) + 1e-9) - stakeNow;
 
   return (
     <View style={styles.container}>
+      {/* the bulb over the door */}
+      <View pointerEvents="none" style={styles.glow} />
+
       <View style={styles.header}>
-        <Text style={styles.title}>🎲 PLACE YOUR BETS</Text>
+        <View style={styles.headerText}>
+          <Animated.Text style={[styles.title, { opacity: flicker }]}>
+            THE BACK ROOM
+          </Animated.Text>
+          <Text style={styles.tagline}>{tagline}</Text>
+        </View>
         <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
           <Text style={styles.closeBtnText}>✕</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={styles.balanceBox}>
-        <Text style={styles.balanceValue}>⚡ {fp} FP</Text>
+      <View style={styles.stashBox}>
+        <Text style={styles.stamp}>NO REFUNDS</Text>
+        <Text style={styles.stashLabel}>YOUR STASH</Text>
+        <Text style={styles.stashValue}>⚡ {fp} FP</Text>
         <Text style={[styles.ticketLine, !canBet && styles.ticketLineWarn]}>
           🎟️ {ticketLine}
         </Text>
@@ -186,8 +242,8 @@ export default function BombBetSheet({
       {!canBet && (
         <TouchableOpacity style={styles.noTicketCard} onPress={onOpenAlley}>
           <Text style={styles.noTicketText}>
-            You need a Betting Ticket to bet. Your first one is free — tap to
-            open the Alley.
+            No pass, no entry. Your first one's free — the Alley's got it. Tap
+            to head over.
           </Text>
         </TouchableOpacity>
       )}
@@ -204,7 +260,7 @@ export default function BombBetSheet({
                 <Text style={styles.closed}>🔒 {view.closedReason}</Text>
               ) : betAlready ? (
                 <Text style={styles.closed}>
-                  ✓ You already have a bet on this
+                  ✓ You've already got money on this
                 </Text>
               ) : (
                 <View style={styles.optionWrap}>
@@ -250,7 +306,7 @@ export default function BombBetSheet({
 
         {myOpenBets.length > 0 && (
           <View style={styles.marketCard}>
-            <Text style={styles.marketTitle}>Your open bets</Text>
+            <Text style={styles.marketTitle}>🧾 YOUR ACTION</Text>
             {myOpenBets.map((b) => (
               <Text key={b.id} style={styles.openBet}>
                 {MARKET_INFO[b.market].title} —{" "}
@@ -261,45 +317,47 @@ export default function BombBetSheet({
           </View>
         )}
         <Text style={styles.fineprint}>
-          Odds are worked out from everyone's lives and lock when you bet.
-          Bigger groups allow bigger bets. Betting on yourself to lose pays
-          almost nothing. A wrong guess only costs your stake.
+          Odds move with everyone's lives and lock the second you bet. Back
+          yourself to go down and they'll pay you peanuts. Guess wrong and all
+          you lose is the stake.
         </Text>
       </ScrollView>
 
       {selection && selectedOption && (
-        <View style={styles.stakePanel}>
-          <Text style={styles.stakePick}>
+        <View style={styles.slip}>
+          <Text style={styles.slipLabel}>THE SLIP</Text>
+          <Text style={styles.slipPick}>
             {MARKET_INFO[selection.market].title} ·{" "}
             {betPickLabel(selection.pick, group.players, playerId)}
           </Text>
           {canPlace ? (
             <>
-              <View style={styles.stakeRow}>
+              <View style={styles.chipRow}>
                 <TouchableOpacity
-                  style={styles.stepBtn}
+                  style={styles.chip}
                   onPress={() => setStake(Math.max(MIN_STAKE, stakeNow - 5))}
                 >
-                  <Text style={styles.stepText}>−5</Text>
+                  <Text style={styles.chipText}>−5</Text>
                 </TouchableOpacity>
-                <Text style={styles.stakeValue}>{stakeNow} FP</Text>
+                <Text style={styles.slipStake}>{stakeNow} FP</Text>
                 <TouchableOpacity
-                  style={styles.stepBtn}
+                  style={styles.chip}
                   onPress={() => setStake(Math.min(limit, stakeNow + 5))}
                 >
-                  <Text style={styles.stepText}>+5</Text>
+                  <Text style={styles.chipText}>+5</Text>
                 </TouchableOpacity>
                 <TouchableOpacity
-                  style={styles.stepBtn}
+                  style={styles.chip}
                   onPress={() => setStake(limit)}
                 >
-                  <Text style={styles.stepText}>MAX {limit}</Text>
+                  <Text style={styles.chipTextSmall}>MAX</Text>
+                  <Text style={styles.chipTextSmall}>{limit}</Text>
                 </TouchableOpacity>
               </View>
               <Text style={styles.winLine}>
                 {selection.market === "game-winner"
-                  ? `Win ${winnerBetPoints(Math.floor(stakeNow * (multiplier ?? 1) + 1e-9) - stakeNow)} leaderboard points if right · ${Math.round(selectedOption.chance * 100)}% chance · ${stakeNow} FP locked until the game ends`
-                  : `Win up to +${Math.floor(stakeNow * (multiplier ?? 1) + 1e-9) - stakeNow} FP · ${Math.round(selectedOption.chance * 100)}% chance`}
+                  ? `Pays ${winnerBetPoints(profitNow)} leaderboard points if you're right · ${Math.round(selectedOption.chance * 100)}% shot · ${stakeNow} FP locked till the end`
+                  : `Pays up to +${profitNow} FP · ${Math.round(selectedOption.chance * 100)}% shot`}
               </Text>
               <TouchableOpacity
                 style={[styles.placeBtn, busy && styles.placeBtnBusy]}
@@ -307,13 +365,13 @@ export default function BombBetSheet({
                 disabled={busy}
               >
                 <Text style={styles.placeBtnText}>
-                  {busy ? "Placing..." : `Bet ${stakeNow} FP`}
+                  {busy ? "COUNTING..." : `PUT ${stakeNow} FP DOWN`}
                 </Text>
               </TouchableOpacity>
             </>
           ) : (
             <Text style={styles.closed}>
-              You need at least {MIN_STAKE} FP to bet on this.
+              You need at least {MIN_STAKE} FP to play this one.
             </Text>
           )}
         </View>
@@ -325,136 +383,271 @@ export default function BombBetSheet({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#0D0D0D",
+    backgroundColor: "#12060A",
     padding: 20,
     paddingTop: 50,
+  },
+  glow: {
+    position: "absolute",
+    top: -150,
+    left: "50%",
+    marginLeft: -170,
+    width: 340,
+    height: 340,
+    borderRadius: 170,
+    backgroundColor: "rgba(220,20,60,0.10)",
   },
   header: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
+    alignItems: "flex-start",
+    marginBottom: 14,
   },
+  headerText: { flex: 1, paddingRight: 12 },
   title: {
-    color: "#FFD700",
-    fontSize: 20,
-    fontWeight: "bold",
-    letterSpacing: 1,
+    color: "#FF3B4E",
+    fontSize: 24,
+    fontWeight: "900",
+    letterSpacing: 4,
+    fontFamily: MONO,
+    textShadowColor: "#FF1F3D",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 14,
+  },
+  tagline: {
+    color: "#9A6B72",
+    fontSize: 11,
+    fontStyle: "italic",
+    fontFamily: MONO,
+    marginTop: 4,
   },
   closeBtn: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: "#1A1A1A",
+    backgroundColor: "#1C0A10",
     alignItems: "center",
     justifyContent: "center",
+    borderWidth: 1,
+    borderColor: "#5A2A38",
   },
-  closeBtnText: { color: "#888", fontSize: 16 },
-  balanceBox: {
-    backgroundColor: "#1A1A1A",
-    borderRadius: 14,
-    padding: 12,
+  closeBtnText: { color: "#9A6B72", fontSize: 16 },
+  stashBox: {
+    backgroundColor: "#1C0A10",
+    borderRadius: 10,
+    padding: 14,
     alignItems: "center",
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: "#FFD700",
+    borderColor: "#5A2A38",
+    borderStyle: "dashed",
   },
-  balanceValue: { color: "#FFD700", fontSize: 24, fontWeight: "bold" },
-  ticketLine: { color: "#4CAF50", fontSize: 12, marginTop: 2 },
-  ticketLineWarn: { color: "#E63946" },
+  stamp: {
+    position: "absolute",
+    top: 8,
+    right: 8,
+    color: "#C1121F",
+    borderColor: "#C1121F",
+    borderWidth: 2,
+    paddingHorizontal: 5,
+    paddingVertical: 1,
+    fontSize: 9,
+    fontWeight: "900",
+    letterSpacing: 2,
+    fontFamily: MONO,
+    transform: [{ rotate: "-8deg" }],
+    opacity: 0.85,
+  },
+  stashLabel: {
+    color: "#9A6B72",
+    fontSize: 10,
+    letterSpacing: 3,
+    fontFamily: MONO,
+  },
+  stashValue: {
+    color: "#39FF88",
+    fontSize: 28,
+    fontWeight: "900",
+    fontFamily: MONO,
+    marginTop: 2,
+    textShadowColor: "#39FF88",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
+  },
+  ticketLine: {
+    color: "#E9C46A",
+    fontSize: 11,
+    marginTop: 4,
+    fontFamily: MONO,
+  },
+  ticketLineWarn: { color: "#FF3B4E" },
   noTicketCard: {
-    backgroundColor: "#2D0A0E",
-    borderRadius: 12,
+    backgroundColor: "#2A0C12",
+    borderRadius: 10,
     padding: 12,
     marginBottom: 10,
     borderWidth: 1,
-    borderColor: "#E63946",
+    borderColor: "#C1121F",
   },
-  noTicketText: { color: "#fff", fontSize: 12, textAlign: "center" },
+  noTicketText: {
+    color: "#F2DADA",
+    fontSize: 12,
+    textAlign: "center",
+    fontFamily: MONO,
+  },
   list: { flex: 1 },
   marketCard: {
-    backgroundColor: "#1A1A1A",
-    borderRadius: 14,
+    backgroundColor: "#1C0A10",
+    borderRadius: 10,
     padding: 14,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#333",
+    borderColor: "#3A1420",
+    borderLeftWidth: 4,
+    borderLeftColor: "#C1121F",
   },
-  marketTitle: { color: "#fff", fontSize: 15, fontWeight: "700" },
-  marketBlurb: { color: "#888", fontSize: 11, marginTop: 2, marginBottom: 10 },
-  closed: { color: "#888", fontSize: 12, fontStyle: "italic" },
+  marketTitle: {
+    color: "#F5E6E8",
+    fontSize: 14,
+    fontWeight: "900",
+    letterSpacing: 1,
+    fontFamily: MONO,
+  },
+  marketBlurb: {
+    color: "#A07A80",
+    fontSize: 11,
+    marginTop: 3,
+    marginBottom: 10,
+    fontFamily: MONO,
+  },
+  closed: {
+    color: "#A07A80",
+    fontSize: 12,
+    fontStyle: "italic",
+    fontFamily: MONO,
+  },
   optionWrap: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
   option: {
-    backgroundColor: "#2A2A2A",
-    borderRadius: 10,
+    backgroundColor: "#26101A",
+    borderRadius: 4,
     paddingVertical: 8,
     paddingHorizontal: 10,
     borderWidth: 1,
-    borderColor: "#444",
-    minWidth: 96,
+    borderStyle: "dashed",
+    borderColor: "#5A2A38",
+    minWidth: 100,
   },
-  optionChosen: { borderColor: "#FF4500", backgroundColor: "#2A1A1A" },
-  optionDisabled: { opacity: 0.4 },
-  optionName: { color: "#ddd", fontSize: 13, fontWeight: "600" },
-  optionNameChosen: { color: "#FF4500" },
-  optionOdds: { color: "#FFD700", fontSize: 11, marginTop: 2 },
-  openBet: { color: "#aaa", fontSize: 12, marginTop: 6 },
+  optionChosen: {
+    borderColor: "#39FF88",
+    backgroundColor: "#10261C",
+    borderStyle: "solid",
+  },
+  optionDisabled: { opacity: 0.35 },
+  optionName: {
+    color: "#F2DADA",
+    fontSize: 13,
+    fontWeight: "700",
+    fontFamily: MONO,
+  },
+  optionNameChosen: { color: "#39FF88" },
+  optionOdds: {
+    color: "#E9C46A",
+    fontSize: 11,
+    marginTop: 3,
+    fontFamily: MONO,
+  },
+  openBet: { color: "#C9A9AE", fontSize: 12, marginTop: 6, fontFamily: MONO },
   fineprint: {
-    color: "#555",
+    color: "#6E4B52",
     fontSize: 10,
     textAlign: "center",
     marginBottom: 12,
+    fontFamily: MONO,
   },
-  stakePanel: {
-    backgroundColor: "#1A1A1A",
+  slip: {
+    backgroundColor: "#1C0A10",
     borderRadius: 14,
     padding: 14,
-    borderWidth: 1,
-    borderColor: "#FF4500",
+    borderWidth: 2,
+    borderColor: "#C1121F",
     marginTop: 6,
   },
-  stakePick: {
-    color: "#fff",
-    fontSize: 13,
+  slipLabel: {
+    color: "#C1121F",
+    fontSize: 10,
+    letterSpacing: 4,
+    fontWeight: "900",
+    textAlign: "center",
+    fontFamily: MONO,
+  },
+  slipPick: {
+    color: "#F5E6E8",
+    fontSize: 12,
     fontWeight: "700",
     textAlign: "center",
+    marginTop: 4,
     marginBottom: 10,
+    fontFamily: MONO,
   },
-  stakeRow: {
+  chipRow: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "center",
     gap: 8,
   },
-  stepBtn: {
-    backgroundColor: "#2A2A2A",
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 12,
-    borderWidth: 1,
-    borderColor: "#444",
+  chip: {
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    borderWidth: 3,
+    borderStyle: "dashed",
+    borderColor: "#E9C46A",
+    backgroundColor: "#26101A",
+    alignItems: "center",
+    justifyContent: "center",
   },
-  stepText: { color: "#fff", fontSize: 13, fontWeight: "700" },
-  stakeValue: {
-    color: "#FFD700",
-    fontSize: 22,
-    fontWeight: "bold",
-    minWidth: 90,
+  chipText: {
+    color: "#E9C46A",
+    fontSize: 15,
+    fontWeight: "900",
+    fontFamily: MONO,
+  },
+  chipTextSmall: {
+    color: "#E9C46A",
+    fontSize: 10,
+    fontWeight: "900",
+    fontFamily: MONO,
+  },
+  slipStake: {
+    color: "#39FF88",
+    fontSize: 24,
+    fontWeight: "900",
+    minWidth: 96,
     textAlign: "center",
+    fontFamily: MONO,
   },
   winLine: {
-    color: "#4CAF50",
-    fontSize: 12,
+    color: "#39FF88",
+    fontSize: 11,
     textAlign: "center",
-    marginTop: 8,
+    marginTop: 10,
+    fontFamily: MONO,
   },
   placeBtn: {
-    backgroundColor: "#FF4500",
-    borderRadius: 12,
+    backgroundColor: "#C1121F",
+    borderRadius: 10,
     padding: 14,
     alignItems: "center",
     marginTop: 10,
+    borderBottomWidth: 4,
+    borderBottomColor: "#7A0B14",
   },
   placeBtnBusy: { opacity: 0.6 },
-  placeBtnText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
+  placeBtnText: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "900",
+    letterSpacing: 2,
+    fontFamily: MONO,
+  },
 });
