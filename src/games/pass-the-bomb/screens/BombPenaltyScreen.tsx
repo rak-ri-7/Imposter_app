@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -14,6 +14,11 @@ import {
   closePenaltyAndReturnToReplay,
   invokeTrialByCombat,
 } from "../logic/game";
+import {
+  playSound,
+  explosionSoundForRound,
+  pickDefuseSound,
+} from "../../../shared/sounds/soundManager";
 
 type Props = {
   group: Group;
@@ -31,30 +36,55 @@ export default function BombPenaltyScreen({ group, playerId }: Props) {
   const [invoking, setInvoking] = useState(false);
   const [showOpponentPicker, setShowOpponentPicker] = useState(false);
   const [flashAnim] = useState(new Animated.Value(0));
+  // Whatever result already existed when this screen mounted (a late or
+  // reconnecting phone) — that one has already been heard, so skip it.
+  const resultAtMountRef = useRef(gameState.penaltyResult);
 
   const resolved = gameState.penaltyResult != null;
   const tbcInProgress = !!gameState.tbcChallenge;
   const myTbcTickets = gameState.tbcTickets?.[playerId] ?? 0;
   const accuserIds = gameState.penaltyAccuserIds ?? [];
 
+  // Red flash + buzz while the accused decides. JS driver because it
+  // animates backgroundColor; stopped as soon as the penalty resolves,
+  // a Trial by Combat starts, or the screen leaves.
   useEffect(() => {
     if (resolved || tbcInProgress) return;
     Vibration.vibrate([150, 80, 150]);
-    Animated.loop(
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(flashAnim, {
           toValue: 1,
           duration: 350,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
         Animated.timing(flashAnim, {
           toValue: 0,
           duration: 350,
-          useNativeDriver: true,
+          useNativeDriver: false,
         }),
       ]),
-    ).start();
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+      flashAnim.setValue(0);
+    };
   }, [resolved, tbcInProgress]);
+
+  // Outcome sound + buzz on every phone, the moment the penalty wire is cut.
+  // Same sounds as a normal round's explosion/defuse.
+  useEffect(() => {
+    if (!gameState.penaltyResult) return;
+    if (gameState.penaltyResult === resultAtMountRef.current) return;
+    if (gameState.penaltyResult === "caught") {
+      Vibration.vibrate(500);
+      playSound(explosionSoundForRound(gameState.roundNumber));
+    } else {
+      Vibration.vibrate(150);
+      playSound(pickDefuseSound());
+    }
+  }, [gameState.penaltyResult]);
 
   const handleCut = async (wire: "red" | "blue") => {
     if (!isAccused || cutting || resolved) return;

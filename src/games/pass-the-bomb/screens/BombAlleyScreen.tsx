@@ -13,6 +13,11 @@ import {
   purchaseBettingTicket,
   purchaseTbcTicket,
   SHOP_PRICES,
+  purchaseWireRevealer,
+  nextRevealerAccuracy,
+  purchaseBombShield,
+  armBombShield,
+  ITEM_PRICES,
 } from "../logic/game";
 import {
   buyLife,
@@ -200,6 +205,43 @@ export default function BombAlleyScreen({ group, playerId, onClose }: Props) {
     }
   };
 
+  // ── Wire Revealer ──────────────────────────────────────────────────
+  const myRevealers = gameState.revealerItems?.[playerId] ?? [];
+  const revealersBought = gameState.revealerPurchases?.[playerId] ?? 0;
+
+  const nextAccuracy = nextRevealerAccuracy(revealersBought);
+
+  // ── Bomb Shield ────────────────────────────────────────────────────
+  const myShields = gameState.shieldItems?.[playerId] ?? 0;
+  const shieldArmed = (gameState.shieldArmed ?? []).includes(playerId);
+  const armBlock: string | null = shieldArmed
+    ? null
+    : gameState.phase !== "replay"
+      ? "Arm it between rounds"
+      : isGhost
+        ? "Ghosts don't need vests"
+        : activeCount <= 2
+          ? "No vests in the final duel"
+          : null;
+
+  const handleArmShield = async () => {
+    if (buying || armBlock || myShields <= 0 || shieldArmed) return;
+    setBuying(true);
+    try {
+      const result = await armBombShield(group, playerId);
+      if (result.success) {
+        Alert.alert(
+          "🛡️ Vest on",
+          "You're covered for the next round. Keep it quiet.",
+        );
+      } else {
+        Alert.alert("Can't strap it on", "Something changed — try again.");
+      }
+    } finally {
+      setBuying(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       {/* the streetlamp */}
@@ -305,6 +347,77 @@ export default function BombAlleyScreen({ group, playerId, onClose }: Props) {
             }
             disabled={buying || !canAffordTbc}
             onPress={() => handleBuy(tbcPrice, purchaseTbcTicket)}
+          />
+        </View>
+
+        <View style={styles.crate}>
+          <View style={styles.crateIcon}>
+            <Text style={styles.crateEmoji}>👁️</Text>
+          </View>
+          <View style={styles.crateInfo}>
+            <Text style={styles.crateName}>THE SNITCH</Text>
+            <Text style={styles.crateSub}>wire revealer</Text>
+            <Text style={styles.crateDesc}>
+              Use it while you're cutting and it whispers which wire is safe.
+              Usually right. Every one you buy is a little less reliable than
+              the last.
+            </Text>
+            <Text style={styles.crateOwned}>
+              In your pocket: {myRevealers.length}
+              {myRevealers.length > 0 ? ` (${myRevealers.join("%, ")}%)` : ""}
+            </Text>
+            <Text style={styles.crateBlocked}>
+              Next one: {nextAccuracy}% sure
+            </Text>
+          </View>
+          <PriceTag
+            price={String(ITEM_PRICES.WIRE_REVEALER)}
+            unit="FP"
+            disabled={buying || !canAfford(ITEM_PRICES.WIRE_REVEALER)}
+            onPress={() =>
+              handleBuy(ITEM_PRICES.WIRE_REVEALER, purchaseWireRevealer)
+            }
+          />
+        </View>
+
+        <View style={styles.crate}>
+          <View style={styles.crateIcon}>
+            <Text style={styles.crateEmoji}>🛡️</Text>
+          </View>
+          <View style={styles.crateInfo}>
+            <Text style={styles.crateName}>KEVLAR VEST</Text>
+            <Text style={styles.crateSub}>bomb shield</Text>
+            <Text style={styles.crateDesc}>
+              Strap it on between rounds. If the bomb blows up in your hands
+              next round, you keep the life. Not holding it when it goes off?
+              Vest's gone anyway. Not allowed in the final duel.
+            </Text>
+            <Text style={styles.crateOwned}>
+              In your pocket: {myShields}
+              {shieldArmed ? " · 🛡️ armed for next round" : ""}
+            </Text>
+            {myShields > 0 && !shieldArmed && (
+              <TouchableOpacity
+                style={[
+                  styles.armBtn,
+                  (!!armBlock || buying) && styles.armBtnDisabled,
+                ]}
+                onPress={handleArmShield}
+                disabled={!!armBlock || buying}
+              >
+                <Text style={styles.armBtnText}>
+                  {armBlock ?? "STRAP IT ON"}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <PriceTag
+            price={String(ITEM_PRICES.BOMB_SHIELD)}
+            unit="FP"
+            disabled={buying || !canAfford(ITEM_PRICES.BOMB_SHIELD)}
+            onPress={() =>
+              handleBuy(ITEM_PRICES.BOMB_SHIELD, purchaseBombShield)
+            }
           />
         </View>
 
@@ -467,5 +580,22 @@ const styles = StyleSheet.create({
     marginTop: 4,
     marginBottom: 20,
     letterSpacing: 2,
+  },
+  armBtn: {
+    marginTop: 8,
+    alignSelf: "flex-start",
+    backgroundColor: "#1F2C3B",
+    borderRadius: 6,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderWidth: 1,
+    borderColor: "#5FD38D",
+  },
+  armBtnDisabled: { opacity: 0.4, borderColor: "#2C3E52" },
+  armBtnText: {
+    color: "#5FD38D",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1.5,
   },
 });

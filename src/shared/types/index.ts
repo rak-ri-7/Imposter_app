@@ -280,10 +280,29 @@ export type BombGameState = {
     stipendPaidForRound?: number;
     runnerUpId?: string;
     scoresAwarded?: boolean;
-    ghostWindowEndedAt?: number;
     pauseResumeAt?: number;
     roundAdvanceClaimed?: number
     ghostRevealEndsAt?: number;
+    revealerItems?: Record<string, number[]>;   // per player: accuracy of each owned revealer, best first
+    revealerPurchases?: Record<string, number>; // per player: how many bought (drives the decay)
+    revealerHints?: Record<string, { wire: 'red' | 'blue'; accuracy: number }>; // used this round
+    shieldItems?: Record<string, number>;       // per player: unarmed shields owned
+    shieldArmed?: string[];                     // armed for the NEXT round
+    roundShields?: string[];                    // active in THIS round
+    shieldAbsorbedPlayerId?: string;            // set when a shield saved someone this round
+    hpTimerStartedAt?: number;
+    hpTimerDuration?: number;
+    hpSpeed?: number;
+    hpMood?: 'neutral' | 'angry' | 'lazy' | 'bored';
+    hpMoodLockUntil?: number;
+    hpHolds?: number[];
+    hpHoldStartedAt?: number;
+    hpPassMode?: 'each' | 'total';
+    hpPassBudget?: number;
+    hpPassCounts?: Record<string, number>;
+    hpTotalPasses?: number;
+    hpLazy?: { from: string; to: string; arrivesAt: number };
+    hpNap?: { from: number; until: number };
 
 
 
@@ -303,8 +322,7 @@ export type BombGameState = {
     holdCounts: Record<string, number>;
 
     // Final duel (2 players remaining)
-    duelHoldSeconds?: number;
-    duelHoldStartedAt?: number;
+
     duelReadyPlayers?: string[];
 
     // Host force-end

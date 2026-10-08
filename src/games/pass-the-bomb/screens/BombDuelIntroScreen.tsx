@@ -17,6 +17,27 @@ type Props = {
   playerId: string;
 };
 
+const DUEL_RULES: Record<string, { title: string; lines: string[] }> = {
+  "hot-potato": {
+    title: "🔥 HOT POTATO",
+    lines: [
+      "✂️ No wires this time. Holding it when it blows? Straight to heaven. 😇",
+      "4–7 passes each or total — you'll find out which. Then you're stuck with it.",
+      "The fuse is hidden, and the bomb hates how you play. Rush it, it gets angry. Hog it, it gets lazy. Bore it, it falls asleep.",
+    ],
+  },
+  "fastest-finger": {
+    title: "⚡ FASTEST FINGER",
+    lines: [
+      "Answer first and answer right to get rid of the bomb. The fuse is hidden.",
+    ],
+  },
+  "hot-seat": {
+    title: "🪑 HOT SEAT",
+    lines: ["Answer under pressure while a hidden fuse burns."],
+  },
+};
+
 export default function BombDuelIntroScreen({ group, playerId }: Props) {
   const gameState = group.gameState as BombGameState;
   const activePlayers = group.players.filter(
@@ -149,9 +170,17 @@ export default function BombDuelIntroScreen({ group, playerId }: Props) {
           ))}
         </View>
 
-        <Text style={styles.rulesText}>
-          Just a friednly reminder. Every pass makes the next hold shorter.
-        </Text>
+        <View style={styles.rulesBox}>
+          <Text style={styles.rulesTitle}>{DUEL_RULES[duelMode]?.title}</Text>
+          {(DUEL_RULES[duelMode]?.lines ?? []).map((line, i) => (
+            <Text
+              key={i}
+              style={[styles.rulesText, i === 0 && styles.rulesTextLead]}
+            >
+              {line}
+            </Text>
+          ))}
+        </View>
 
         {isHost && (
           <View style={styles.modeSelectBox}>
@@ -249,12 +278,10 @@ const styles = StyleSheet.create({
   finalistName: { color: "#fff", fontSize: 16, fontWeight: "600" },
   finalistStatus: { color: "#888", fontSize: 13 },
   rulesText: {
-    color: "#666",
+    color: "#999",
     fontSize: 12,
     textAlign: "center",
     lineHeight: 18,
-    marginBottom: 28,
-    paddingHorizontal: 8,
   },
   readyBtn: {
     backgroundColor: "#FF4500",
@@ -292,4 +319,24 @@ const styles = StyleSheet.create({
   },
   modeBtnActive: { borderColor: "#FF4500", backgroundColor: "#2A1A1A" },
   modeBtnText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+  rulesBox: {
+    width: "100%",
+    backgroundColor: "#161616",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#333",
+    padding: 14,
+    marginBottom: 24,
+    gap: 6,
+  },
+  rulesTitle: {
+    color: "#FFD700",
+    fontSize: 13,
+    fontWeight: "900",
+    letterSpacing: 2,
+    textAlign: "center",
+    marginBottom: 2,
+  },
+
+  rulesTextLead: { color: "#fff", fontSize: 13, fontWeight: "700" },
 });

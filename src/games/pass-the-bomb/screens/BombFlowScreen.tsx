@@ -19,12 +19,12 @@ import BombExplodedScreen from "../screens/BombExplodedScreen";
 import BombReplayScreen from "../screens/BombReplayScreen";
 import BombResultScreen from "../screens/BombResultScreen";
 import BombDuelIntroScreen from "../screens/BombDuelIntroScreen";
-import BombDuelScreen from "../screens/BombDuelScreen";
 import BombPenaltyScreen from "../screens/BombPenaltyScreen";
 import { returnToMenu } from "../../../shared/firebase/groups";
 import BombFastestFingerScreen from "../screens/FastestFingerScreen";
 import BombDuelFastestFingerScreen from "../screens/BombDuelFastestFingerScreen";
 import BombGhostTournamentScreen from "../screens/BombGhostTournamentScreen";
+import BombHotPotatoScreen from "../screens/BombHotPotatoScreen";
 import {
   triggerPanic,
   endPersonalityReveal,
@@ -303,7 +303,7 @@ export default function BombFlowScreen({ navigation, route }: Props) {
       ) : gameState!.duelMode === "hot-seat" ? (
         <BombHotSeatDuelScreen group={group} playerId={playerId} />
       ) : (
-        <BombDuelScreen group={group} playerId={playerId} />
+        <BombHotPotatoScreen group={group} playerId={playerId} />
       );
   } else if (phase === "ghost-tournament") {
     content = <BombGhostTournamentScreen group={group} playerId={playerId} />;

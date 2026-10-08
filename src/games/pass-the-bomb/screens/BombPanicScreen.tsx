@@ -25,6 +25,7 @@ import {
   FAILSAFE_RETRY_MS,
   GHOST_WINDOW_MAX_MS,
   GHOST_WINDOW_MIN_MS,
+  activateWireRevealer,
 } from "../logic/game";
 import {
   playSound,
@@ -42,11 +43,17 @@ type Props = {
 // neutral: nothing on it hints whether a ghost is lurking. Each phone
 // shuffles its own order, so neighbours see different lines.
 const PREP_LINES: { emoji: string; text: string }[] = [
+  { emoji: "🧰", text: "Bribing the bomb squad with samosas" },
+  { emoji: "📖", text: "Finding the manual. It's in Swedish" },
+  { emoji: "💣", text: "Asking the bomb how its day was" },
   { emoji: "✂️", text: "Warming up the pliers" },
   { emoji: "🔢", text: "Counting the wires. Still two. Probably" },
   { emoji: "🧶", text: "Untangling the red from the blue" },
   { emoji: "🐈", text: "Asking the cat to leave the room" },
+  { emoji: "📜", text: "Reading the terms and conditions" },
+  { emoji: "🎬", text: "Rehearsing a slow-motion walk away" },
   { emoji: "📞", text: "Putting the bomb on speakerphone" },
+  { emoji: "🔮", text: "Checking the bomb's horoscope" },
   { emoji: "🧤", text: "Wiping fingerprints off the detonator" },
   { emoji: "🎻", text: "Cueing the dramatic music" },
   { emoji: "🙏", text: "Saying a small prayer to the wire gods" },
@@ -413,7 +420,7 @@ export default function BombPanicScreen({ group, playerId }: Props) {
     setLocking(true);
     try {
       const result = await lockInWire(group, playerId, wire);
-      if (!result.blocked) playSound("wire-lock-in");
+      if (result.locked) playSound("wire-lock-in");
       if (result.blocked) {
         Alert.alert(
           "Still stuck! 🔒",
@@ -490,6 +497,31 @@ export default function BombPanicScreen({ group, playerId }: Props) {
 
   const lockedWire = gameState.wireChoice;
 
+  // ── Wire Revealer ("The Snitch") ──────────────────────────────────
+  const myRevealers = gameState.revealerItems?.[playerId] ?? [];
+  const myHint = gameState.revealerHints?.[playerId];
+  const holderUsedRevealer =
+    !!gameState.revealerHints?.[gameState.currentHolderId];
+  const [revealing, setRevealing] = useState(false);
+
+  const handleReveal = async () => {
+    if (
+      !isHolder ||
+      revealing ||
+      myHint ||
+      lockedWire ||
+      myRevealers.length === 0
+    )
+      return;
+    setRevealing(true);
+    try {
+      const result = await activateWireRevealer(group, playerId);
+      if (result.success) playSound("wire-lock-in"); // swap for a "whisper" sound if you add one
+    } finally {
+      setRevealing(false);
+    }
+  };
+
   // ── Which full-screen overlay (if any) this phone shows before the
   // countdown starts. ─────────────────────────────────────────────────
   type Overlay =
@@ -558,7 +590,12 @@ export default function BombPanicScreen({ group, playerId }: Props) {
               : `${holderName} is deciding...`}
           </Text>
         </View>
-        <Text style={[styles.timer, timeLeft <= 2 && styles.timerUrgent]}>
+        <Text
+          style={[
+            styles.timer,
+            countdownRunning && timeLeft <= 2 && styles.timerUrgent,
+          ]}
+        >
           {countdownRunning ? `${Math.ceil(timeLeft)}s` : "⏳"}
         </Text>
         {isHost && (
@@ -605,6 +642,29 @@ export default function BombPanicScreen({ group, playerId }: Props) {
               </View>
             ) : (
               <>
+                {myHint ? (
+                  <View style={styles.hintBox}>
+                    <Text style={styles.hintText}>
+                      👁 The Snitch says{" "}
+                      {myHint.wire === "red" ? "🔴 RED" : "🔵 BLUE"} ·{" "}
+                      {myHint.accuracy}% sure
+                    </Text>
+                  </View>
+                ) : myRevealers.length > 0 ? (
+                  <TouchableOpacity
+                    style={[
+                      styles.revealBtn,
+                      (revealing || isClingyLocked) && styles.revealBtnDisabled,
+                    ]}
+                    onPress={handleReveal}
+                    disabled={revealing || isClingyLocked}
+                  >
+                    <Text style={styles.revealBtnText}>
+                      👁 Use The Snitch ({myRevealers[0]}%)
+                    </Text>
+                  </TouchableOpacity>
+                ) : null}
+
                 {/* Equal-priority split: pass list left, wires right */}
                 <View style={styles.actionSplit}>
                   <View style={styles.passColumn}>
@@ -649,6 +709,7 @@ export default function BombPanicScreen({ group, playerId }: Props) {
                         style={[
                           styles.wire,
                           styles.wireRed,
+                          myHint?.wire === "red" && styles.wireHinted,
                           isClingyLocked && styles.wireDisabled,
                         ]}
                         onPress={() => handleLockIn("red")}
@@ -662,6 +723,7 @@ export default function BombPanicScreen({ group, playerId }: Props) {
                         style={[
                           styles.wire,
                           styles.wireBlue,
+                          myHint?.wire === "blue" && styles.wireHinted,
                           isClingyLocked && styles.wireDisabled,
                         ]}
                         onPress={() => handleLockIn("blue")}
@@ -687,6 +749,11 @@ export default function BombPanicScreen({ group, playerId }: Props) {
             {gameState.personalityEffect === "liar" && (
               <Text style={styles.liarWarning}>
                 🎭 The lying stops here — these last 5 seconds are real.
+              </Text>
+            )}
+            {holderUsedRevealer && (
+              <Text style={styles.snitchNotice}>
+                👁 {holderName} paid The Snitch for a tip...
               </Text>
             )}
             <Text style={styles.watchingEmoji}>👀</Text>
@@ -1005,4 +1072,33 @@ const styles = StyleSheet.create({
   declineBtn: { marginTop: 16, padding: 10 },
   declineBtnText: { color: "#777", fontSize: 13, fontStyle: "italic" },
   betTimer: { color: "#555", fontSize: 12, fontWeight: "600", marginTop: 8 },
+
+  // ── Wire Revealer ───────────────────────────────────────────────
+  revealBtn: {
+    backgroundColor: "#1A1230",
+    borderWidth: 1,
+    borderColor: "#B388FF",
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+    marginBottom: 8,
+  },
+  revealBtnDisabled: { opacity: 0.4 },
+  revealBtnText: { color: "#B388FF", fontSize: 13, fontWeight: "700" },
+  hintBox: {
+    backgroundColor: "#1A1230",
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 8,
+    alignItems: "center",
+  },
+  hintText: { color: "#E0D4FF", fontSize: 13, fontWeight: "700" },
+  wireHinted: { borderColor: "#FFD700", borderWidth: 5 },
+  snitchNotice: {
+    color: "#B388FF",
+    fontSize: 13,
+    fontStyle: "italic",
+    marginBottom: 12,
+    textAlign: "center",
+  },
 });

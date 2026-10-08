@@ -37,6 +37,9 @@ export default function BombExplodedScreen({ group, playerId }: Props) {
     gameState.explodedPlayerId ?? "",
   );
   const pendingTournament = gameState.pendingGhostTournament;
+  const shieldSaved =
+    !!gameState.shieldAbsorbedPlayerId &&
+    gameState.shieldAbsorbedPlayerId === gameState.explodedPlayerId;
 
   useEffect(() => {
     Vibration.vibrate(500);
@@ -61,7 +64,7 @@ export default function BombExplodedScreen({ group, playerId }: Props) {
   // screen shows. Explosion intensity scales with roundNumber; defuse
   // and ghost-immunity both use the same "survived" sound.
   useEffect(() => {
-    if (gameState.defused || wasImmune) {
+    if (gameState.defused || wasImmune || shieldSaved) {
       playSound(pickDefuseSound());
     } else {
       playSound(explosionSoundForRound(gameState.roundNumber));
@@ -75,7 +78,30 @@ export default function BombExplodedScreen({ group, playerId }: Props) {
           { opacity: fadeAnim, transform: [{ scale: scaleAnim }] },
         ]}
       >
-        {wasImmune ? (
+        {shieldSaved ? (
+          <>
+            <Text style={styles.emoji}>🛡️</Text>
+            <Text style={[styles.title, { color: "#5FD38D" }]}>SHIELD UP!</Text>
+            <Text style={styles.subtitle}>
+              {isMe
+                ? "It blew up in your hands — but the armour took the impact."
+                : `It blew up on ${explodedPlayer?.name} — but they were wearing an armour!`}
+            </Text>
+            {gameState.wireChoice && (
+              <View style={styles.wireReveal}>
+                <Text style={styles.wireRevealLabel}>They cut</Text>
+                <Text style={styles.wireRevealText}>
+                  {gameState.wireChoice === "red" ? "🔴 RED" : "🔵 BLUE"}
+                </Text>
+                <Text style={styles.wireRevealLabel}>
+                  {gameState.correctWire === "red" ? "🔴 RED" : "🔵 BLUE"} was
+                  correct
+                </Text>
+              </View>
+            )}
+            <Text style={styles.immuneDesc}>No life lost.</Text>
+          </>
+        ) : wasImmune ? (
           <>
             <Text style={styles.emoji}>👻</Text>
             <Text style={styles.title}>GHOST IMMUNITY!</Text>
