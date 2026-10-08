@@ -18,14 +18,27 @@ import { isBoomerangPass } from './boomerang';
 import { getRunnerUp } from './placings';
 import { addScore } from '../../../shared/firebase/groups';
 
+
+
 const BOMB_MIN_DURATION = 20;
 const BOMB_MAX_DURATION = 90;
-const PANIC_THRESHOLD = 5;
+export const PANIC_THRESHOLD = 5;
 const DUEL_START_SECONDS = 4;
 const DUEL_SHRINK_FACTOR = 0.87; // ~13% faster each successful pass
 const DUEL_MIN_SECONDS = 1.5;
-const GHOST_WINDOW_MAX_MS = 5000;
-const GHOST_WINDOW_MIN_MS = 3000;
+export const GHOST_WINDOW_MAX_MS = 5000;
+export const GHOST_WINDOW_MIN_MS = 3000;
+
+// Failsafe: non-host phones step in this long after a missed deadline.
+export const FAILSAFE_GRACE_MS = 2000;
+export const FAILSAFE_RETRY_MS = 1000;
+
+// Phone clocks can disagree slightly — server functions allow this much early.
+const CLOCK_TOLERANCE_MS = 500;
+
+const CALM_RESUME_MIN_MS = 2000;
+const CALM_RESUME_MAX_MS = 4000;
+export const GHOST_REVEAL_MS = 3000; // eerie intro, only when a ghost accepted
 
 // ── DOCUMENT-SIZE SAFETY CAPS ────────────────────────────────────
 // Firestore documents cap out at 1MB. passHistory/usedPersonalities/
@@ -59,6 +72,7 @@ const refundActiveBets = (gameState: BombGameState): Record<string, unknown> => 
     const updates: Record<string, unknown> = {
         'gameState.activeBets': {},
         'gameState.ghostWindowEndsAt': deleteField(),
+        'gameState.ghostRevealEndsAt': deleteField(),
     };
     for (const bet of Object.values(gameState.activeBets ?? {})) {
         updates[`gameState.bettingTickets.${bet.ghostId}`] =
@@ -90,6 +104,23 @@ const buildEligibilityContext = (
 
 });
 
+// Only one call per round gets to advance it — protects the payouts that
+// run before the new round is written.
+const claimRoundAdvance = async (groupId: string, roundNumber: number): Promise<boolean> => {
+    const groupRef = doc(db, 'groups', groupId);
+    let claimed = false;
+    await runTransaction(db, async (transaction) => {
+        claimed = false; // a retried attempt must not inherit the last one's result
+        const snap = await transaction.get(groupRef);
+        if (!snap.exists()) return;
+        const gameState = snap.data().gameState as BombGameState;
+        if (gameState.phase !== 'replay') return;
+        if (gameState.roundAdvanceClaimed === roundNumber) return;
+        transaction.update(groupRef, { 'gameState.roundAdvanceClaimed': roundNumber });
+        claimed = true;
+    });
+    return claimed;
+};
 
 
 
@@ -245,7 +276,7 @@ export const startBombGame = async (
         timerMode,
         timerStartedAt: 0,
         timerDuration: duration,
-        timerRemaining: duration,
+
         correctWire: correctWire as 'red' | 'blue',
         personality: personality.id,
         personalityName: personality.name,
@@ -283,6 +314,7 @@ export const startBombGame = async (
         tbcTickets: {},
         freeBettingClaimed: {},
         freeTbcClaimed: {}
+
     };
 
     // Quiz Bomb: fold the very first question directly into this same
@@ -330,6 +362,9 @@ export const passBomb = async (
 
     try {
         await runTransaction(db, async (transaction) => {
+            // A retried attempt must not inherit the last attempt's result.
+            result = { success: false, reason: 'stale' };
+
             const snap = await transaction.get(groupRef);
             if (!snap.exists()) return;
             const gameState = snap.data().gameState as BombGameState;
@@ -338,6 +373,9 @@ export const passBomb = async (
             // Stale tap: the bomb already moved on, or the round already ended.
             if (gameState.currentHolderId !== fromId) return;
             if (['exploded', 'replay', 'result', 'penalty'].includes(gameState.phase)) return;
+            // During panic, passing only opens once the real countdown is running
+            // (not during the ghost window or the ghost reveal).
+            if (gameState.phase === 'panic' && (!gameState.panicStartedAt || gameState.ghostWindowEndsAt)) return;
 
             // Personalities never apply in 2-player duels — plain timer only.
             const isDuel = gameState.phase === 'duel' || gameState.phase === 'duel-intro';
@@ -356,6 +394,8 @@ export const passBomb = async (
                 };
                 return;
             }
+
+            if (gameState.wireChoice) return;
 
             // Validate against the instruction's objective answer, if any
             const instructionId = gameState.instructionIds?.[fromId];
@@ -490,7 +530,7 @@ export const passBomb = async (
                 ],
                 'gameState.chainPassed': newChainPassed,
                 'gameState.timerDuration': newDuration,
-                'gameState.timerRemaining': newDuration,
+
                 'gameState.speedMultiplier': newSpeedMultiplier,
                 'gameState.timerStartedAt': newTimerStartedAt,
                 'gameState.boomerangUsed': personality === 'boomerang'
@@ -506,6 +546,7 @@ export const passBomb = async (
                     [fromId]: (gameState.passCounts?.[fromId] ?? 0) + 1,
 
                 },
+                'gameState.wireChoice': deleteField(),
             };
 
             if (gameState.phase === 'panic') {
@@ -626,6 +667,9 @@ export const cutDuelWire = async (
     let defusedByPlayer = false;
 
     await runTransaction(db, async (transaction) => {
+        // A retried attempt must not inherit the last attempt's result.
+        defusedByPlayer = false;
+
         const snap = await transaction.get(groupRef);
         if (!snap.exists()) return;
         const gameState = snap.data().gameState as BombGameState;
@@ -682,29 +726,33 @@ export const cutDuelWire = async (
 export const triggerPanic = async (groupId: string): Promise<void> => {
     const groupRef = doc(db, 'groups', groupId);
 
-    // A transaction with a phase guard: panic can only start from a live
-    // round, so a late call can never reopen a bomb that already exploded
-    // or restart a panic that's already running.
+    // Phase guard + deadline guard: panic only starts from a live round,
+    // and only once the timer has really reached the threshold. Safe for
+    // any phone to call — early or repeated calls do nothing.
     await runTransaction(db, async (transaction) => {
         const snap = await transaction.get(groupRef);
         if (!snap.exists()) return;
         const gameState = snap.data().gameState as BombGameState;
-        if (gameState.phase !== 'playing') return;
+        if (gameState.phase !== 'playing' || gameState.isPaused) return;
 
         const now = Date.now();
+        const elapsed = ((now - gameState.timerStartedAt) / 1000) * gameState.speedMultiplier;
+        const remaining = gameState.timerDuration - elapsed;
+        if (remaining > PANIC_THRESHOLD + CLOCK_TOLERANCE_MS / 1000) return; // too early
+
         const anyGhostHasTicket = gameState.ghosts.some(
             (id) => (gameState.bettingTickets?.[id] ?? 0) > 0
         );
 
         if (!anyGhostHasTicket) {
-            // Nobody can bet — skip the ghost window and start the real countdown.
             transaction.update(groupRef, {
                 'gameState.phase': 'panic',
                 'gameState.panicStartedAt': now,
                 'gameState.timerStartedAt': now,
                 'gameState.timerDuration': PANIC_THRESHOLD,
-                'gameState.timerRemaining': PANIC_THRESHOLD,
+
                 'gameState.ghostWindowEndsAt': deleteField(),
+                'gameState.ghostRevealEndsAt': deleteField(),
                 'gameState.activeBets': {},
                 'gameState.ghostResponded': [],
             });
@@ -714,6 +762,7 @@ export const triggerPanic = async (groupId: string): Promise<void> => {
         transaction.update(groupRef, {
             'gameState.phase': 'panic',
             'gameState.ghostWindowEndsAt': now + GHOST_WINDOW_MAX_MS,
+            'gameState.ghostRevealEndsAt': deleteField(),
             'gameState.activeBets': {},
             'gameState.ghostResponded': [],
             'gameState.panicStartedAt': deleteField(),
@@ -721,42 +770,84 @@ export const triggerPanic = async (groupId: string): Promise<void> => {
     });
 };
 
+// Ends the ghost window — early (at the floor) once every eligible ghost
+// has responded, otherwise at the full cap. Records when it ended so every
+// phone can time the "gone away" pause that follows.
 export const endGhostWindow = async (groupId: string): Promise<void> => {
     const groupRef = doc(db, 'groups', groupId);
-    await updateDoc(groupRef, {
-        'gameState.ghostWindowEndsAt': deleteField(),
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(groupRef);
+        if (!snap.exists()) return;
+        const gameState = snap.data().gameState as BombGameState;
+        const endsAt = gameState.ghostWindowEndsAt;
+        if (gameState.phase !== 'panic' || !endsAt) return; // already ended
+
+        const now = Date.now();
+        const eligible = gameState.ghosts.filter(
+            (id) => (gameState.bettingTickets?.[id] ?? 0) > 0
+        );
+        const responded = gameState.ghostResponded ?? [];
+        const allResponded = eligible.every((id) => responded.includes(id));
+        const earliest = allResponded
+            ? endsAt - (GHOST_WINDOW_MAX_MS - GHOST_WINDOW_MIN_MS)
+            : endsAt;
+        if (now < earliest - CLOCK_TOLERANCE_MS) return; // too early
+
+        const anyoneBet = Object.keys(gameState.activeBets ?? {}).length > 0;
+
+        if (anyoneBet) {
+            // Stage 2: reveal the ghosts to everyone, for a fixed time.
+            transaction.update(groupRef, {
+                'gameState.ghostWindowEndsAt': deleteField(),
+                'gameState.ghostRevealEndsAt': now + GHOST_REVEAL_MS,
+            });
+        } else {
+            // Nobody accepted: no reveal, straight into the real countdown.
+            transaction.update(groupRef, {
+                'gameState.ghostWindowEndsAt': deleteField(),
+                'gameState.ghostRevealEndsAt': deleteField(),
+                'gameState.panicStartedAt': now,
+                'gameState.timerStartedAt': now,
+                'gameState.timerDuration': PANIC_THRESHOLD,
+            });
+        }
     });
 };
 
-// Called once (host-only) when the ghost window naturally elapses.
+// Starts the real 5s countdown after the "gone away" pause. Guarded so a
+// second call can't restart a countdown that's already running.
 export const startPanicCountdown = async (groupId: string): Promise<void> => {
     const groupRef = doc(db, 'groups', groupId);
-    const now = Date.now();
-    await updateDoc(groupRef, {
-        'gameState.ghostWindowEndsAt': deleteField(),
-        'gameState.panicStartedAt': now,
-        'gameState.timerStartedAt': now,
-        'gameState.timerDuration': PANIC_THRESHOLD,
-        'gameState.timerRemaining': PANIC_THRESHOLD,
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(groupRef);
+        if (!snap.exists()) return;
+        const gameState = snap.data().gameState as BombGameState;
+        if (gameState.phase !== 'panic') return;
+        if (gameState.ghostWindowEndsAt || gameState.panicStartedAt) return;
+
+        const now = Date.now();
+        const revealEndsAt = gameState.ghostRevealEndsAt;
+        if (revealEndsAt && now < revealEndsAt - CLOCK_TOLERANCE_MS) return;
+
+        transaction.update(groupRef, {
+            'gameState.ghostRevealEndsAt': deleteField(),
+            'gameState.panicStartedAt': now,
+            'gameState.timerStartedAt': now,
+            'gameState.timerDuration': PANIC_THRESHOLD,
+        });
     });
 };
 
-export const syncBombTimer = async (
-    groupId: string,
-    remaining: number
-): Promise<void> => {
-    const groupRef = doc(db, 'groups', groupId);
-    await updateDoc(groupRef, { 'gameState.timerRemaining': remaining });
-};
 
 // ── LOCK IN WIRE ─────────────────────────────────────────────────
-// Deliberately does NOT resolve explode/defuse — that's
-// resolvePanicOutcome()'s job, fired once by the host when the full
-// 5-second countdown runs out. This only records which wire the holder
-// tapped, and guards against the two things that could make that tap
-// invalid: the clingy lock, and tapping twice.
+// Records which wire the holder tapped. Doesn't resolve anything —
+// resolvePanicOutcome does that when the countdown ends. A transaction,
+// so a late tap can't land on a resolved bomb, a tap racing a pass can't
+// leave the new holder with the old holder's wire, and a second tap
+// can't overwrite the first.
 export type LockInWireResult = {
-    blocked?: boolean;
+    locked?: boolean;          // true only when this tap was recorded
+    blocked?: boolean;         // clingy-locked
     remainingLockMs?: number;
 };
 
@@ -766,32 +857,39 @@ export const lockInWire = async (
     wire: 'red' | 'blue'
 ): Promise<LockInWireResult> => {
     const groupRef = doc(db, 'groups', group.id);
+    let result: LockInWireResult = {};
 
-    // Fresh read — same reasoning as the old cutWire always had: avoid
-    // acting on a stale clingy/wireChoice snapshot from a slightly
-    // out-of-date local gameState.
-    const freshSnap = await getDoc(groupRef);
-    if (!freshSnap.exists()) return {};
-    const freshGameState = freshSnap.data().gameState as BombGameState;
-    const now = Date.now();
+    try {
+        await runTransaction(db, async (transaction) => {
+            result = {}; // a retried attempt must not inherit the last one's result
 
-    // Guard: holder currently clingy-locked — cannot lock in a wire
-    // either, same as they can't pass.
-    if (
-        freshGameState.clingy &&
-        freshGameState.clingy.holderId === playerId &&
-        now < freshGameState.clingy.until
-    ) {
-        return { blocked: true, remainingLockMs: freshGameState.clingy.until - now };
+            const snap = await transaction.get(groupRef);
+            if (!snap.exists()) return;
+            const gameState = snap.data().gameState as BombGameState;
+            const now = Date.now();
+
+            // Only the current holder, only while the real countdown is running.
+            if (gameState.phase !== 'panic') return;
+            if (gameState.currentHolderId !== playerId) return;
+            if (!gameState.panicStartedAt || gameState.ghostWindowEndsAt) return;
+            if (gameState.wireChoice) return; // already locked — no take-backs
+
+            if (
+                gameState.clingy &&
+                gameState.clingy.holderId === playerId &&
+                now < gameState.clingy.until
+            ) {
+                result = { blocked: true, remainingLockMs: gameState.clingy.until - now };
+                return;
+            }
+
+            transaction.update(groupRef, { 'gameState.wireChoice': wire });
+            result = { locked: true };
+        });
+    } catch (e) {
+        if (__DEV__) console.warn('[lockInWire] transaction failed', e);
     }
-
-    // Guard: already locked in — a second tap (even the same wire) is a
-    // no-op, so a slow network round-trip after the first tap can't
-    // silently overwrite an already-locked choice.
-    if (freshGameState.wireChoice) return {};
-
-    await updateDoc(groupRef, { 'gameState.wireChoice': wire });
-    return {};
+    return result;
 };
 
 // ── RESOLVE PANIC OUTCOME ─────────────────────────────────────────
@@ -808,10 +906,17 @@ export const resolvePanicOutcome = async (group: Group): Promise<void> => {
     let scoreDefuserId: string | null = null;
 
     await runTransaction(db, async (transaction) => {
+        // A retried attempt must not inherit the last attempt's result.
+        scoreDefuserId = null;
+
         const snap = await transaction.get(groupRef);
         if (!snap.exists()) return;
         const gameState = snap.data().gameState as BombGameState;
         if (gameState.phase !== 'panic') return; // already resolved
+        // Countdown must actually be running and actually be over. This also
+        // stops a stale call landing just after a pass restarted the 5 seconds.
+        if (!gameState.panicStartedAt || gameState.ghostWindowEndsAt) return;
+        if (Date.now() < gameState.panicStartedAt + PANIC_THRESHOLD * 1000 - CLOCK_TOLERANCE_MS) return;
 
         const playerId = gameState.currentHolderId;
         const wire = gameState.wireChoice; // may be undefined — holder never locked one in
@@ -831,7 +936,9 @@ export const resolvePanicOutcome = async (group: Group): Promise<void> => {
                 'gameState.lastWireCutPlayerId': playerId,
                 'gameState.clingy': deleteField(),
                 'gameState.wireCutters': newWireCutters,
-                'gameState.activeBets': {}, // void — nothing to win against an immune holder
+                // Void — nothing could be won against an immune holder, so the
+                // tickets go back, same as when a pass or force-end cancels the cut.
+                ...refundActiveBets(gameState),
             });
             return;
         }
@@ -1125,6 +1232,7 @@ const startDuelRound = async (
         'gameState.penaltyResult': deleteField(),
         'gameState.isPaused': false,
         'gameState.pausedAt': deleteField(),
+        'gameState.pauseResumeAt': deleteField(),
         'gameState.activeQuiz': deleteField(),
         'gameState.ghostTournament': deleteField(),
         'gameState.pendingGhostTournament': deleteField(),
@@ -1142,6 +1250,7 @@ const startDuelRound = async (
         'gameState.duelFffLockedUntil': deleteField(),
         'gameState.duelFffHolderCanPass': deleteField(),
         'gameState.duelFffLockReason': deleteField(),
+        'gameState.ghostRevealEndsAt': deleteField(),
     });
 };
 
@@ -1192,6 +1301,8 @@ export const setDuelMode = async (
 export const startNextRound = async (group: Group): Promise<void> => {
     const groupRef = doc(db, 'groups', group.id);
     const gameState = group.gameState as BombGameState;
+
+    if (!(await claimRoundAdvance(group.id, gameState.roundNumber))) return;
 
     const activePlayers = group.players.filter(
         (p) => !gameState.ghosts.includes(p.id)
@@ -1268,7 +1379,6 @@ export const startNextRound = async (group: Group): Promise<void> => {
         'gameState.currentHolderId': startingHolder,
         'gameState.timerStartedAt': 0,
         'gameState.timerDuration': duration,
-        'gameState.timerRemaining': duration,
         'gameState.correctWire': correctWire,
         'gameState.personality': personality.id,
         'gameState.personalityName': personality.name,
@@ -1312,6 +1422,7 @@ export const startNextRound = async (group: Group): Promise<void> => {
         'gameState.penaltyResult': deleteField(),
         'gameState.isPaused': false,
         'gameState.pausedAt': deleteField(),
+        'gameState.pauseResumeAt': deleteField(),
         'gameState.ghostTournament': deleteField(),
         'gameState.pendingGhostTournament': deleteField(),
         'gameState.forceEnded': deleteField(),
@@ -1323,6 +1434,7 @@ export const startNextRound = async (group: Group): Promise<void> => {
         'gameState.duelFffLockedUntil': deleteField(),
         'gameState.duelFffHolderCanPass': deleteField(),
         'gameState.duelFffLockReason': deleteField(),
+        'gameState.ghostRevealEndsAt': deleteField(),
     };
 
     // Quiz Bomb: fold the first question of this round into the same
@@ -1356,6 +1468,11 @@ export const endBombGame = async (group: Group): Promise<void> => {
     // Claim the end of the game atomically: only the first call gets through,
     // so a second call can't award the bonuses again.
     await runTransaction(db, async (transaction) => {
+        // A retried attempt must not inherit the last attempt's result.
+        claimed = false;
+        winnerId = undefined;
+        runnerUpId = undefined;
+
         const snap = await transaction.get(groupRef);
         if (!snap.exists()) return;
         const gameState = snap.data().gameState as BombGameState;
@@ -1393,26 +1510,51 @@ export const endBombGame = async (group: Group): Promise<void> => {
 };
 
 // ── TIMER PAUSE / RESUME (calm bomb) ─────────────────────────────
+// The resume time is decided at the moment of pausing and stored, so any
+// phone can resume the bomb if the host disappears mid-pause.
 export const pauseTimer = async (groupId: string): Promise<void> => {
     const groupRef = doc(db, 'groups', groupId);
-    await updateDoc(groupRef, {
-        'gameState.isPaused': true,
-        'gameState.pausedAt': Date.now(),
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(groupRef);
+        if (!snap.exists()) return;
+        const gameState = snap.data().gameState as BombGameState;
+        if (gameState.phase !== 'playing') return;
+        if (gameState.personalityEffect !== 'calm' || gameState.isPaused) return;
+
+        const now = Date.now();
+        const elapsed = ((now - gameState.timerStartedAt) / 1000) * gameState.speedMultiplier;
+        // Too close to panic — pausing now would just stall the threshold.
+        if (gameState.timerDuration - elapsed <= PANIC_THRESHOLD) return;
+
+        const resumeDelay =
+            CALM_RESUME_MIN_MS + Math.random() * (CALM_RESUME_MAX_MS - CALM_RESUME_MIN_MS);
+        transaction.update(groupRef, {
+            'gameState.isPaused': true,
+            'gameState.pausedAt': now,
+            'gameState.pauseResumeAt': now + resumeDelay,
+        });
     });
 };
 
-export const resumeTimer = async (
-    groupId: string,
-    pausedAt: number,
-    timerStartedAt: number,
-): Promise<void> => {
+// Reads everything fresh, so a stale or repeated call can't shift the
+// timer twice. Safe for any phone to call.
+export const resumeTimer = async (groupId: string): Promise<void> => {
     const groupRef = doc(db, 'groups', groupId);
-    const pauseDuration = Date.now() - pausedAt;
-    const newTimerStartedAt = timerStartedAt + pauseDuration;
-    await updateDoc(groupRef, {
-        'gameState.isPaused': false,
-        'gameState.pausedAt': deleteField(),
-        'gameState.timerStartedAt': newTimerStartedAt,
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(groupRef);
+        if (!snap.exists()) return;
+        const gameState = snap.data().gameState as BombGameState;
+        if (!gameState.isPaused || !gameState.pausedAt) return; // already resumed
+
+        const now = Date.now();
+        if (gameState.pauseResumeAt && now < gameState.pauseResumeAt - CLOCK_TOLERANCE_MS) return;
+
+        transaction.update(groupRef, {
+            'gameState.isPaused': false,
+            'gameState.pausedAt': deleteField(),
+            'gameState.pauseResumeAt': deleteField(),
+            'gameState.timerStartedAt': gameState.timerStartedAt + (now - gameState.pausedAt),
+        });
     });
 };
 
@@ -1482,40 +1624,62 @@ export const placeBet = async (
     guessedWire: 'red' | 'blue'
 ): Promise<{ success: boolean; reason?: string }> => {
     const groupRef = doc(db, 'groups', group.id);
-    const freshSnap = await getDoc(groupRef);
-    if (!freshSnap.exists()) return { success: false, reason: 'not-found' };
-    const gameState = freshSnap.data().gameState as BombGameState;
+    let result: { success: boolean; reason?: string } = { success: false, reason: 'not-found' };
 
-    if (!gameState.ghostWindowEndsAt || Date.now() >= gameState.ghostWindowEndsAt) {
-        return { success: false, reason: 'window-closed' };
+    try {
+        // A transaction, so a bet can never land after endGhostWindow has
+        // already decided "nobody bet" — it either counts, or it's rejected
+        // and the ticket is untouched.
+        await runTransaction(db, async (transaction) => {
+            result = { success: false, reason: 'not-found' }; // fresh on every retry
+
+            const snap = await transaction.get(groupRef);
+            if (!snap.exists()) return;
+            const gameState = snap.data().gameState as BombGameState;
+
+            if (
+                gameState.phase !== 'panic' ||
+                !gameState.ghostWindowEndsAt ||
+                Date.now() >= gameState.ghostWindowEndsAt
+            ) {
+                result = { success: false, reason: 'window-closed' };
+                return;
+            }
+            if (!gameState.ghosts.includes(ghostId)) {
+                result = { success: false, reason: 'not-a-ghost' };
+                return;
+            }
+            const currentTickets = gameState.bettingTickets?.[ghostId] ?? 0;
+            if (currentTickets <= 0) {
+                result = { success: false, reason: 'no-tickets' };
+                return;
+            }
+            const responded = gameState.ghostResponded ?? [];
+            if (gameState.activeBets?.[ghostId] || responded.includes(ghostId)) {
+                result = { success: false, reason: 'already-bet' };
+                return;
+            }
+
+            const bet: WireBet = {
+                ghostId,
+                guessedWire,
+                targetPlayerId: gameState.currentHolderId,
+                placedAt: Date.now(),
+                resolved: false,
+            };
+
+            transaction.update(groupRef, {
+                [`gameState.bettingTickets.${ghostId}`]: currentTickets - 1,
+                [`gameState.activeBets.${ghostId}`]: bet,
+                'gameState.ghostResponded': [...responded, ghostId],
+            });
+            result = { success: true };
+        });
+    } catch (e) {
+        if (__DEV__) console.warn('[placeBet] transaction failed', e);
+        result = { success: false, reason: 'error' };
     }
-
-    if (!gameState.ghosts.includes(ghostId)) {
-        return { success: false, reason: 'not-a-ghost' };
-    }
-
-    const currentTickets = gameState.bettingTickets?.[ghostId] ?? 0;
-    if (currentTickets <= 0) {
-        return { success: false, reason: 'no-tickets' };
-    }
-    if (gameState.activeBets?.[ghostId]) {
-        return { success: false, reason: 'already-bet' };
-    }
-
-    const bet: WireBet = {
-        ghostId,
-        guessedWire,
-        targetPlayerId: gameState.currentHolderId,
-        placedAt: Date.now(),
-        resolved: false,
-    };
-
-    await updateDoc(groupRef, {
-        [`gameState.bettingTickets.${ghostId}`]: currentTickets - 1,
-        [`gameState.activeBets.${ghostId}`]: bet,
-        'gameState.ghostResponded': [...(gameState.ghostResponded ?? []), ghostId],
-    });
-    return { success: true };
+    return result;
 };
 
 export const declineBet = async (
@@ -1523,52 +1687,101 @@ export const declineBet = async (
     ghostId: string
 ): Promise<void> => {
     const groupRef = doc(db, 'groups', group.id);
-    const freshSnap = await getDoc(groupRef);
-    if (!freshSnap.exists()) return;
-    const gameState = freshSnap.data().gameState as BombGameState;
+    try {
+        await runTransaction(db, async (transaction) => {
+            const snap = await transaction.get(groupRef);
+            if (!snap.exists()) return;
+            const gameState = snap.data().gameState as BombGameState;
 
-    if (!gameState.ghostWindowEndsAt || Date.now() >= gameState.ghostWindowEndsAt) return;
-    const responded = gameState.ghostResponded ?? [];
-    if (responded.includes(ghostId)) return;
+            if (
+                gameState.phase !== 'panic' ||
+                !gameState.ghostWindowEndsAt ||
+                Date.now() >= gameState.ghostWindowEndsAt
+            ) return;
+            const responded = gameState.ghostResponded ?? [];
+            if (responded.includes(ghostId) || gameState.activeBets?.[ghostId]) return;
 
-    await updateDoc(groupRef, {
-        'gameState.ghostResponded': [...responded, ghostId],
-    });
+            transaction.update(groupRef, {
+                'gameState.ghostResponded': [...responded, ghostId],
+            });
+        });
+    } catch (e) {
+        // The window will simply run to its cap; nothing else depends on this.
+        if (__DEV__) console.warn('[declineBet] transaction failed', e);
+    }
 };
 
 export const endPersonalityReveal = async (groupId: string): Promise<void> => {
     const groupRef = doc(db, 'groups', groupId);
-    const now = Date.now();
-    await updateDoc(groupRef, {
-        'gameState.phase': 'playing',
-        'gameState.revealEndsAt': deleteField(),
-        'gameState.timerStartedAt': now, // the real countdown starts HERE, not before
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(groupRef);
+        if (!snap.exists()) return;
+        const gameState = snap.data().gameState as BombGameState;
+        if (gameState.phase !== 'reveal') return; // already started
+        const now = Date.now();
+        if (gameState.revealEndsAt && now < gameState.revealEndsAt - CLOCK_TOLERANCE_MS) return;
+
+        transaction.update(groupRef, {
+            'gameState.phase': 'playing',
+            'gameState.revealEndsAt': deleteField(),
+            'gameState.timerStartedAt': now, // the real countdown starts HERE, not before
+        });
     });
 };
 
 // ── FORCE END ROUND (host emergency control) ─────────────────────
+// ── FORCE END ROUND (host emergency control) ─────────────────────
+// Skips straight to the replay with no lives lost or gained. A transaction,
+// so live bets are refunded from fresh data, and a round that has already
+// resolved (exploded/replay/result) can't be force-ended on top of it.
 export const forceEndRound = async (group: Group): Promise<void> => {
     const groupRef = doc(db, 'groups', group.id);
-    const gameState = group.gameState as BombGameState;
-    const refunds: Record<string, unknown> = {};
-    for (const bet of Object.values(gameState.activeBets ?? {})) {
-        refunds[`gameState.bettingTickets.${bet.ghostId}`] =
-            (gameState.bettingTickets?.[bet.ghostId] ?? 0) + 1;
+    try {
+        await runTransaction(db, async (transaction) => {
+            const snap = await transaction.get(groupRef);
+            if (!snap.exists()) return;
+            const gameState = snap.data().gameState as BombGameState;
+
+            // Only a round that's still live can be force-ended.
+            if (!['reveal', 'playing', 'panic'].includes(gameState.phase)) return;
+
+            transaction.update(groupRef, {
+                'gameState.phase': 'replay',
+                'gameState.forceEnded': true,
+                'gameState.wireChoice': deleteField(),
+                'gameState.defused': deleteField(),
+                'gameState.explodedPlayerId': deleteField(),
+                'gameState.panicStartedAt': deleteField(),
+                'gameState.revealEndsAt': deleteField(),
+                'gameState.clingy': deleteField(),
+                'gameState.isPaused': false,
+                'gameState.pausedAt': deleteField(),
+                'gameState.pauseResumeAt': deleteField(),
+                'gameState.penaltyPlayerId': deleteField(),
+                'gameState.penaltyCorrectWire': deleteField(),
+                'gameState.penaltyWireChoice': deleteField(),
+                'gameState.penaltyResult': deleteField(),
+                // Refunds live bets and clears the ghost window + reveal.
+                ...refundActiveBets(gameState),
+            });
+        });
+    } catch (e) {
+        if (__DEV__) console.warn('[forceEndRound] transaction failed', e);
     }
-    await updateDoc(groupRef, {
-        'gameState.phase': 'replay',
-        'gameState.forceEnded': true,
-        'gameState.wireChoice': deleteField(),
-        'gameState.defused': deleteField(),
-        'gameState.explodedPlayerId': deleteField(),
-        'gameState.panicStartedAt': deleteField(),
-        'gameState.clingy': deleteField(),
-        'gameState.penaltyPlayerId': deleteField(),
-        'gameState.penaltyCorrectWire': deleteField(),
-        'gameState.penaltyWireChoice': deleteField(),
-        'gameState.penaltyResult': deleteField(),
-        ...refunds,
-        'gameState.activeBets': {},
-        ...refundActiveBets(gameState),
-    });
 };
+
+// ── LOCAL COUNTDOWN HELPERS ──────────────────────────────────────
+// Every phone computes the timer from shared timestamps instead of
+// waiting for the host to sync it. A calm-bomb pause freezes the clock
+// at pausedAt.
+export const computeRoundRemaining = (gs: BombGameState, now = Date.now()): number => {
+    if (!gs.timerStartedAt) return gs.timerDuration; // still in the reveal
+    const effectiveNow = gs.isPaused && gs.pausedAt ? gs.pausedAt : now;
+    const elapsed = ((effectiveNow - gs.timerStartedAt) / 1000) * gs.speedMultiplier;
+    return Math.max(0, gs.timerDuration - elapsed);
+};
+
+export const computePanicRemaining = (gs: BombGameState, now = Date.now()): number =>
+    gs.panicStartedAt
+        ? Math.max(0, PANIC_THRESHOLD - (now - gs.panicStartedAt) / 1000)
+        : PANIC_THRESHOLD;

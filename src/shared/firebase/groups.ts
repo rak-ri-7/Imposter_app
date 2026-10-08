@@ -9,6 +9,8 @@ import {
     getDocs,
     query,
     where,
+    runTransaction,
+    increment
 } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
 import { db, auth } from './config';
@@ -143,17 +145,15 @@ export const leaveGroup = async (
         await updateDoc(groupRef, { players: remaining });
     }
 };
-
 export const addScore = async (
     groupId: string,
     playerId: string,
     points: number,
-    currentScores: Record<string, number>
+    _currentScores?: Record<string, number> // no longer used; kept so callers don't change
 ): Promise<void> => {
     const groupRef = doc(db, 'groups', groupId);
-    const newScore = (currentScores[playerId] || 0) + points;
     await updateDoc(groupRef, {
-        [`scores.${playerId}`]: newScore,
+        [`scores.${playerId}`]: increment(points),
     });
 };
 
@@ -251,3 +251,43 @@ export const dissolveTeams = async (groupId: string): Promise<void> => {
     });
 };
 
+// Host's phone calls this every few seconds while a game is open.
+// Guarded so a phone that has just lost host can't keep the old
+// heartbeat alive for the new host.
+export const sendHostHeartbeat = async (groupId: string, playerId: string): Promise<void> => {
+    const groupRef = doc(db, 'groups', groupId);
+    try {
+        await runTransaction(db, async (transaction) => {
+            const snap = await transaction.get(groupRef);
+            if (!snap.exists()) return;
+            if ((snap.data() as Group).hostId !== playerId) return;
+            transaction.update(groupRef, { hostHeartbeatAt: Date.now() });
+        });
+    } catch {
+        // next heartbeat retries
+    }
+};
+
+// Takes over as host only if the current host's heartbeat is still stale
+// when re-checked inside the transaction — so two phones can't both win,
+// and a host that's actually alive can't be replaced.
+export const claimHostIfStale = async (
+    groupId: string,
+    playerId: string,
+    staleMs: number
+): Promise<void> => {
+    const groupRef = doc(db, 'groups', groupId);
+    try {
+        await runTransaction(db, async (transaction) => {
+            const snap = await transaction.get(groupRef);
+            if (!snap.exists()) return;
+            const g = snap.data() as Group;
+            if (g.hostId === playerId) return;
+            if (!g.players.some((p) => p.id === playerId)) return;
+            if (!g.hostHeartbeatAt || Date.now() - g.hostHeartbeatAt < staleMs) return;
+            transaction.update(groupRef, { hostId: playerId, hostHeartbeatAt: Date.now() });
+        });
+    } catch {
+        // contention — the watcher retries
+    }
+};

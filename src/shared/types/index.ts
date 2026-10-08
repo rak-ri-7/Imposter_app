@@ -45,6 +45,7 @@ export type Group = {
     teams?: Team[];
     teamsEnabled?: boolean;
     benchedPlayers?: Player[];
+    hostHeartbeatAt?: number
 };
 
 export type ImposterGameState = {
@@ -200,7 +201,7 @@ export type BombGameState = {
     timerMode: BombTimerMode;
     timerStartedAt: number;
     timerDuration: number;
-    timerRemaining: number;
+
     correctWire: 'red' | 'blue';
     personality: string;
     personalityName: string;
@@ -279,6 +280,10 @@ export type BombGameState = {
     stipendPaidForRound?: number;
     runnerUpId?: string;
     scoresAwarded?: boolean;
+    ghostWindowEndedAt?: number;
+    pauseResumeAt?: number;
+    roundAdvanceClaimed?: number
+    ghostRevealEndsAt?: number;
 
 
 
@@ -349,7 +354,6 @@ export const emptyBombState: BombGameState = {
     timerMode: 'on',
     timerStartedAt: 0,
     timerDuration: 30,
-    timerRemaining: 30,
     correctWire: 'red',
     personality: 'normal',
     personalityName: 'STANDARD BOMB',

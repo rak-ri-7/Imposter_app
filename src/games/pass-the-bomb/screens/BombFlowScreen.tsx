@@ -27,8 +27,11 @@ import BombDuelFastestFingerScreen from "../screens/BombDuelFastestFingerScreen"
 import BombGhostTournamentScreen from "../screens/BombGhostTournamentScreen";
 import {
   triggerPanic,
-  syncBombTimer,
   endPersonalityReveal,
+  resumeTimer,
+  PANIC_THRESHOLD,
+  FAILSAFE_GRACE_MS,
+  FAILSAFE_RETRY_MS,
 } from "../logic/game";
 import BombTbcDuelScreen from "../screens/BombTbcDuelScreen";
 import BombHotSeatDuelScreen from "../screens/BombHotSeatDuelScreen";
@@ -41,6 +44,7 @@ import { useMissionAlerts } from "../logic/useMissionAlerts";
 import BombMissionsModal from "../screens/BombMissionsModal";
 import BombMissionClaimBar from "../screens/BombMissionClaimBar";
 import { MissionsContext } from "./MissionsButton";
+import { useHostFailover } from "../../../shared/hooks/useHostFailover";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "BombFlow">;
@@ -52,8 +56,6 @@ export default function BombFlowScreen({ navigation, route }: Props) {
   const { group, loading } = useGroup(groupId);
   const [endingGame, setEndingGame] = useState(false);
   const timerRef = useRef<any>(null);
-  const panicTriggeredRef = useRef(false);
-  const lastSyncedSecondRef = useRef<number | null>(null);
   const groupRef = useRef(group);
   useEffect(() => {
     groupRef.current = group;
@@ -68,7 +70,12 @@ export default function BombFlowScreen({ navigation, route }: Props) {
   // zone crash, and `isHost` wasn't declared anywhere at all.
   const gameState = group?.gameState as BombGameState | undefined;
   const phase = gameState?.phase;
+  // "The jury has spoken" — shown on every phone for a moment when a
+  // callout reaches a guilty verdict and the game moves to the penalty.
+  const [verdictFor, setVerdictFor] = useState<string | null>(null);
+  const prevPhaseRef = useRef(phase);
   const isHost = group?.hostId === playerId;
+  useHostFailover(group, playerId);
 
   // ── Missions: one global button, one modal, one change-detector ──────
   const [showMissions, setShowMissions] = useState(false);
@@ -117,6 +124,20 @@ export default function BombFlowScreen({ navigation, route }: Props) {
   };
 
   useEffect(() => {
+    const prev = prevPhaseRef.current;
+    prevPhaseRef.current = phase;
+    if (
+      prev === "replay" &&
+      phase === "penalty" &&
+      gameState?.penaltyPlayerId
+    ) {
+      setVerdictFor(gameState.penaltyPlayerId);
+      const t = setTimeout(() => setVerdictFor(null), 2500);
+      return () => clearTimeout(t);
+    }
+  }, [phase]);
+
+  useEffect(() => {
     if (showMissions) markSeen();
   }, [showMissions, flashKey]);
 
@@ -147,12 +168,21 @@ export default function BombFlowScreen({ navigation, route }: Props) {
     return () => backHandler.remove();
   }, [endingGame, group?.id]);
 
+  // Reveal → playing. Host acts on time; everyone else is a backup.
   useEffect(() => {
-    if (!isHost || !gameState?.revealEndsAt) return;
-    const msLeft = Math.max(0, gameState.revealEndsAt - Date.now());
-    const timeout = setTimeout(() => endPersonalityReveal(group!.id), msLeft);
-    return () => clearTimeout(timeout);
-  }, [isHost, gameState?.revealEndsAt]);
+    if (!group || !gameState?.revealEndsAt) return;
+    const fireAt = gameState.revealEndsAt + (isHost ? 0 : FAILSAFE_GRACE_MS);
+    let lastAttempt = 0;
+    const check = () => {
+      const now = Date.now();
+      if (now < fireAt || now - lastAttempt < FAILSAFE_RETRY_MS) return;
+      lastAttempt = now;
+      endPersonalityReveal(group.id);
+    };
+    check();
+    const interval = setInterval(check, 250);
+    return () => clearInterval(interval);
+  }, [isHost, group?.id, gameState?.revealEndsAt]);
 
   // ── Single authoritative timer loop for the whole app ─────────────
   // Lives here (not in BombPlayScreen) specifically because this
@@ -162,10 +192,9 @@ export default function BombFlowScreen({ navigation, route }: Props) {
   // effect inside BombPlayScreen — two independent tickers risk
   // explodeBomb() firing twice for the same bomb.
   useEffect(() => {
-    if (!group || !gameState || phase !== "playing" || !isHost) return;
+    if (!group || !gameState || phase !== "playing") return;
 
-    panicTriggeredRef.current = false;
-    lastSyncedSecondRef.current = null;
+    let lastAttempt = 0;
 
     const tick = () => {
       const currentGroup = groupRef.current;
@@ -173,18 +202,17 @@ export default function BombFlowScreen({ navigation, route }: Props) {
       if (gameState.isPaused) return;
 
       const now = Date.now();
-      const elapsed =
-        ((now - gameState.timerStartedAt) / 1000) * gameState.speedMultiplier;
-      const remaining = Math.max(0, gameState.timerDuration - elapsed);
 
-      const displayedSecond = Math.ceil(remaining);
-      if (lastSyncedSecondRef.current !== displayedSecond) {
-        lastSyncedSecondRef.current = displayedSecond;
-        void syncBombTimer(currentGroup.id, remaining);
-      }
+      // Real-time moment the timer hits the panic threshold.
+      const panicAt =
+        gameState.timerStartedAt +
+        ((gameState.timerDuration - PANIC_THRESHOLD) /
+          gameState.speedMultiplier) *
+          1000;
+      const fireAt = panicAt + (isHost ? 0 : FAILSAFE_GRACE_MS);
 
-      if (remaining <= 5 && !panicTriggeredRef.current) {
-        panicTriggeredRef.current = true;
+      if (now >= fireAt && now - lastAttempt >= FAILSAFE_RETRY_MS) {
+        lastAttempt = now;
         triggerPanic(currentGroup.id);
       }
     };
@@ -201,6 +229,26 @@ export default function BombFlowScreen({ navigation, route }: Props) {
     gameState?.speedMultiplier,
     gameState?.isPaused,
   ]);
+
+  // ── Calm bomb resume: host on time, every other phone as backup ─────
+  // The resume time was decided when the pause started, so every phone
+  // knows when it's due. resumeTimer is guarded, so extra calls are harmless.
+  useEffect(() => {
+    if (!group || phase !== "playing") return;
+    if (!gameState?.isPaused || !gameState.pauseResumeAt) return;
+
+    const fireAt = gameState.pauseResumeAt + (isHost ? 0 : FAILSAFE_GRACE_MS);
+    let lastAttempt = 0;
+    const check = () => {
+      const now = Date.now();
+      if (now < fireAt || now - lastAttempt < FAILSAFE_RETRY_MS) return;
+      lastAttempt = now;
+      resumeTimer(group.id);
+    };
+    check();
+    const interval = setInterval(check, 250);
+    return () => clearInterval(interval);
+  }, [isHost, group?.id, phase, gameState?.isPaused, gameState?.pauseResumeAt]);
 
   useEffect(() => {
     preloadSounds();
@@ -292,6 +340,18 @@ export default function BombFlowScreen({ navigation, route }: Props) {
           </View>
         )}
 
+        {verdictFor && (
+          <View pointerEvents="none" style={styles.verdictOverlay}>
+            <Text style={styles.verdictEmoji}>⚖️</Text>
+            <Text style={styles.verdictTitle}>The jury has spoken</Text>
+            <Text style={styles.verdictSub}>
+              {verdictFor === playerId
+                ? "You've been found guilty."
+                : `${group.players.find((p) => p.id === verdictFor)?.name ?? "Someone"} has been found guilty.`}
+            </Text>
+          </View>
+        )}
+
         {myMissions && (
           <BombMissionsModal
             visible={showMissions}
@@ -356,4 +416,24 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textAlign: "center",
   },
+
+  verdictOverlay: {
+    position: "absolute",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: "rgba(13,13,13,0.92)",
+    alignItems: "center",
+    justifyContent: "center",
+    zIndex: 30,
+  },
+  verdictEmoji: { fontSize: 64, marginBottom: 14 },
+  verdictTitle: {
+    color: "#FFD700",
+    fontSize: 22,
+    fontWeight: "800",
+    marginBottom: 6,
+  },
+  verdictSub: { color: "#ddd", fontSize: 15 },
 });

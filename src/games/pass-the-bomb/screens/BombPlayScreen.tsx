@@ -14,8 +14,8 @@ import { Group, BombGameState } from "../../../shared/types";
 import {
   passBomb,
   pauseTimer,
-  resumeTimer,
   forceEndRound,
+  computeRoundRemaining,
 } from "../logic/game";
 import { liarOffset, liarDisplayedRemaining } from "../logic/liarClock";
 import BombAlleyScreen from "./BombAlleyScreen";
@@ -52,19 +52,27 @@ export default function BombPlayScreen({ group, playerId }: Props) {
     gameState.timerMode === "on" ||
     (gameState.timerMode === "mixed" && myLives > 1);
 
-  // ── TIMER DISPLAY — purely a mirror of gameState.timerRemaining, which
-  // BombFlowScreen's single authoritative tick loop keeps fresh. This
-  // component never computes elapsed time or calls triggerPanic/
-  // explodeBomb/syncBombTimer itself.
+  // ── TIMER DISPLAY — computed on this phone from the shared timestamps,
+  // so it's smooth everywhere and keeps running even if the host drops.
   useEffect(() => {
     if (gameState.phase !== "playing") return;
-    setTimeLeft(gameState.timerRemaining);
-  }, [gameState.phase, gameState.timerRemaining]);
-
+    const tick = () => setTimeLeft(computeRoundRemaining(gameState));
+    tick();
+    const interval = setInterval(tick, 200);
+    return () => clearInterval(interval);
+  }, [
+    gameState.phase,
+    gameState.timerStartedAt,
+    gameState.timerDuration,
+    gameState.speedMultiplier,
+    gameState.isPaused,
+    gameState.pausedAt,
+  ]);
+  // Back to the main instruction slide whenever the instruction or the
+  // holder changes.
   useEffect(() => {
-    // Reset to the main instruction slide whenever the instruction changes
     setInstructionSlide(0);
-  }, [myInstruction]);
+  }, [myInstruction, gameState.currentHolderId]);
 
   useEffect(() => {
     if (!gameState.clingy || gameState.clingy.holderId !== playerId) {
@@ -97,6 +105,10 @@ export default function BombPlayScreen({ group, playerId }: Props) {
     }
   }, [gameState.clingy, playerId]);
 
+  // ── Calm bomb: host schedules the next pause. If the host disappears the
+  // bomb simply stops pausing, which is harmless. Resuming is NOT done here —
+  // BombFlowScreen handles it for every phone, using the pauseResumeAt time
+  // that pauseTimer stores, so a vanished host can't leave the bomb frozen.
   useEffect(() => {
     if (
       gameState.personalityEffect !== "calm" ||
@@ -115,54 +127,35 @@ export default function BombPlayScreen({ group, playerId }: Props) {
     gameState.isPaused,
     gameState.phase,
     isHost,
+    group.id,
   ]);
 
+  // Holder pulse — one loop while you hold the bomb, stopped as soon as you
+  // don't (previously it kept running after passing).
   useEffect(() => {
-    if (
-      gameState.personalityEffect !== "calm" ||
-      !isHost ||
-      gameState.phase !== "playing" ||
-      !gameState.isPaused ||
-      !gameState.pausedAt
-    )
-      return;
-    const resumeDelay = Math.random() * 2000 + 2000;
-    const resumeTimeout = setTimeout(() => {
-      resumeTimer(
-        group.id,
-        gameState.pausedAt!,
-        gameState.timerStartedAt,
-        gameState.timerDuration,
-      );
-    }, resumeDelay);
-    return () => clearTimeout(resumeTimeout);
-  }, [
-    gameState.personalityEffect,
-    gameState.isPaused,
-    gameState.pausedAt,
-    gameState.phase,
-    isHost,
-  ]);
-
-  useEffect(() => {
-    if (isHolder) {
-      Animated.loop(
-        Animated.sequence([
-          Animated.timing(pulseAnim, {
-            toValue: 1.06,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-          Animated.timing(pulseAnim, {
-            toValue: 1,
-            duration: 600,
-            useNativeDriver: true,
-          }),
-        ]),
-      ).start();
-    } else {
+    if (!isHolder) {
       pulseAnim.setValue(1);
+      return;
     }
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.06,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 600,
+          useNativeDriver: true,
+        }),
+      ]),
+    );
+    loop.start();
+    return () => {
+      loop.stop();
+      pulseAnim.setValue(1);
+    };
   }, [isHolder]);
 
   useEffect(() => {
@@ -192,10 +185,6 @@ export default function BombPlayScreen({ group, playerId }: Props) {
       ]).start();
     }
   }, [gameState.currentHolderId]);
-
-  useEffect(() => {
-    setInstructionSlide(0);
-  }, [myInstruction, gameState.currentHolderId]);
 
   const handlePass = async (toId: string) => {
     if (!isHolder || passing) return;
@@ -651,6 +640,12 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   boomerangBtnText: { color: "#4CAF50", fontSize: 13, fontWeight: "600" },
+  boomerangBtnSub: {
+    color: "#4CAF50",
+    fontSize: 10,
+    opacity: 0.8,
+    marginTop: 2,
+  },
   disabledBtn: { opacity: 0.35 },
   ghostBox: {
     backgroundColor: "#1A1A1A",
@@ -718,53 +713,6 @@ const styles = StyleSheet.create({
   gridBombTag: { position: "absolute", top: 6, right: 8, fontSize: 14 },
   gridClingyTag: { position: "absolute", top: 6, left: 8, fontSize: 12 },
   gridBlockedTag: { position: "absolute", top: 6, right: 8, fontSize: 12 },
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: "rgba(0,0,0,0.6)",
-    justifyContent: "flex-end",
-  },
-  modalSheet: {
-    backgroundColor: "#161616",
-    borderTopLeftRadius: 20,
-    borderTopRightRadius: 20,
-    padding: 20,
-    paddingBottom: 32,
-    gap: 10,
-  },
-  modalTitle: {
-    color: "#fff",
-    fontSize: 17,
-    fontWeight: "bold",
-    marginBottom: 4,
-  },
-  missionItem: {
-    backgroundColor: "#2A2A2A",
-    borderRadius: 10,
-    padding: 12,
-    borderWidth: 1,
-    borderColor: "#333",
-  },
-  missionItemDone: { borderColor: "#4CAF50", backgroundColor: "#0A1E0A" },
-  missionText: { color: "#fff", fontSize: 13, lineHeight: 18, marginBottom: 6 },
-  missionDone: { color: "#4CAF50", fontSize: 12, fontWeight: "600" },
-  confirmBtn: {
-    backgroundColor: "#4CAF50",
-    borderRadius: 8,
-    padding: 8,
-    alignItems: "center",
-  },
-  confirmBtnText: { color: "#fff", fontSize: 12, fontWeight: "600" },
-  modalCloseBtn: {
-    marginTop: 6,
-    backgroundColor: "#1A1A1A",
-    borderRadius: 10,
-    padding: 12,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#333",
-  },
-  modalCloseBtnText: { color: "#888", fontSize: 14, fontWeight: "600" },
-
   bombIconWrap: {
     width: 44,
     height: 44,
@@ -779,17 +727,10 @@ const styles = StyleSheet.create({
     borderColor: "#FF4500",
     backgroundColor: "#2A0A0A",
   },
-
   fallbackHint: {
     color: "#888",
     fontSize: 11,
     fontStyle: "italic",
     marginTop: 6,
-  },
-  boomerangBtnSub: {
-    color: "#4CAF50",
-    fontSize: 10,
-    opacity: 0.8,
-    marginTop: 2,
   },
 });

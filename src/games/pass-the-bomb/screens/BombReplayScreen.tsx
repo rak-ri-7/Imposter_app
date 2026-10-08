@@ -6,7 +6,6 @@ import {
   StyleSheet,
   ScrollView,
   Animated,
-  Alert,
   Modal,
 } from "react-native";
 import { Group, BombGameState } from "../../../shared/types";
@@ -28,7 +27,10 @@ export default function BombReplayScreen({ group, playerId }: Props) {
   const [fadeAnim] = useState(new Animated.Value(0));
   const scrollRef = useRef<ScrollView>(null);
   const itemOffsetsRef = useRef<Record<number, number>>({});
-  const promptedDisputesRef = useRef<Set<number>>(new Set());
+  // Callouts this player has dismissed ("Let it slide") — never prompted again.
+  const [dismissedDisputes, setDismissedDisputes] = useState<number[]>([]);
+  // One funky line per callout, picked once so it doesn't change on re-render.
+  const funkyLineRef = useRef<Record<number, string>>({});
   const [pulseAnim] = useState(new Animated.Value(0));
   const [loading, setLoading] = useState(false);
   const [showAlley, setShowAlley] = useState(false);
@@ -108,7 +110,7 @@ export default function BombReplayScreen({ group, playerId }: Props) {
   }, []);
 
   useEffect(() => {
-    Animated.loop(
+    const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(pulseAnim, {
           toValue: 1,
@@ -121,47 +123,48 @@ export default function BombReplayScreen({ group, playerId }: Props) {
           useNativeDriver: false,
         }),
       ]),
-    ).start();
+    );
+    loop.start();
+    return () => loop.stop();
   }, []);
 
+  // Same majority rule as the server: everyone except the accused can vote.
+  const majorityNeeded = Math.floor((group.players.length - 1) / 2) + 1;
+
+  // The live callout this player should be asked about, if any. Recomputed
+  // on every snapshot, so the vote count is always current and the prompt
+  // disappears by itself once the player has voted, dismissed it, or the
+  // callout is withdrawn.
+  const activePrompt = disputes.find(
+    (d) =>
+      !d.resolved &&
+      d.voterIds.length > 0 &&
+      d.accusedId !== playerId &&
+      !d.voterIds.includes(playerId) &&
+      !dismissedDisputes.includes(d.passIndex),
+  );
+
+  if (activePrompt && !funkyLineRef.current[activePrompt.passIndex]) {
+    funkyLineRef.current[activePrompt.passIndex] =
+      funkyCalloutLines[Math.floor(Math.random() * funkyCalloutLines.length)];
+  }
+
+  // Scroll the disputed pass into view when a new callout appears.
   useEffect(() => {
-    for (const dispute of disputes) {
-      if (dispute.resolved) continue;
-      if (dispute.accusedId === playerId) continue;
-      if (dispute.voterIds.includes(playerId)) continue;
-      if (promptedDisputesRef.current.has(dispute.passIndex)) continue;
-
-      promptedDisputesRef.current.add(dispute.passIndex);
-
-      const accuserName = getPlayerName(dispute.voterIds[0]);
-      const accusedName = getPlayerName(dispute.accusedId);
-      const passEvent = gameState.passHistory[dispute.passIndex];
-      const targetName = passEvent ? getPlayerName(passEvent.to) : "someone";
-      const eligibleCount = group.players.length - 1;
-      const majorityNeeded = Math.floor(eligibleCount / 2) + 1;
-      const funkyLine =
-        funkyCalloutLines[Math.floor(Math.random() * funkyCalloutLines.length)];
-
-      const y = itemOffsetsRef.current[dispute.passIndex];
-      if (y !== undefined) {
-        scrollRef.current?.scrollTo({ y: Math.max(0, y - 40), animated: true });
-      }
-
-      Alert.alert(
-        "🚨 CALLOUT IN PROGRESS!",
-        `${accuserName} just called out ${accusedName}'s pass to ${targetName}. ${funkyLine}\n\n${dispute.voterIds.length}/${majorityNeeded} votes needed for a guilty verdict.`,
-        [
-          { text: "😇 Let it slide", style: "cancel" },
-          {
-            text: "😈 I'm in — guilty!",
-            onPress: () => handleCallout(dispute.passIndex),
-          },
-        ],
-      );
-
-      break; // one popup at a time even if multiple disputes are somehow live
+    if (!activePrompt) return;
+    const y = itemOffsetsRef.current[activePrompt.passIndex];
+    if (y !== undefined) {
+      scrollRef.current?.scrollTo({ y: Math.max(0, y - 40), animated: true });
     }
-  }, [disputes]);
+  }, [activePrompt?.passIndex]);
+
+  const dismissPrompt = (passIndex: number) =>
+    setDismissedDisputes((prev) => [...prev, passIndex]);
+
+  const joinCallout = (passIndex: number) => {
+    dismissPrompt(passIndex); // close straight away; the vote follows
+    handleCallout(passIndex);
+  };
 
   return (
     <View style={styles.container}>
@@ -509,6 +512,55 @@ export default function BombReplayScreen({ group, playerId }: Props) {
           onClose={() => setShowAlley(false)}
         />
       </Modal>
+      {/* Live callout prompt — updates as votes come in, closes itself */}
+      <Modal
+        visible={!!activePrompt}
+        transparent
+        animationType="fade"
+        onRequestClose={() =>
+          activePrompt && dismissPrompt(activePrompt.passIndex)
+        }
+      >
+        {activePrompt && (
+          <View style={styles.calloutBackdrop}>
+            <View style={styles.calloutCard}>
+              <Text style={styles.calloutTitle}>🚨 Callout in progress</Text>
+              <Text style={styles.calloutBody}>
+                {getPlayerName(activePrompt.voterIds[0])} called out{" "}
+                {getPlayerName(activePrompt.accusedId)}'s pass to{" "}
+                {getPlayerName(
+                  gameState.passHistory[activePrompt.passIndex]?.to ?? "",
+                )}
+                . {funkyLineRef.current[activePrompt.passIndex]}
+              </Text>
+
+              <Text style={styles.calloutTally}>
+                {activePrompt.voterIds.length}/{majorityNeeded} votes
+              </Text>
+              <Text style={styles.calloutTallySub}>
+                {majorityNeeded - activePrompt.voterIds.length === 1
+                  ? "Your vote seals the verdict."
+                  : `${majorityNeeded - activePrompt.voterIds.length} more needed for a guilty verdict.`}
+              </Text>
+
+              <View style={styles.calloutActions}>
+                <TouchableOpacity
+                  style={[styles.calloutActionBtn, styles.calloutSlideBtn]}
+                  onPress={() => dismissPrompt(activePrompt.passIndex)}
+                >
+                  <Text style={styles.calloutSlideText}>😇 Let it slide</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.calloutActionBtn, styles.calloutGuiltyBtn]}
+                  onPress={() => joinCallout(activePrompt.passIndex)}
+                >
+                  <Text style={styles.calloutGuiltyText}>😈 Guilty!</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </View>
+        )}
+      </Modal>
     </View>
   );
 }
@@ -701,4 +753,55 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontStyle: "italic",
   },
+
+  calloutBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  calloutCard: {
+    width: "100%",
+    backgroundColor: "#1A1A1A",
+    borderRadius: 16,
+    borderWidth: 1.5,
+    borderColor: "#E63946",
+    padding: 20,
+  },
+  calloutTitle: {
+    color: "#E63946",
+    fontSize: 18,
+    fontWeight: "800",
+    marginBottom: 10,
+  },
+  calloutBody: {
+    color: "#ddd",
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  calloutTally: {
+    color: "#FFD700",
+    fontSize: 28,
+    fontWeight: "800",
+    textAlign: "center",
+  },
+  calloutTallySub: {
+    color: "#999",
+    fontSize: 12,
+    textAlign: "center",
+    marginBottom: 18,
+  },
+  calloutActions: { flexDirection: "row", gap: 10 },
+  calloutActionBtn: {
+    flex: 1,
+    borderRadius: 10,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  calloutSlideBtn: { backgroundColor: "#2A2A2A" },
+  calloutSlideText: { color: "#aaa", fontSize: 14, fontWeight: "600" },
+  calloutGuiltyBtn: { backgroundColor: "#E63946" },
+  calloutGuiltyText: { color: "#fff", fontSize: 14, fontWeight: "800" },
 });

@@ -16,10 +16,15 @@ import {
   startPanicCountdown,
   endGhostWindow,
   passBomb,
-  syncBombTimer,
   forceEndRound,
   placeBet,
+  computePanicRemaining,
   declineBet,
+  PANIC_THRESHOLD,
+  FAILSAFE_GRACE_MS,
+  FAILSAFE_RETRY_MS,
+  GHOST_WINDOW_MAX_MS,
+  GHOST_WINDOW_MIN_MS,
 } from "../logic/game";
 import {
   playSound,
@@ -33,9 +38,125 @@ type Props = {
   playerId: string;
 };
 
-const GHOST_WINDOW_MAX_MS = 5000;
-const GHOST_WINDOW_MIN_MS = 3000;
-const GONE_AWAY_DISPLAY_MS = 1500;
+// Shown on every phone that isn't currently deciding a bet. Deliberately
+// neutral: nothing on it hints whether a ghost is lurking. Each phone
+// shuffles its own order, so neighbours see different lines.
+const PREP_LINES: { emoji: string; text: string }[] = [
+  { emoji: "✂️", text: "Warming up the pliers" },
+  { emoji: "🔢", text: "Counting the wires. Still two. Probably" },
+  { emoji: "🧶", text: "Untangling the red from the blue" },
+  { emoji: "🐈", text: "Asking the cat to leave the room" },
+  { emoji: "📞", text: "Putting the bomb on speakerphone" },
+  { emoji: "🧤", text: "Wiping fingerprints off the detonator" },
+  { emoji: "🎻", text: "Cueing the dramatic music" },
+  { emoji: "🙏", text: "Saying a small prayer to the wire gods" },
+  { emoji: "🥤", text: "Fetching snacks for the aftermath" },
+  { emoji: "🪫", text: "Charging the suspense meter" },
+];
+
+const PREP_LINE_MS = 1800;
+
+const shuffled = <T,>(arr: T[]): T[] => {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+};
+
+// Three dots that bounce one after another, like someone typing.
+function WaitingDots() {
+  const [dots] = useState(() => [0, 1, 2].map(() => new Animated.Value(0)));
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.stagger(
+        150,
+        dots.map((d) =>
+          Animated.sequence([
+            Animated.timing(d, {
+              toValue: 1,
+              duration: 300,
+              useNativeDriver: true,
+            }),
+            Animated.timing(d, {
+              toValue: 0,
+              duration: 300,
+              useNativeDriver: true,
+            }),
+            Animated.delay(300),
+          ]),
+        ),
+      ),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, []);
+  return (
+    <View style={styles.dotsRow}>
+      {dots.map((d, i) => (
+        <Animated.View
+          key={i}
+          style={[
+            styles.dot,
+            {
+              opacity: d.interpolate({
+                inputRange: [0, 1],
+                outputRange: [0.3, 1],
+              }),
+              transform: [
+                {
+                  translateY: d.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [0, -8],
+                  }),
+                },
+              ],
+            },
+          ]}
+        />
+      ))}
+    </View>
+  );
+}
+
+// Neutral "getting ready" screen: a quirky line that cross-fades to a new
+// one every couple of seconds, with the bouncing dots underneath.
+function PrepOverlay({ subtitle }: { subtitle?: string }) {
+  const [lines] = useState(() => shuffled(PREP_LINES));
+  const [index, setIndex] = useState(0);
+  const [fade] = useState(new Animated.Value(1));
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      Animated.timing(fade, {
+        toValue: 0,
+        duration: 200,
+        useNativeDriver: true,
+      }).start(() => {
+        setIndex((i) => (i + 1) % lines.length);
+        Animated.timing(fade, {
+          toValue: 1,
+          duration: 200,
+          useNativeDriver: true,
+        }).start();
+      });
+    }, PREP_LINE_MS);
+    return () => clearInterval(interval);
+  }, []);
+
+  const line = lines[index];
+  return (
+    <View style={[styles.overlay, styles.overlayPrep]}>
+      <Animated.View style={{ opacity: fade, alignItems: "center" }}>
+        <Text style={styles.overlayEmoji}>{line.emoji}</Text>
+        <Text style={styles.overlayTitle}>{line.text}</Text>
+      </Animated.View>
+      <WaitingDots />
+      {!!subtitle && <Text style={styles.overlaySubtitle}>{subtitle}</Text>}
+    </View>
+  );
+}
 
 function TypewriterText({ text, style }: { text: string; style?: any }) {
   const [shown, setShown] = useState("");
@@ -60,36 +181,47 @@ export default function BombPanicScreen({ group, playerId }: Props) {
   const [locking, setLocking] = useState(false);
   const [passing, setPassing] = useState(false);
   const [betting, setBetting] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(5);
-  const lastSyncedSecondRef = useRef<number | null>(null);
+  const [timeLeft, setTimeLeft] = useState(PANIC_THRESHOLD);
   const [flashAnim] = useState(new Animated.Value(0));
   const holderName =
     group.players.find((p) => p.id === gameState.currentHolderId)?.name ??
     "Someone";
+
+  // Latest snapshot, read by the watchdog's interval without restarting it.
+  const gameStateRef = useRef(gameState);
+  gameStateRef.current = gameState;
+  const groupLatestRef = useRef(group);
+  groupLatestRef.current = group;
 
   const [clingyRemaining, setClingyRemaining] = useState(0);
   const isClingyLocked =
     gameState.clingy?.holderId === playerId && clingyRemaining > 0;
   const lastAlertedClingyUntilRef = useRef<number | null>(null);
 
-  // ── GHOST WINDOW STATE ──────────────────────────────────────────
-  const ghostWindowActive =
-    !!gameState.ghostWindowEndsAt && Date.now() < gameState.ghostWindowEndsAt;
+  // ── PANIC STAGES ────────────────────────────────────────────────
+  // 1. Ghost window — ghosts with a ticket decide privately. Everyone
+  //    else sees the neutral "getting the room ready" screen.
+  // 2. Ghost reveal — ONLY if at least one ghost accepted. Everyone
+  //    except the accepting ghosts sees the eerie intro; the accepting
+  //    ghosts see the neutral screen. Same fixed length on every phone.
+  // 3. Countdown — the real 5 seconds, identical everywhere.
+  // If no ghost accepts, stage 2 is skipped and nobody learns a ghost
+  // was ever asked.
+  const inGhostWindow = !!gameState.ghostWindowEndsAt;
+  const inGhostReveal =
+    !gameState.ghostWindowEndsAt &&
+    !gameState.panicStartedAt &&
+    !!gameState.ghostRevealEndsAt;
+  const countdownRunning =
+    !gameState.ghostWindowEndsAt && !!gameState.panicStartedAt;
+
   const [ghostWindowRemaining, setGhostWindowRemaining] = useState(0);
-  const countdownStartedRef = useRef(false);
-  const goneAwayStartedRef = useRef(false);
   const myBet = gameState.activeBets?.[playerId];
   const myBettingTickets = gameState.bettingTickets?.[playerId] ?? 0;
   const myResponded = (gameState.ghostResponded ?? []).includes(playerId);
   const acceptedGhostCount = Object.keys(gameState.activeBets ?? {}).length;
-
-  // "Gone away" / bet-confirmation beat — true only in the real gap
-  // between the ghost window ending and the actual 5s countdown
-  // starting. Driven by both fields being absent, not a local timer, so
-  // it's genuinely in sync across every device rather than an
-  // approximation that could drift from what the host is actually doing.
-  const showGoneAway =
-    !gameState.ghostWindowEndsAt && !gameState.panicStartedAt;
+  const iCanBet =
+    inGhostWindow && isGhost && myBettingTickets > 0 && !myResponded && !myBet;
 
   const activePlayers = group.players.filter(
     (player) => !gameState.ghosts.includes(player.id),
@@ -102,9 +234,7 @@ export default function BombPanicScreen({ group, playerId }: Props) {
       gameState.chainPassed.includes(id)
     );
 
-  // ── Ghost window countdown display, everyone — display only, no
-  // side effects here. Ending the window and starting the real
-  // countdown are both handled by separate host-only effects below. ───
+  // ── Ghost window countdown — shown only on the betting ghost's prompt.
   useEffect(() => {
     if (!gameState.ghostWindowEndsAt) {
       setGhostWindowRemaining(0);
@@ -119,72 +249,57 @@ export default function BombPanicScreen({ group, playerId }: Props) {
     return () => clearInterval(interval);
   }, [gameState.ghostWindowEndsAt]);
 
-  // ── Host-only: end the ghost window — early (floor) once every
-  // eligible ghost has responded, otherwise at the full cap. ───────────
+  // ── Panic watchdog — every phone. Moves panic through its stages:
+  // ghost window → (ghost reveal, only if someone accepted) → 5s
+  // countdown → resolution. The host acts on each deadline; everyone
+  // else steps in only if the host is FAILSAFE_GRACE_MS late. Every call
+  // is guarded server-side, so an early or duplicate call does nothing.
   useEffect(() => {
-    if (!isHost || !gameState.ghostWindowEndsAt) {
-      countdownStartedRef.current = false;
-      return;
-    }
-    const endsAt = gameState.ghostWindowEndsAt;
-    const floorAt = endsAt - (GHOST_WINDOW_MAX_MS - GHOST_WINDOW_MIN_MS);
+    const graceMs = isHost ? 0 : FAILSAFE_GRACE_MS;
+    let lastAttempt = 0;
 
-    const eligibleGhostIds = group.players
-      .filter(
-        (p) =>
-          gameState.ghosts.includes(p.id) &&
-          (gameState.bettingTickets?.[p.id] ?? 0) > 0,
-      )
-      .map((p) => p.id);
-    const responded = gameState.ghostResponded ?? [];
-    const allResponded = eligibleGhostIds.every((id) => responded.includes(id));
-
-    const tryEnd = () => {
-      if (countdownStartedRef.current) return;
-      countdownStartedRef.current = true;
-      endGhostWindow(group.id);
+    const attempt = (now: number, action: () => void) => {
+      if (now - lastAttempt < FAILSAFE_RETRY_MS) return;
+      lastAttempt = now;
+      action();
     };
 
-    const target = allResponded ? floorAt : endsAt;
-    const msLeft = Math.max(0, target - Date.now());
-    const timeout = setTimeout(tryEnd, msLeft);
-    return () => clearTimeout(timeout);
-  }, [
-    isHost,
-    gameState.ghostWindowEndsAt,
-    gameState.ghostResponded,
-    gameState.ghosts,
-    gameState.bettingTickets,
-    group.id,
-    group.players,
-  ]);
+    const check = () => {
+      const gs = gameStateRef.current;
+      const g = groupLatestRef.current;
+      if (gs.phase !== "panic") return;
+      const now = Date.now();
 
-  // ── Host-only: once the ghost window has ended (gone) but before the
-  // real countdown has begun, wait out a guaranteed display window for
-  // "gone away" / bet-confirmation, THEN start the real 5s countdown.
-  // This is deliberately a separate step and a separate write from
-  // ending the window — doing both in one write would mean the real
-  // clock is secretly already running while the message is showing,
-  // silently eating into the holder's 5 seconds. ───────────────────────
-  useEffect(() => {
-    if (!isHost) return;
-    if (gameState.ghostWindowEndsAt) {
-      goneAwayStartedRef.current = false;
-      return;
-    }
-    if (gameState.panicStartedAt) return; // real countdown already running
-    if (goneAwayStartedRef.current) return;
-    goneAwayStartedRef.current = true;
-    const timeout = setTimeout(
-      () => startPanicCountdown(group.id),
-      GONE_AWAY_DISPLAY_MS,
-    );
-    return () => clearTimeout(timeout);
-  }, [isHost, gameState.ghostWindowEndsAt, gameState.panicStartedAt, group.id]);
+      if (gs.ghostWindowEndsAt) {
+        // Stage 1: ghost window — the floor if everyone has responded,
+        // otherwise the cap. endGhostWindow re-checks the floor itself,
+        // so asking early is harmless. It either starts the reveal (a
+        // ghost accepted) or goes straight to the countdown (nobody did).
+        const eligible = gs.ghosts.filter(
+          (id) => (gs.bettingTickets?.[id] ?? 0) > 0,
+        );
+        const responded = gs.ghostResponded ?? [];
+        const allResponded = eligible.every((id) => responded.includes(id));
+        const target = allResponded
+          ? gs.ghostWindowEndsAt - (GHOST_WINDOW_MAX_MS - GHOST_WINDOW_MIN_MS)
+          : gs.ghostWindowEndsAt;
+        if (now >= target + graceMs) attempt(now, () => endGhostWindow(g.id));
+      } else if (!gs.panicStartedAt) {
+        // Stage 2: the ghost reveal has run its course.
+        const revealEndsAt = gs.ghostRevealEndsAt ?? 0;
+        if (now >= revealEndsAt + graceMs)
+          attempt(now, () => startPanicCountdown(g.id));
+      } else {
+        // Stage 3: the real countdown has run out.
+        if (now >= gs.panicStartedAt + PANIC_THRESHOLD * 1000 + graceMs)
+          attempt(now, () => resolvePanicOutcome(g));
+      }
+    };
 
-  // True only once the real 5s countdown is running (ghost window over).
-  const countdownRunning =
-    !gameState.ghostWindowEndsAt && !!gameState.panicStartedAt;
+    check();
+    const interval = setInterval(check, 250);
+    return () => clearInterval(interval);
+  }, [isHost, group.id]);
 
   // ── Flash — every player, one loop for the whole countdown. Keyed on
   // countdownRunning (not panicStartedAt), so passes during panic don't
@@ -220,39 +335,15 @@ export default function BombPanicScreen({ group, playerId }: Props) {
     return () => Vibration.cancel();
   }, [gameState.panicStartedAt, countdownRunning]);
 
-  // ── Host-only: drive the 5s countdown and resolve when it ends. ───────
+  // ── Countdown display — every phone computes it locally from
+  // panicStartedAt. No host sync, no per-second writes. ────────────────
   useEffect(() => {
-    if (!isHost || !countdownRunning) return;
-
-    const startedAt = gameState.panicStartedAt!;
-    const remainingMs = Math.max(0, 5000 - (Date.now() - startedAt));
-
-    const updateCountdown = () => {
-      const remaining = Math.max(0, 5 - (Date.now() - startedAt) / 1000);
-      setTimeLeft(remaining);
-      const displayedSecond = Math.ceil(remaining);
-      if (lastSyncedSecondRef.current !== displayedSecond) {
-        lastSyncedSecondRef.current = displayedSecond;
-        void syncBombTimer(group.id, displayedSecond);
-      }
-    };
-
-    updateCountdown();
-    const countdown = setInterval(updateCountdown, 100);
-    const timeout = setTimeout(() => {
-      resolvePanicOutcome(group);
-    }, remainingMs);
-
-    return () => {
-      clearInterval(countdown);
-      clearTimeout(timeout);
-    };
-  }, [isHost, countdownRunning, gameState.panicStartedAt, group.id]);
-
-  useEffect(() => {
-    if (isHost) return;
-    setTimeLeft(gameState.timerRemaining);
-  }, [gameState.timerRemaining, isHost]);
+    if (!countdownRunning) return;
+    const tick = () => setTimeLeft(computePanicRemaining(gameState));
+    tick();
+    const interval = setInterval(tick, 100);
+    return () => clearInterval(interval);
+  }, [countdownRunning, gameState.panicStartedAt]);
 
   useEffect(() => {
     if (!gameState.clingy || gameState.clingy.holderId !== playerId) {
@@ -285,9 +376,13 @@ export default function BombPanicScreen({ group, playerId }: Props) {
     }
   }, [gameState.clingy, playerId]);
 
+  // ── Sounds ─────────────────────────────────────────────────────────
+  // Eerie music only when the reveal actually happens, and not on the
+  // accepting ghosts' own phones (they're on the neutral screen).
   useEffect(() => {
-    if (gameState.ghostWindowEndsAt) playSound(pickGhostPresenceSound());
-  }, [gameState.ghostWindowEndsAt]);
+    if (gameState.ghostRevealEndsAt && !myBet)
+      playSound(pickGhostPresenceSound());
+  }, [gameState.ghostRevealEndsAt]);
 
   useEffect(() => {
     if (!gameState.panicStartedAt || !isHolder) return;
@@ -297,12 +392,14 @@ export default function BombPanicScreen({ group, playerId }: Props) {
       stopSound("panic-start2");
     };
   }, [gameState.panicStartedAt, isHolder]);
-  const prevAcceptedCountRef = useRef(0);
+
+  // Bet confirmation sound — only on the ghost's own phone. Playing it
+  // everywhere would leak that a ghost accepted before the reveal.
+  const hadBetRef = useRef(false);
   useEffect(() => {
-    if (acceptedGhostCount > prevAcceptedCountRef.current)
-      playSound("ghost-bet-placed");
-    prevAcceptedCountRef.current = acceptedGhostCount;
-  }, [acceptedGhostCount]);
+    if (myBet && !hadBetRef.current) playSound("ghost-bet-placed");
+    hadBetRef.current = !!myBet;
+  }, [!!myBet]);
 
   const handleLockIn = async (wire: "red" | "blue") => {
     if (!isHolder || locking || gameState.wireChoice) return;
@@ -351,7 +448,10 @@ export default function BombPanicScreen({ group, playerId }: Props) {
     setBetting(true);
     try {
       const result = await placeBet(group, playerId, wire);
-      if (!result.success && result.reason !== "window-closed") {
+      if (
+        !result.success &&
+        !["window-closed", "already-bet"].includes(result.reason ?? "")
+      ) {
         Alert.alert("Couldn't place bet", "Try again quickly!");
       }
     } finally {
@@ -359,9 +459,14 @@ export default function BombPanicScreen({ group, playerId }: Props) {
     }
   };
 
-  const handleDecline = () => {
-    if (myResponded || myBet) return;
-    declineBet(group, playerId);
+  const handleDecline = async () => {
+    if (betting || myResponded || myBet) return;
+    setBetting(true);
+    try {
+      await declineBet(group, playerId);
+    } finally {
+      setBetting(false);
+    }
   };
 
   const showBombInfo = () => {
@@ -384,88 +489,49 @@ export default function BombPanicScreen({ group, playerId }: Props) {
   };
 
   const lockedWire = gameState.wireChoice;
-  const getDialogContent = (): {
-    title: string;
-    subtitle: string;
-    showBet: boolean;
-  } => {
-    if (showGoneAway) {
-      const myBetNow = gameState.activeBets?.[playerId];
-      if (isGhost && myBetNow) {
-        return {
-          title: "Bet placed 👻",
-          subtitle: `You guessed ${myBetNow.guessedWire === "red" ? "🔴 RED" : "🔵 BLUE"}. Let's see what happens...`,
-          showBet: false,
-        };
-      }
-      return { title: "Oh... it's gone away.", subtitle: "", showBet: false };
-    }
-    if (isGhost && myBettingTickets > 0 && !myResponded) {
+
+  // ── Which full-screen overlay (if any) this phone shows before the
+  // countdown starts. ─────────────────────────────────────────────────
+  type Overlay =
+    | { kind: "bet" }
+    | { kind: "intro"; title: string; subtitle: string }
+    | { kind: "prep"; subtitle?: string };
+
+  const getOverlay = (): Overlay | null => {
+    if (countdownRunning) return null;
+
+    // The betting ghost's private decision.
+    if (iCanBet) return { kind: "bet" };
+
+    // The reveal — everyone except the ghosts who accepted.
+    if (inGhostReveal && !myBet) {
+      const many = acceptedGhostCount > 1;
       return {
-        title: "A spectral shadow looms nearby...",
-        subtitle: `Bet a ticket on which wire is actually safe. Guess right, and if ${holderName} guesses wrong, you can challenge your way back in.`,
-        showBet: true,
+        kind: "intro",
+        title: many
+          ? "The shadows have something to say..."
+          : "A spectral shadow looms nearby...",
+        subtitle: isHolder
+          ? many
+            ? "They're circling you now. 👻👻"
+            : "It has taken an interest in you. 👻"
+          : many
+            ? `${acceptedGhostCount} spirits are watching ${holderName}'s hands.`
+            : `Something is watching ${holderName}'s hands.`,
       };
     }
-    if (isGhost && myBet) {
-      return {
-        title: "Bet placed 👻",
-        subtitle: `You guessed ${myBet.guessedWire === "red" ? "🔴 RED" : "🔵 BLUE"}. Let's see what happens...`,
-        showBet: false,
-      };
-    }
-    if (isGhost && myResponded) {
-      return {
-        title: "Alright, sitting this one out 👻",
-        subtitle:
-          acceptedGhostCount > 0
-            ? acceptedGhostCount === 1
-              ? "One other spirit couldn't resist, though..."
-              : `${acceptedGhostCount} other spirits are circling...`
-            : "No ticket spent — maybe next time.",
-        showBet: false,
-      };
-    }
-    if (isHolder) {
-      if (acceptedGhostCount === 0)
-        return {
-          title: "A spectral shadow looms nearby you...",
-          subtitle: "let's see what it wants.",
-          showBet: false,
-        };
-      if (acceptedGhostCount === 1)
-        return {
-          title: "A hungry shadow has taken interest in you...",
-          subtitle: "it wants a part of your soul. 👻",
-          showBet: false,
-        };
-      return {
-        title: "Several shadows have smelled blood...",
-        subtitle: "they're circling you now. 👻👻👻",
-        showBet: false,
-      };
-    }
-    if (acceptedGhostCount === 0)
-      return {
-        title: "Something stirs...",
-        subtitle: "The shadows are restless tonight.",
-        showBet: false,
-      };
-    if (acceptedGhostCount === 1)
-      return {
-        title: "One spirit made its move...",
-        subtitle: "couldn't resist the temptation.",
-        showBet: false,
-      };
+
+    // Everyone else, and the accepting ghosts during the reveal.
     return {
-      title: "A gaggle of ghosts joined in...",
-      subtitle: "the shadows are getting crowded.",
-      showBet: false,
+      kind: "prep",
+      subtitle: myBet
+        ? `Your bet: ${myBet.guessedWire === "red" ? "🔴 RED" : "🔵 BLUE"}`
+        : undefined,
     };
   };
 
-  const dialogVisible = ghostWindowActive || showGoneAway;
-  const dialog = dialogVisible ? getDialogContent() : null;
+  const overlay = getOverlay();
+
   return (
     <Animated.View
       style={[
@@ -478,7 +544,7 @@ export default function BombPanicScreen({ group, playerId }: Props) {
         },
       ]}
     >
-      {/* Compact header — much smaller footprint than before */}
+      {/* Compact header — stays visible above the overlays */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
           <Text style={styles.warning}>⚠️ FUSE CRITICAL</Text>
@@ -486,14 +552,14 @@ export default function BombPanicScreen({ group, playerId }: Props) {
             {isHolder
               ? lockedWire
                 ? "Locked in — holding our breath..."
-                : gameState.panicStartedAt
+                : countdownRunning
                   ? "Make your move!"
                   : "Hold tight..."
               : `${holderName} is deciding...`}
           </Text>
         </View>
         <Text style={[styles.timer, timeLeft <= 2 && styles.timerUrgent]}>
-          {gameState.panicStartedAt ? `${Math.ceil(timeLeft)}s` : "⏳"}
+          {countdownRunning ? `${Math.ceil(timeLeft)}s` : "⏳"}
         </Text>
         {isHost && (
           <TouchableOpacity style={styles.iconBtn} onPress={handleForceEnd}>
@@ -505,174 +571,194 @@ export default function BombPanicScreen({ group, playerId }: Props) {
         </TouchableOpacity>
       </View>
 
-      {isClingyLocked && (
-        <View style={styles.clingyBox}>
-          <Text style={styles.clingyText}>
-            🔒 Clingy Bomb! Stuck for {Math.ceil(clingyRemaining)}s
-          </Text>
-        </View>
-      )}
-
-      {isHolder ? (
-        <>
-          {/* Instruction — compact, single line-ish, not a huge block */}
-          <View style={styles.instructionBox}>
-            <Text style={styles.instructionText} numberOfLines={2}>
-              {gameState.instructions[playerId] ?? "Pass the bomb quickly!"}
+      <View style={styles.body}>
+        {isClingyLocked && (
+          <View style={styles.clingyBox}>
+            <Text style={styles.clingyText}>
+              🔒 Clingy Bomb! Stuck for {Math.ceil(clingyRemaining)}s
             </Text>
           </View>
+        )}
 
-          {!gameState.panicStartedAt ? (
-            <View style={styles.waitingBox}>
-              <Text style={styles.waitingText}>Hold tight...</Text>
-            </View>
-          ) : lockedWire ? (
-            <View style={styles.lockedInBox}>
-              <Text style={styles.lockedInEmoji}>
-                {lockedWire === "red" ? "🔴" : "🔵"}
-              </Text>
-              <Text style={styles.lockedInText}>
-                Locked in {lockedWire === "red" ? "RED" : "BLUE"} — no take
-                backs. Waiting for the clock...
+        {isHolder ? (
+          <>
+            {/* Instruction — compact, single line-ish, not a huge block */}
+            <View style={styles.instructionBox}>
+              <Text style={styles.instructionText} numberOfLines={2}>
+                {gameState.instructions[playerId] ?? "Pass the bomb quickly!"}
               </Text>
             </View>
-          ) : (
-            <>
-              {/* Equal-priority split: pass list left, wires right */}
-              <View style={styles.actionSplit}>
-                <View style={styles.passColumn}>
-                  <Text style={styles.actionLabel}>PASS TO</Text>
-                  <ScrollView
-                    style={styles.passList}
-                    contentContainerStyle={styles.passListContent}
-                    showsVerticalScrollIndicator={false}
-                  >
-                    {activePlayers
-                      .filter((player) => player.id !== playerId)
-                      .map((player) => {
-                        const blocked = !canPassTo(player.id);
-                        return (
-                          <TouchableOpacity
-                            key={player.id}
-                            style={[
-                              styles.passBtn,
-                              (blocked || isClingyLocked) &&
-                                styles.passBtnDisabled,
-                            ]}
-                            onPress={() => handlePass(player.id)}
-                            disabled={blocked || passing || isClingyLocked}
-                          >
-                            <Text style={styles.passBtnText} numberOfLines={1}>
-                              {player.name}
-                              {blocked ? " 🔗" : ""}
-                            </Text>
-                          </TouchableOpacity>
-                        );
-                      })}
-                  </ScrollView>
-                </View>
 
-                <View style={styles.wireColumn}>
-                  <Text style={styles.actionLabel}>CUT A WIRE</Text>
-                  <View style={styles.wireStack}>
-                    <TouchableOpacity
-                      style={[
-                        styles.wire,
-                        styles.wireRed,
-                        isClingyLocked && styles.wireDisabled,
-                      ]}
-                      onPress={() => handleLockIn("red")}
-                      disabled={locking || isClingyLocked}
+            {!countdownRunning ? (
+              <View style={styles.waitingBox}>
+                <Text style={styles.waitingText}>Hold tight...</Text>
+              </View>
+            ) : lockedWire ? (
+              <View style={styles.lockedInBox}>
+                <Text style={styles.lockedInEmoji}>
+                  {lockedWire === "red" ? "🔴" : "🔵"}
+                </Text>
+                <Text style={styles.lockedInText}>
+                  Locked in {lockedWire === "red" ? "RED" : "BLUE"} — no take
+                  backs. Waiting for the clock...
+                </Text>
+              </View>
+            ) : (
+              <>
+                {/* Equal-priority split: pass list left, wires right */}
+                <View style={styles.actionSplit}>
+                  <View style={styles.passColumn}>
+                    <Text style={styles.actionLabel}>PASS TO</Text>
+                    <ScrollView
+                      style={styles.passList}
+                      contentContainerStyle={styles.passListContent}
+                      showsVerticalScrollIndicator={false}
                     >
-                      <Text style={styles.wireText}>🔴</Text>
-                      <Text style={styles.wireLabelText}>RED</Text>
-                    </TouchableOpacity>
+                      {activePlayers
+                        .filter((player) => player.id !== playerId)
+                        .map((player) => {
+                          const blocked = !canPassTo(player.id);
+                          return (
+                            <TouchableOpacity
+                              key={player.id}
+                              style={[
+                                styles.passBtn,
+                                (blocked || isClingyLocked) &&
+                                  styles.passBtnDisabled,
+                              ]}
+                              onPress={() => handlePass(player.id)}
+                              disabled={blocked || passing || isClingyLocked}
+                            >
+                              <Text
+                                style={styles.passBtnText}
+                                numberOfLines={1}
+                              >
+                                {player.name}
+                                {blocked ? " 🔗" : ""}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                    </ScrollView>
+                  </View>
 
-                    <TouchableOpacity
-                      style={[
-                        styles.wire,
-                        styles.wireBlue,
-                        isClingyLocked && styles.wireDisabled,
-                      ]}
-                      onPress={() => handleLockIn("blue")}
-                      disabled={locking || isClingyLocked}
-                    >
-                      <Text style={styles.wireText}>🔵</Text>
-                      <Text style={styles.wireLabelText}>BLUE</Text>
-                    </TouchableOpacity>
+                  <View style={styles.wireColumn}>
+                    <Text style={styles.actionLabel}>CUT A WIRE</Text>
+                    <View style={styles.wireStack}>
+                      <TouchableOpacity
+                        style={[
+                          styles.wire,
+                          styles.wireRed,
+                          isClingyLocked && styles.wireDisabled,
+                        ]}
+                        onPress={() => handleLockIn("red")}
+                        disabled={locking || isClingyLocked}
+                      >
+                        <Text style={styles.wireText}>🔴</Text>
+                        <Text style={styles.wireLabelText}>RED</Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={[
+                          styles.wire,
+                          styles.wireBlue,
+                          isClingyLocked && styles.wireDisabled,
+                        ]}
+                        onPress={() => handleLockIn("blue")}
+                        disabled={locking || isClingyLocked}
+                      >
+                        <Text style={styles.wireText}>🔵</Text>
+                        <Text style={styles.wireLabelText}>BLUE</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
                 </View>
-              </View>
 
-              <Text style={styles.panicHint}>
-                {isClingyLocked
-                  ? "The clock is still running — you're just stuck holding it."
-                  : "Locking in a wire doesn't reveal the outcome until the clock runs out."}
+                <Text style={styles.panicHint}>
+                  {isClingyLocked
+                    ? "The clock is still running — you're just stuck holding it."
+                    : "Locking in a wire doesn't reveal the outcome until the clock runs out."}
+                </Text>
+              </>
+            )}
+          </>
+        ) : (
+          <View style={styles.watcherBox}>
+            {gameState.personalityEffect === "liar" && (
+              <Text style={styles.liarWarning}>
+                🎭 The lying stops here — these last 5 seconds are real.
               </Text>
-            </>
-          )}
-        </>
-      ) : (
-        <View style={styles.watcherBox}>
-          {gameState.personalityEffect === "liar" && (
-            <Text style={styles.liarWarning}>
-              🎭 The lying stops here — these last 5 seconds are real.
+            )}
+            <Text style={styles.watchingEmoji}>👀</Text>
+            <Text style={styles.watcherSubtitle}>
+              {lockedWire
+                ? `${holderName} locked in a wire. Hold your breath...`
+                : countdownRunning
+                  ? "Hold your breath..."
+                  : "Hold tight..."}
             </Text>
-          )}
-          <Text style={styles.watchingEmoji}>👀</Text>
-          <Text style={styles.watcherSubtitle}>
-            {lockedWire
-              ? `${holderName} locked in a wire. Hold your breath...`
-              : gameState.panicStartedAt
-                ? "Hold your breath..."
-                : "Hold tight..."}
-          </Text>
-        </View>
-      )}
-
-      {dialog && (
-        <View style={styles.bottomDialog}>
-          <Text style={styles.dialogIcon}>👻</Text>
-          <View style={styles.dialogTextArea}>
-            <TypewriterText text={dialog.title} style={styles.dialogTitle} />
-            {dialog.subtitle !== "" && (
-              <TypewriterText
-                text={dialog.subtitle}
-                style={styles.dialogSubtitle}
-              />
-            )}
-            {dialog.showBet && (
-              <View style={styles.dialogBetRow}>
-                <TouchableOpacity
-                  style={styles.dialogBetBtnRed}
-                  onPress={() => handleBet("red")}
-                  disabled={betting}
-                >
-                  <Text style={styles.dialogBetBtnText}>🔴 Bet Red</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.dialogBetBtnBlue}
-                  onPress={() => handleBet("blue")}
-                  disabled={betting}
-                >
-                  <Text style={styles.dialogBetBtnText}>🔵 Bet Blue</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={styles.dialogDeclineBtn}
-                  onPress={handleDecline}
-                >
-                  <Text style={styles.dialogDeclineBtnText}>✋</Text>
-                </TouchableOpacity>
-              </View>
-            )}
           </View>
-          {ghostWindowActive && (
-            <Text style={styles.dialogTimer}>
+        )}
+
+        {/* ── Pre-countdown overlays ─────────────────────────────── */}
+        {overlay?.kind === "prep" && (
+          <PrepOverlay subtitle={overlay.subtitle} />
+        )}
+
+        {overlay?.kind === "intro" && (
+          <View style={[styles.overlay, styles.overlayEerie]}>
+            <Text style={styles.overlayEmoji}>👻</Text>
+            <TypewriterText
+              text={overlay.title}
+              style={[styles.overlayTitle, styles.overlayTitleEerie]}
+            />
+            <TypewriterText
+              text={overlay.subtitle}
+              style={styles.overlaySubtitle}
+            />
+          </View>
+        )}
+
+        {overlay?.kind === "bet" && (
+          <View style={[styles.overlay, styles.overlayEerie]}>
+            <Text style={styles.overlayEmoji}>👻</Text>
+            <TypewriterText
+              text={`${holderName} is about to cut a wire...`}
+              style={[styles.overlayTitle, styles.overlayTitleEerie]}
+            />
+            <Text style={styles.overlaySubtitle}>
+              Bet a ticket on which wire is actually safe. Guess right, and if{" "}
+              {holderName} guesses wrong, you can challenge your way back in.
+            </Text>
+            <View style={styles.betRow}>
+              <TouchableOpacity
+                style={[styles.betBtn, styles.betBtnRed]}
+                onPress={() => handleBet("red")}
+                disabled={betting}
+              >
+                <Text style={styles.betBtnText}>🔴 Bet Red</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.betBtn, styles.betBtnBlue]}
+                onPress={() => handleBet("blue")}
+                disabled={betting}
+              >
+                <Text style={styles.betBtnText}>🔵 Bet Blue</Text>
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={styles.declineBtn}
+              onPress={handleDecline}
+              disabled={betting}
+            >
+              <Text style={styles.declineBtnText}>Sit this one out</Text>
+            </TouchableOpacity>
+            <Text style={styles.betTimer}>
               {ghostWindowRemaining.toFixed(1)}s
             </Text>
-          )}
-        </View>
-      )}
+          </View>
+        )}
+      </View>
     </Animated.View>
   );
 }
@@ -683,6 +769,7 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingTop: 50,
   },
+  body: { flex: 1 },
   header: {
     flexDirection: "row",
     alignItems: "center",
@@ -762,7 +849,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
 
-  // Equal-priority split — this is the core layout change
+  // Equal-priority split — pass list left, wires right
   actionSplit: {
     flex: 1,
     flexDirection: "row",
@@ -857,102 +944,65 @@ const styles = StyleSheet.create({
   watchingEmoji: { fontSize: 64, marginBottom: 12 },
   watcherSubtitle: { color: "#888", fontSize: 14, textAlign: "center" },
 
-  // ── Ghost window styles ──────────────────────────────────────────
   waitingBox: { flex: 1, alignItems: "center", justifyContent: "center" },
   waitingText: { color: "#555", fontSize: 14, fontStyle: "italic" },
 
-  bottomDialog: {
+  // ── Pre-countdown overlays (cover the body; header stays visible) ──
+  overlay: {
     position: "absolute",
-    bottom: 0,
+    top: 0,
     left: 0,
     right: 0,
-    flexDirection: "row",
-    alignItems: "flex-start",
-    backgroundColor: "rgba(10,10,10,0.95)",
-    borderTopWidth: 2,
-    borderColor: "#333",
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
-    padding: 14,
-    paddingBottom: 24,
-    gap: 10,
-  },
-  dialogIcon: { fontSize: 28 },
-  dialogTextArea: { flex: 1 },
-  dialogTitle: {
-    color: "#fff",
-    fontSize: 14,
-    fontWeight: "700",
-    marginBottom: 2,
-  },
-  dialogSubtitle: { color: "#aaa", fontSize: 12, lineHeight: 17 },
-  dialogTimer: { color: "#555", fontSize: 11, fontWeight: "600" },
-  dialogBetRow: { flexDirection: "row", gap: 8, marginTop: 10 },
-  dialogBetBtnRed: {
-    backgroundColor: "#3A0000",
-    borderWidth: 1,
-    borderColor: "#FF0000",
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-  },
-  dialogBetBtnBlue: {
-    backgroundColor: "#00003A",
-    borderWidth: 1,
-    borderColor: "#0000FF",
-    borderRadius: 8,
-    paddingVertical: 8,
-    paddingHorizontal: 10,
-  },
-  dialogBetBtnText: { color: "#fff", fontSize: 12, fontWeight: "700" },
-  dialogDeclineBtn: { padding: 8 },
-  dialogDeclineBtnText: { fontSize: 16, opacity: 0.5 },
-  ghostTimer: {
-    color: "#888",
-    fontSize: 16,
-    fontWeight: "700",
-    marginBottom: 20,
-  },
-  ghostTitle: {
-    color: "#fff",
-    fontSize: 19,
-    fontWeight: "700",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  ghostSubtitle: {
-    color: "#888",
-    fontSize: 13,
-    textAlign: "center",
-    lineHeight: 19,
-    marginBottom: 24,
-    paddingHorizontal: 10,
-  },
-  ghostHint: {
-    color: "#555",
-    fontSize: 11,
-    fontStyle: "italic",
-    marginTop: 18,
-    textAlign: "center",
-  },
-  betWireContainer: { flexDirection: "row", gap: 20 },
-  betWire: {
-    width: 110,
-    height: 110,
-    borderRadius: 55,
+    bottom: 0,
     alignItems: "center",
     justifyContent: "center",
-    borderWidth: 3,
+    paddingHorizontal: 28,
+    borderRadius: 16,
+    zIndex: 10,
   },
-  betWireRed: { backgroundColor: "#3A0000", borderColor: "#FF0000" },
-  betWireBlue: { backgroundColor: "#00003A", borderColor: "#0000FF" },
-  betWireText: { fontSize: 26, marginBottom: 2 },
-  betWireLabelText: {
+  overlayPrep: { backgroundColor: "#0D0D0D" },
+  overlayEerie: { backgroundColor: "#0B0614" },
+  overlayEmoji: { fontSize: 56, marginBottom: 18 },
+  overlayTitle: {
     color: "#fff",
-    fontSize: 11,
-    fontWeight: "bold",
-    letterSpacing: 1,
+    fontSize: 20,
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 10,
   },
+  overlayTitleEerie: { color: "#C9B8FF" },
+  dotsRow: {
+    flexDirection: "row",
+    gap: 8,
+    height: 24,
+    alignItems: "flex-end",
+    marginTop: 6,
+    marginBottom: 14,
+  },
+  dot: {
+    width: 9,
+    height: 9,
+    borderRadius: 4.5,
+    backgroundColor: "#FF4500",
+  },
+  overlaySubtitle: {
+    color: "#999",
+    fontSize: 14,
+    textAlign: "center",
+    lineHeight: 20,
+  },
+
+  betRow: { flexDirection: "row", gap: 12, marginTop: 24 },
+  betBtn: {
+    borderWidth: 1.5,
+    borderRadius: 12,
+    paddingVertical: 14,
+    paddingHorizontal: 18,
+  },
+  betBtnRed: { backgroundColor: "#3A0000", borderColor: "#FF0000" },
+  betBtnBlue: { backgroundColor: "#00003A", borderColor: "#0000FF" },
+  betBtnText: { color: "#fff", fontSize: 15, fontWeight: "700" },
   declineBtn: { marginTop: 16, padding: 10 },
-  declineBtnText: { color: "#555", fontSize: 12, fontStyle: "italic" },
+  declineBtnText: { color: "#777", fontSize: 13, fontStyle: "italic" },
+  betTimer: { color: "#555", fontSize: 12, fontWeight: "600", marginTop: 8 },
 });
