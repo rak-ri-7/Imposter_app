@@ -15,9 +15,9 @@ import {
   duelFffManualPass,
   getDuelFffHint,
   decideDuelFastestFinger,
+  explodeDuelFuse,
 } from "../logic/duelFastestFinger";
-import { explodeBomb } from "../logic/game";
-
+import { FAILSAFE_GRACE_MS, FAILSAFE_RETRY_MS } from "../logic/game";
 type Props = { group: Group; playerId: string };
 
 export default function BombDuelFastestFingerScreen({
@@ -45,17 +45,25 @@ export default function BombDuelFastestFingerScreen({
   const [passing, setPassing] = useState(false);
 
   // Hidden overall-explosion-risk timer — hint text only, never a number.
+  // Every phone watches it: the host detonates on time, the other phone
+  // steps in FAILSAFE_GRACE_MS later if the host is gone. explodeDuelFuse
+  // is a guarded transaction, so extra calls do nothing.
   useEffect(() => {
     const startedAt = gameState.duelFffTimerStartedAt;
     const duration = gameState.duelFffTimerDuration;
     if (!startedAt || !duration) return;
 
+    const fireAt =
+      startedAt + duration * 1000 + (isHost ? 0 : FAILSAFE_GRACE_MS);
+    let lastAttempt = 0;
+
     const tick = () => {
-      const elapsed = (Date.now() - startedAt) / 1000;
-      const remaining = Math.max(0, duration - elapsed);
+      const now = Date.now();
+      const remaining = Math.max(0, duration - (now - startedAt) / 1000);
       setHint(getDuelFffHint(remaining / duration));
-      if (remaining <= 0 && isHost) {
-        explodeBomb(group);
+      if (now >= fireAt && now - lastAttempt >= FAILSAFE_RETRY_MS) {
+        lastAttempt = now;
+        explodeDuelFuse(group);
       }
     };
     tick();

@@ -303,10 +303,14 @@ export type BombGameState = {
     hpTotalPasses?: number;
     hpLazy?: { from: string; to: string; arrivesAt: number };
     hpNap?: { from: number; until: number };
-
-
-
-
+    hpContext?: 'duel' | 'tournament';
+    hpPlayers?: string[];      // the fixed pass order
+    hpHolderId?: string;
+    hpPassMin?: number;
+    hpPassMax?: number;
+    hpDudPlayerId?: string;
+    lastDudId?: string;
+    hpDudLine?: number;
 
     // Seating / directional passes
     seatingOrder: string[];
@@ -355,7 +359,10 @@ export type WireBet = {
 };
 
 export type GhostTournamentState = {
-    stage: 'intro' | 'question' | 'between' | 'result';
+    stage: 'intro' | 'question' | 'fuse' | 'between' | 'result';
+    mode?: 'quiz' | 'hot-potato';
+    modeVotes?: Record<string, 'quiz' | 'hot-potato'>;
+    introMinUntil?: number;
     wireCutterId: string;
     contenderIds: string[];
     poolIds: string[];
@@ -364,6 +371,8 @@ export type GhostTournamentState = {
     lastEliminatedId?: string;
     winnerId?: string;
     debug?: boolean;
+    lastDudLine?: number;
+    lastDudId?: string;
 };
 
 export const emptyBombState: BombGameState = {

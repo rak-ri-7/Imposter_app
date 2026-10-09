@@ -1,33 +1,96 @@
-// ── HOT POTATO DUEL ──────────────────────────────────────────────
-// The final 2-player duel. A hidden timer (10–50s) and a limited pass
-// budget. No wires: whoever is holding the bomb when the timer runs out
-// loses a life.
+// ── HOT POTATO ENGINE ─────────────────────────────────────────────
+// Shared by two modes:
+//   • 'duel'       — the final 2-player duel. The holder when the fuse
+//                    runs out loses a life; the other player scores.
+//   • 'tournament' — the ghost challenge (wire-cutter + the ghosts who bet
+//                    right). Any number of players. Whoever is holding it when
+//                    the fuse runs out is knocked out; a fresh fuse starts with
+//                    the rest, until one is left — they win the life.
 //
-// The bomb's mood is driven by HOW the players pass, decided on the
-// server inside each pass so every phone sees the same thing:
-//   😐 Neutral — plain hidden timer (start of every duel)
+// Pass order is fixed per fuse: hpPlayers is the order, and a pass always
+// goes to the next player in it (wrapping round). In the tournament the
+// order is shuffled at the start of every fuse and the first player in it
+// starts holding. Nobody chooses who gets it.
+//
+// A hidden fuse and a limited pass budget. No wires. The bomb's mood is
+// driven by HOW the players pass, decided on the server inside each pass:
+//   😐 Neutral — plain hidden fuse (start of every fuse)
 //   😠 Angry   — quick back-and-forth passing → the fuse speeds up
 //   😴 Lazy    — holding it a long time → after a pass the bomb takes
 //                1–4s to actually leave (longer holds = lazier). If the
-//                timer runs out mid-delay, it blows up on the PASSER.
+//                fuse runs out mid-delay, it blows up on the PASSER.
 //   🥱 Bored   — steady, same-rhythm passing → random naps where the
 //                fuse stops for a few seconds
-// Mood shifts are weighted dice rolls, not fixed thresholds, so the same
-// play doesn't always produce the same mood.
+// Mood shifts are weighted dice rolls, not fixed thresholds.
+//
+// When the fuse hits zero the bomb freezes in whoever's hands it's in and
+// a ~3.5s finale plays on every phone (countdown, last words). Only then
+// does it resolve — and 1 time in 5 it's a DUD: it fizzles and the holder
+// survives. The dud is rolled at that moment, so nothing in the state can
+// give it away beforehand.
 
-import { doc, runTransaction, deleteField } from 'firebase/firestore';
+import { doc, runTransaction, deleteField, increment } from 'firebase/firestore';
 import { db } from '../../../shared/firebase/config';
 import { Group, BombGameState } from '../../../shared/types';
 import { addScore } from '../../../shared/firebase/groups';
-import { FUSE_POINTS, applyFusePoints, ROUND_WIN_SCORE } from './bombHelpers';
+import {
+    FUSE_POINTS,
+    applyFusePoints,
+    applyLifeGain,
+    ROUND_WIN_SCORE,
+} from './bombHelpers';
 
 export type HpMood = 'neutral' | 'angry' | 'lazy' | 'bored';
+export type HpContext = 'duel' | 'tournament';
 
 // ── Tuning ────────────────────────────────────────────────────────
-export const HP_PASS_MIN = 4;
-export const HP_PASS_MAX = 7;
-const HP_TIMER_MIN_S = 10;
-const HP_TIMER_MAX_S = 50;
+const SETTINGS: Record<
+    HpContext,
+    { timerMin: number; timerMax: number; passMin: number; passMax: number }
+> = {
+    duel: { timerMin: 10, timerMax: 50, passMin: 4, passMax: 7 },
+    // Several fuses in a row, so each one is shorter and tighter.
+    tournament: { timerMin: 8, timerMax: 30, passMin: 3, passMax: 5 },
+};
+
+export const HP_TOURNAMENT_BETWEEN_MS = 2500; // "X is out!" beat between fuses
+export const HP_FINALE_MS = 3500;  // dramatic build-up between zero and the result
+export const HP_DUD_CHANCE = 0.2;  // 1 in 5 bombs are duds
+
+// What went wrong with the dud — one is picked by the server when it happens
+// (stored as an index), so every phone shows the same line.
+export const HP_DUD_LINES: { emoji: string; title: string; line: string }[] = [
+    {
+        emoji: '🌬️',
+        title: 'Saved by the breeze',
+        line: 'The fuse was a hair from the end when a gust of wind snuffed the spark out. Get rid of it before someone finds a lighter.',
+    },
+    {
+        emoji: '☕',
+        title: 'Not quite gunpowder',
+        line: "Turns out the gunpowder was mostly chai powder. Somebody's getting a refund.",
+    },
+    {
+        emoji: '😮‍💨',
+        title: 'It just… gave up',
+        line: "The bomb coughed, wheezed and went back to sleep. Whatever you do, don't wake it.",
+    },
+    {
+        emoji: '🌧️',
+        title: 'Damp fuse',
+        line: "A drop of rain landed right on the fuse. Pure luck. Don't push it.",
+    },
+    {
+        emoji: '🔌',
+        title: 'Factory defect',
+        line: 'Someone forgot to connect the wires. Quality control has been notified.',
+    },
+];
+
+export const hpDudLine = (index?: number) =>
+    HP_DUD_LINES[(index ?? 0) % HP_DUD_LINES.length];
+
+const pickDudLine = () => Math.floor(Math.random() * HP_DUD_LINES.length);
 
 const FAST_HOLD_MS = 1500;    // average hold below this → angry territory
 const SLOW_HOLD_MS = 6000;    // a single hold above this → lazy territory
@@ -52,8 +115,31 @@ const MAX_PASS_HISTORY = 50;
 
 const rand = (min: number, max: number) => min + Math.random() * (max - min);
 
-// ── Clock helpers (shared by server functions and the screen) ─────
-// The fuse runs from hpTimerStartedAt at hpSpeed, except during a nap.
+const shuffled = <T,>(arr: T[]): T[] => {
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+};
+
+// ── State helpers (shared by server functions and the screen) ─────
+
+export const hpContextOf = (gs: BombGameState): HpContext =>
+    (gs.hpContext ?? 'duel') as HpContext;
+
+// Is a fuse running right now, in the phase it belongs to?
+export const hpIsLive = (gs: BombGameState): boolean => {
+    if (gs.hpTimerStartedAt == null) return false;
+    return hpContextOf(gs) === 'tournament'
+        ? gs.phase === 'ghost-tournament' && gs.ghostTournament?.stage === 'fuse'
+        : gs.phase === 'duel';
+};
+
+// Who has the bomb right now (a lazy pass hasn't landed until it lands).
+export const hpHolder = (gs: BombGameState): string =>
+    gs.hpHolderId ?? gs.currentHolderId;
 
 const napOverlapMs = (gs: BombGameState, from: number, to: number): number => {
     const nap = gs.hpNap;
@@ -81,9 +167,21 @@ export const hpZeroAt = (gs: BombGameState): number => {
 export const hpIsNapping = (gs: BombGameState, now = Date.now()): boolean =>
     !!gs.hpNap && now >= gs.hpNap.from && now < gs.hpNap.until;
 
-// Who actually has the bomb at time t — a lazy pass only lands when it arrives.
+// The fuse has hit zero: the bomb is frozen and the finale is playing.
+export const hpInFinale = (gs: BombGameState, now = Date.now()): boolean =>
+    hpIsLive(gs) && now >= hpZeroAt(gs);
+
+// Who actually had the bomb at time t — a lazy pass only lands when it arrives.
 export const hpHolderAt = (gs: BombGameState, t: number): string =>
-    gs.hpLazy && gs.hpLazy.arrivesAt <= t ? gs.hpLazy.to : gs.currentHolderId;
+    gs.hpLazy && gs.hpLazy.arrivesAt <= t ? gs.hpLazy.to : hpHolder(gs);
+
+// The player a pass from `fromId` goes to: the next one in the fixed order.
+export const hpNextInOrder = (gs: BombGameState, fromId: string): string | undefined => {
+    const order = gs.hpPlayers ?? [];
+    const i = order.indexOf(fromId);
+    if (i < 0 || order.length < 2) return undefined;
+    return order[(i + 1) % order.length];
+};
 
 export const hpPassesUsed = (gs: BombGameState, playerId: string): number =>
     gs.hpPassMode === 'each'
@@ -91,29 +189,54 @@ export const hpPassesUsed = (gs: BombGameState, playerId: string): number =>
         : gs.hpTotalPasses ?? 0;
 
 export const hpOutOfPasses = (gs: BombGameState, playerId: string): boolean =>
-    hpPassesUsed(gs, playerId) >= (gs.hpPassBudget ?? HP_PASS_MIN);
+    hpPassesUsed(gs, playerId) >= (gs.hpPassBudget ?? SETTINGS.duel.passMin);
 
 // ── Start / reset ─────────────────────────────────────────────────
-// Folded into markDuelReady's write when both players are ready.
-export const buildHotPotatoStart = (now: number): Record<string, unknown> => ({
-    'gameState.hpTimerStartedAt': now,
-    'gameState.hpTimerDuration': rand(HP_TIMER_MIN_S, HP_TIMER_MAX_S),
-    'gameState.hpSpeed': 1,
-    'gameState.hpMood': 'neutral',
-    'gameState.hpMoodLockUntil': 0,
-    'gameState.hpHolds': [],
-    'gameState.hpHoldStartedAt': now,
-    'gameState.hpPassMode': Math.random() < 0.5 ? 'each' : 'total',
-    'gameState.hpPassBudget':
-        HP_PASS_MIN + Math.floor(Math.random() * (HP_PASS_MAX - HP_PASS_MIN + 1)),
-    'gameState.hpPassCounts': {},
-    'gameState.hpTotalPasses': 0,
-    'gameState.hpLazy': deleteField(),
-    'gameState.hpNap': deleteField(),
-});
+// Returns the fields for a fresh fuse; fold them into the write that
+// starts the duel (markDuelReady) or a tournament stage.
+// Duel: pass the duelists with the starting holder; their order is kept.
+// Tournament: the order is shuffled here and the first player starts holding.
+export const buildHotPotatoStart = (opts: {
+    now: number;
+    players: string[];
+    holderId?: string;
+    context: HpContext;
+}): Record<string, unknown> => {
+    const s = SETTINGS[opts.context];
+    const order = opts.context === 'tournament' ? shuffled(opts.players) : opts.players;
+    const holderId = opts.context === 'tournament' ? order[0] : opts.holderId ?? order[0];
+    // "Total" only makes sense for two; with a group it'd run out in seconds.
+    const passMode =
+        opts.players.length === 2 && Math.random() < 0.5 ? 'total' : 'each';
+    return {
+        'gameState.hpContext': opts.context,
+        'gameState.hpPlayers': order,
+        'gameState.hpHolderId': holderId,
+        'gameState.hpTimerStartedAt': opts.now,
+        'gameState.hpTimerDuration': rand(s.timerMin, s.timerMax),
+        'gameState.hpSpeed': 1,
+        'gameState.hpMood': 'neutral',
+        'gameState.hpMoodLockUntil': 0,
+        'gameState.hpHolds': [],
+        'gameState.hpHoldStartedAt': opts.now,
+        'gameState.hpPassMode': passMode,
+        'gameState.hpPassMin': s.passMin,
+        'gameState.hpPassMax': s.passMax,
+        'gameState.hpPassBudget':
+            s.passMin + Math.floor(Math.random() * (s.passMax - s.passMin + 1)),
+        'gameState.hpPassCounts': {},
+        'gameState.hpTotalPasses': 0,
+        'gameState.hpLazy': deleteField(),
+        'gameState.hpNap': deleteField(),
+    };
+};
 
-// Clears every hot potato field — used when a round starts.
+// Clears every hot potato field — used when a round starts or a
+// tournament ends.
 export const hotPotatoResetFields = (): Record<string, unknown> => ({
+    'gameState.hpContext': deleteField(),
+    'gameState.hpPlayers': deleteField(),
+    'gameState.hpHolderId': deleteField(),
     'gameState.hpTimerStartedAt': deleteField(),
     'gameState.hpTimerDuration': deleteField(),
     'gameState.hpSpeed': deleteField(),
@@ -122,11 +245,15 @@ export const hotPotatoResetFields = (): Record<string, unknown> => ({
     'gameState.hpHolds': deleteField(),
     'gameState.hpHoldStartedAt': deleteField(),
     'gameState.hpPassMode': deleteField(),
+    'gameState.hpPassMin': deleteField(),
+    'gameState.hpPassMax': deleteField(),
     'gameState.hpPassBudget': deleteField(),
     'gameState.hpPassCounts': deleteField(),
     'gameState.hpTotalPasses': deleteField(),
     'gameState.hpLazy': deleteField(),
     'gameState.hpNap': deleteField(),
+    'gameState.hpDudPlayerId': deleteField(),
+    'gameState.hpDudLine': deleteField(),
 });
 
 // ── Mood ──────────────────────────────────────────────────────────
@@ -171,10 +298,11 @@ export type HotPotatoPassResult = {
     reason?: 'stale' | 'no-passes' | 'in-transit';
 };
 
+// The target is always the next player in the fixed order — worked out
+// here from fresh data, so a stale screen can't pass out of turn.
 export const hotPotatoPass = async (
     group: Group,
-    fromId: string,
-    toId: string
+    fromId: string
 ): Promise<HotPotatoPassResult> => {
     const groupRef = doc(db, 'groups', group.id);
     let result: HotPotatoPassResult = { success: false, reason: 'stale' };
@@ -186,8 +314,10 @@ export const hotPotatoPass = async (
             const snap = await transaction.get(groupRef);
             if (!snap.exists()) return;
             const gs = snap.data().gameState as BombGameState;
-            if (gs.phase !== 'duel' || gs.hpTimerStartedAt == null) return;
-            if (gs.currentHolderId !== fromId) return;
+            if (!hpIsLive(gs)) return;
+            if (hpHolder(gs) !== fromId) return;
+            const toId = hpNextInOrder(gs, fromId);
+            if (!toId) return;
             if (gs.hpLazy) {
                 result = { success: false, reason: 'in-transit' };
                 return;
@@ -200,6 +330,7 @@ export const hotPotatoPass = async (
                 return;
             }
 
+            const isDuel = hpContextOf(gs) === 'duel';
             const counts = gs.hpPassCounts ?? {};
             const total = gs.hpTotalPasses ?? 0;
             const holdMs = Math.max(0, now - (gs.hpHoldStartedAt ?? now));
@@ -211,15 +342,15 @@ export const hotPotatoPass = async (
                 'gameState.hpHolds': holds,
                 'gameState.hpPassCounts': { ...counts, [fromId]: (counts[fromId] ?? 0) + 1 },
                 'gameState.hpTotalPasses': total + 1,
-                'gameState.passHistory': [
+            };
+            // Only the duel is part of the round's story — the tournament's
+            // passes stay out of the replay and the hold stats.
+            if (isDuel) {
+                updates['gameState.passHistory'] = [
                     ...gs.passHistory,
                     { from: fromId, to: toId, timestamp: now, instruction: '(Hot potato)' },
-                ].slice(-MAX_PASS_HISTORY),
-                'gameState.holdCounts': {
-                    ...gs.holdCounts,
-                    [toId]: (gs.holdCounts?.[toId] ?? 0) + 1,
-                },
-            };
+                ].slice(-MAX_PASS_HISTORY);
+            }
             if (mood !== prevMood) {
                 updates['gameState.hpMood'] = mood;
                 updates['gameState.hpMoodLockUntil'] = total + 1 + MOOD_LOCK_PASSES;
@@ -240,8 +371,7 @@ export const hotPotatoPass = async (
             const scheduleNap = mood === 'bored' && napFree && Math.random() < NAP_CHANCE;
 
             // Changing the speed or replacing a finished nap means re-basing the
-            // clock: carry the real remaining time forward from now, so nothing
-            // already burned (or slept through) is counted twice.
+            // clock: carry the real remaining time forward from now.
             if (speed !== prevSpeed || (scheduleNap && gs.hpNap)) {
                 updates['gameState.hpTimerStartedAt'] = now;
                 updates['gameState.hpTimerDuration'] = hpRemaining(gs, now);
@@ -265,8 +395,15 @@ export const hotPotatoPass = async (
                 );
                 updates['gameState.hpLazy'] = { from: fromId, to: toId, arrivesAt: now + delay };
             } else {
-                updates['gameState.currentHolderId'] = toId;
+                updates['gameState.hpHolderId'] = toId;
                 updates['gameState.hpHoldStartedAt'] = now;
+                if (isDuel) {
+                    updates['gameState.currentHolderId'] = toId;
+                    updates['gameState.holdCounts'] = {
+                        ...gs.holdCounts,
+                        [toId]: (gs.holdCounts?.[toId] ?? 0) + 1,
+                    };
+                }
             }
 
             transaction.update(groupRef, updates);
@@ -288,24 +425,98 @@ export const completeLazyTransfer = async (groupId: string): Promise<void> => {
             const snap = await transaction.get(groupRef);
             if (!snap.exists()) return;
             const gs = snap.data().gameState as BombGameState;
-            if (gs.phase !== 'duel' || !gs.hpLazy) return;
+            if (!hpIsLive(gs) || !gs.hpLazy) return;
             if (Date.now() < gs.hpLazy.arrivesAt - CLOCK_TOLERANCE_MS) return;
+            // Fuse is at or past zero: don't land the pass — explodeHotPotato
+            // decides who was really holding it (hpHolderAt).
+            if (Date.now() >= hpZeroAt(gs) - CLOCK_TOLERANCE_MS) return;
 
-            transaction.update(groupRef, {
-                'gameState.currentHolderId': gs.hpLazy.to,
+            const to = gs.hpLazy.to;
+            const updates: Record<string, unknown> = {
+                'gameState.hpHolderId': to,
                 'gameState.hpHoldStartedAt': gs.hpLazy.arrivesAt,
                 'gameState.hpLazy': deleteField(),
-            });
+            };
+            if (hpContextOf(gs) === 'duel') {
+                updates['gameState.currentHolderId'] = to;
+                updates['gameState.holdCounts'] = {
+                    ...gs.holdCounts,
+                    [to]: (gs.holdCounts?.[to] ?? 0) + 1,
+                };
+            }
+            transaction.update(groupRef, updates);
         });
     } catch (e) {
         if (__DEV__) console.warn('[completeLazyTransfer] transaction failed', e);
     }
 };
 
+// ── Tournament outcome ────────────────────────────────────────────
+// The victim is knocked out. More than one left → a short "X is out!"
+// beat, then a fresh fuse (advanceTournamentStage). One left → they win
+// the life (a ghost comes back; the wire-cutter gets back the life the
+// bomb took). Nobody loses a life in the tournament.
+const tournamentOutcome = (gs: BombGameState, victim: string): Record<string, unknown> => {
+    const t = gs.ghostTournament!;
+    const poolIds = t.poolIds.filter((id) => id !== victim);
+    const eliminatedIds = [...t.eliminatedIds, victim];
+
+    if (poolIds.length > 1) {
+        return {
+            ...hotPotatoResetFields(),
+            'gameState.ghostTournament': {
+                ...t,
+                stage: 'between',
+                poolIds,
+                eliminatedIds,
+                lastEliminatedId: victim,
+                nextStageAt: Date.now() + HP_TOURNAMENT_BETWEEN_MS,
+            },
+        };
+    }
+
+    const winnerId = poolIds[0];
+    const updates: Record<string, unknown> = {
+        ...hotPotatoResetFields(),
+        'gameState.ghostTournament': {
+            ...t,
+            stage: 'result',
+            poolIds,
+            eliminatedIds,
+            lastEliminatedId: victim,
+            winnerId,
+        },
+    };
+    if (!t.debug && winnerId) {
+        applyLifeGain(updates, gs, winnerId);
+        if (winnerId !== t.wireCutterId) {
+            updates[`scores.${winnerId}`] = increment(ROUND_WIN_SCORE);
+        }
+    }
+    return updates;
+};
+
+// A dud in the tournament: nobody is knocked out — the holder survives and
+// a fresh fuse (new order) starts after the usual beat.
+const tournamentDud = (gs: BombGameState, holder: string): Record<string, unknown> => {
+    const t = gs.ghostTournament!;
+    return {
+        ...hotPotatoResetFields(),
+        'gameState.ghostTournament': {
+            ...t,
+            stage: 'between',
+            lastDudId: holder,
+            lastDudLine: pickDudLine(),
+            nextStageAt: Date.now() + HP_TOURNAMENT_BETWEEN_MS,
+        },
+    };
+};
+
 // ── Explosion ─────────────────────────────────────────────────────
-// Any phone may call this once the fuse hits zero (host first, others as
-// backup). Whoever held the bomb at that exact moment loses a life — if a
-// lazy pass hadn't landed yet, that's the passer.
+// Any phone may call this once the fuse has hit zero AND the finale has
+// played (host first, others as backup). Whoever held the bomb at the
+// moment it hit zero is hit — if a lazy pass hadn't landed yet, that's the
+// passer — unless it turns out to be a dud.
 export const explodeHotPotato = async (group: Group): Promise<void> => {
     const groupRef = doc(db, 'groups', group.id);
     // Typed this way so TypeScript doesn't narrow it to `null` after the
@@ -319,15 +530,41 @@ export const explodeHotPotato = async (group: Group): Promise<void> => {
             const snap = await transaction.get(groupRef);
             if (!snap.exists()) return;
             const gs = snap.data().gameState as BombGameState;
-            if (gs.phase !== 'duel' || gs.hpTimerStartedAt == null) return;
+            if (!hpIsLive(gs)) return;
 
             const zeroAt = hpZeroAt(gs);
-            if (Date.now() < zeroAt - CLOCK_TOLERANCE_MS) return; // too early
+            // Too early — the fuse hasn't run out, or the finale is still playing.
+            if (Date.now() < zeroAt + HP_FINALE_MS - CLOCK_TOLERANCE_MS) return;
 
             const victim = hpHolderAt(gs, zeroAt);
-            const survivor =
-                group.players.find((p) => p.id !== victim && !gs.ghosts.includes(p.id))?.id;
+            const dud = Math.random() < HP_DUD_CHANCE; // rolled now, never stored early
 
+            if (hpContextOf(gs) === 'tournament') {
+                transaction.update(
+                    groupRef,
+                    dud ? tournamentDud(gs, victim) : tournamentOutcome(gs, victim)
+                );
+                return;
+            }
+
+            if (dud) {
+                // Duel dud: the round ends, nobody loses a life, nobody scores.
+                transaction.update(groupRef, {
+                    'gameState.phase': 'exploded',
+                    'gameState.defused': false,
+                    'gameState.explodedPlayerId': victim,
+                    'gameState.hpDudPlayerId': victim,
+                    'gameState.hpDudLine': pickDudLine(),
+                    'gameState.currentHolderId': victim,
+                    'gameState.hpHolderId': victim,
+                    'gameState.wireChoice': deleteField(),
+                    'gameState.hpLazy': deleteField(),
+                });
+                return;
+            }
+
+            // Duel: the victim loses a life, the other duelist scores.
+            const survivor = (gs.hpPlayers ?? []).find((id) => id !== victim);
             const currentLives = gs.lives[victim] ?? 0;
             const newLives = Math.max(0, currentLives - 1);
             const eliminated = newLives === 0 && !gs.ghosts.includes(victim);
@@ -337,6 +574,7 @@ export const explodeHotPotato = async (group: Group): Promise<void> => {
                 'gameState.defused': false,
                 'gameState.explodedPlayerId': victim,
                 'gameState.currentHolderId': victim,
+                'gameState.hpHolderId': victim,
                 'gameState.wireChoice': deleteField(),
                 'gameState.hpLazy': deleteField(),
                 'gameState.lives': { ...gs.lives, [victim]: newLives },

@@ -15,6 +15,7 @@ import {
   pickDefuseSound,
 } from "../../../shared/sounds/soundManager";
 import { beginGhostTournament } from "../logic/ghostTournament";
+import { hpDudLine } from "../logic/hotPotatoDuel";
 
 type Props = {
   group: Group;
@@ -36,6 +37,9 @@ export default function BombExplodedScreen({ group, playerId }: Props) {
   const wasImmune = gameState.ghostImmunePlayers.includes(
     gameState.explodedPlayerId ?? "",
   );
+  const wasDud =
+    !!gameState.hpDudPlayerId &&
+    gameState.hpDudPlayerId === gameState.explodedPlayerId;
   const pendingTournament = gameState.pendingGhostTournament;
   const shieldSaved =
     !!gameState.shieldAbsorbedPlayerId &&
@@ -64,7 +68,7 @@ export default function BombExplodedScreen({ group, playerId }: Props) {
   // screen shows. Explosion intensity scales with roundNumber; defuse
   // and ghost-immunity both use the same "survived" sound.
   useEffect(() => {
-    if (gameState.defused || wasImmune || shieldSaved) {
+    if (gameState.defused || wasImmune || shieldSaved || wasDud) {
       playSound(pickDefuseSound());
     } else {
       playSound(explosionSoundForRound(gameState.roundNumber));
@@ -78,7 +82,27 @@ export default function BombExplodedScreen({ group, playerId }: Props) {
           { opacity: fadeAnim, transform: [{ scale: scaleAnim }] },
         ]}
       >
-        {shieldSaved ? (
+        {wasDud ? (
+          <>
+            <Text style={styles.emoji}>
+              {hpDudLine(gameState.hpDudLine).emoji}
+            </Text>
+            <Text style={[styles.title, { color: "#AAAAAA" }]}>
+              THE BOMB JUST DIDN'T GO OFF!
+            </Text>
+            <Text style={styles.dudTitle}>
+              {hpDudLine(gameState.hpDudLine).title}
+            </Text>
+            <Text style={styles.subtitle}>
+              {hpDudLine(gameState.hpDudLine).line}
+            </Text>
+            <Text style={styles.immuneDesc}>
+              {isMe
+                ? "It fizzled in your hands. You live!"
+                : `It fizzled on ${explodedPlayer?.name}. No life lost.`}
+            </Text>
+          </>
+        ) : shieldSaved ? (
           <>
             <Text style={styles.emoji}>🛡️</Text>
             <Text style={[styles.title, { color: "#5FD38D" }]}>SHIELD UP!</Text>
@@ -324,4 +348,11 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   challengeNames: { color: "#aaa", fontSize: 12, textAlign: "center" },
+  dudTitle: {
+    color: "#AAAAAA",
+    fontSize: 16,
+    fontWeight: "800",
+    marginBottom: 8,
+    textAlign: "center",
+  },
 });

@@ -3,7 +3,7 @@ import { db } from '../../../shared/firebase/config';
 import { Group, BombGameState, ActiveQuiz } from '../../../shared/types';
 import { getRandomQuestion, generateQuizInstance } from '../data/quizQuestions';
 import { addScore } from '../../../shared/firebase/groups';
-import { ROUND_WIN_SCORE } from './bombHelpers';
+import { ROUND_WIN_SCORE, FUSE_POINTS, applyFusePoints } from './bombHelpers';
 
 const DUEL_FFF_IDLE_TIMEOUT_MS = 8000; // silent-skip window
 const DUEL_FFF_LOCK_MS = 3000;         // holder lock duration on failure
@@ -11,6 +11,7 @@ const DUEL_FFF_HIDDEN_TIMER_MIN = 25;  // seconds — never shown to players
 const DUEL_FFF_HIDDEN_TIMER_MAX = 45;
 const MAX_PASS_HISTORY = 50;
 const MAX_USED_QUIZ_QUESTIONS = 40;
+const CLOCK_TOLERANCE_MS = 500;
 
 const getRandomHiddenDuration = () =>
     Math.floor(
@@ -406,4 +407,77 @@ export const closeTrialByCombat = async (groupId: string): Promise<void> => {
         'gameState.penaltyWireChoice': deleteField(),
         'gameState.penaltyResult': deleteField(),
     });
+};
+
+// ── FUSE RUNS OUT (Fastest Finger / Hot Seat duels) ───────────────
+// Whoever is holding the bomb when the hidden duel fuse hits zero loses a
+// life; the other duelist survives the round and scores. A guarded
+// transaction, so the host and backup phones can all call it safely.
+// Only for the real duel phase — Trial by Combat uses the same timer
+// fields during 'penalty' and has its own resolveTbcTimeout.
+export const explodeDuelFuse = async (group: Group): Promise<void> => {
+    const groupRef = doc(db, 'groups', group.id);
+    let survivorId = null as string | null;
+
+    try {
+        await runTransaction(db, async (transaction) => {
+            survivorId = null; // a retried attempt must not inherit the last one's result
+
+            const snap = await transaction.get(groupRef);
+            if (!snap.exists()) return;
+            const gs = snap.data().gameState as BombGameState;
+
+            if (gs.phase !== 'duel') return;
+            if (gs.duelMode !== 'fastest-finger' && gs.duelMode !== 'hot-seat') return;
+            const startedAt = gs.duelFffTimerStartedAt;
+            const duration = gs.duelFffTimerDuration;
+            if (!startedAt || !duration) return;
+            if (Date.now() < startedAt + duration * 1000 - CLOCK_TOLERANCE_MS) return;
+
+            const victim = gs.currentHolderId;
+            const survivor = group.players.find(
+                (p) => p.id !== victim && !gs.ghosts.includes(p.id)
+            )?.id;
+
+            const currentLives = gs.lives[victim] ?? 0;
+            const newLives = Math.max(0, currentLives - 1);
+            const eliminated = newLives === 0 && !gs.ghosts.includes(victim);
+
+            const updates: Record<string, unknown> = {
+                'gameState.phase': 'exploded',
+                'gameState.defused': false,
+                'gameState.explodedPlayerId': victim,
+                'gameState.wireChoice': deleteField(),
+                'gameState.lives': { ...gs.lives, [victim]: newLives },
+                'gameState.lastLifeLostPlayerId': victim,
+                'gameState.activeQuiz': deleteField(),
+                'gameState.duelFffTimerStartedAt': deleteField(),
+                'gameState.duelFffTimerDuration': deleteField(),
+                'gameState.duelFffLockedUntil': deleteField(),
+                'gameState.duelFffHolderCanPass': deleteField(),
+                'gameState.duelFffLockReason': deleteField(),
+            };
+            if (eliminated) {
+                updates['gameState.ghosts'] = [...gs.ghosts, victim];
+                updates['gameState.ghostEvents'] = [...(gs.ghostEvents ?? []), victim];
+                if (!(gs.everGhosted ?? []).includes(victim)) {
+                    updates['gameState.everGhosted'] = [...(gs.everGhosted ?? []), victim];
+                }
+            }
+
+            applyFusePoints(updates, gs, victim, FUSE_POINTS.WIRE_EXPLODED_SELF, 'Out of time!');
+            if (survivor) {
+                applyFusePoints(updates, gs, survivor, FUSE_POINTS.WIRE_DEFUSED, 'Survived the duel round!');
+            }
+
+            transaction.update(groupRef, updates);
+            survivorId = survivor ?? null;
+        });
+    } catch (e) {
+        if (__DEV__) console.warn('[explodeDuelFuse] transaction failed', e);
+    }
+
+    if (survivorId) {
+        await addScore(group.id, survivorId, ROUND_WIN_SCORE, group.scores);
+    }
 };

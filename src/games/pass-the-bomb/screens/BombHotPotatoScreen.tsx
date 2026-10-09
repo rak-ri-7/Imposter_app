@@ -13,11 +13,12 @@ import {
   completeLazyTransfer,
   explodeHotPotato,
   hpZeroAt,
+  hpIsLive,
   hpIsNapping,
+  hpHolder,
+  hpNextInOrder,
   hpPassesUsed,
   hpOutOfPasses,
-  HP_PASS_MIN,
-  HP_PASS_MAX,
   HpMood,
 } from "../logic/hotPotatoDuel";
 import { FAILSAFE_GRACE_MS, FAILSAFE_RETRY_MS } from "../logic/game";
@@ -25,6 +26,9 @@ import { FAILSAFE_GRACE_MS, FAILSAFE_RETRY_MS } from "../logic/game";
 type Props = {
   group: Group;
   playerId: string;
+  title?: string;
+  subtitle?: string;
+  watchText?: string; // shown to non-players instead of the default line
 };
 
 const MOODS: Record<
@@ -34,7 +38,7 @@ const MOODS: Record<
   neutral: {
     emoji: "😐",
     title: "Watching you",
-    line: "The bomb is sizing you both up.",
+    line: "The bomb is sizing everyone up.",
     color: "#AAAAAA",
     pulseMs: 550,
   },
@@ -61,15 +65,24 @@ const MOODS: Record<
   },
 };
 
-export default function BombHotPotatoScreen({ group, playerId }: Props) {
+export default function BombHotPotatoScreen({
+  group,
+  playerId,
+  title = "🔥 HOT POTATO",
+  subtitle = "Final duel · no clock, no wires",
+  watchText,
+}: Props) {
   const gameState = group.gameState as BombGameState;
   const isHost = group.hostId === playerId;
-  const isHolder = gameState.currentHolderId === playerId;
-  const opponent = group.players.find(
-    (p) => p.id !== playerId && !gameState.ghosts.includes(p.id),
-  );
   const nameOf = (id?: string) =>
     group.players.find((p) => p.id === id)?.name ?? "Someone";
+
+  const players = gameState.hpPlayers ?? [];
+  const holderId = hpHolder(gameState);
+  const isPlayer = players.includes(playerId);
+  const isHolder = holderId === playerId;
+  // Passes always go to the next player in the fixed order.
+  const nextId = hpNextInOrder(gameState, playerId);
 
   const mood = (gameState.hpMood ?? "neutral") as HpMood;
   const moodInfo = MOODS[mood];
@@ -77,12 +90,27 @@ export default function BombHotPotatoScreen({ group, playerId }: Props) {
   const lingeringWithMe = isHolder && lazy?.from === playerId;
   const driftingToMe = lazy?.to === playerId;
   const outOfPasses = hpOutOfPasses(gameState, playerId);
-  const passMode = gameState.hpPassMode ?? "total";
+  const passMode = gameState.hpPassMode ?? "each";
 
   const [acting, setActing] = useState(false);
   const [now, setNow] = useState(Date.now());
-  const [pulseAnim] = useState(new Animated.Value(1));
-  const [moodFade] = useState(new Animated.Value(1));
+  const [pulseAnim] = useState(() => new Animated.Value(1));
+  const [moodFade] = useState(() => new Animated.Value(1));
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 1800);
+  };
+
+  useEffect(
+    () => () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    },
+    [],
+  );
 
   // Latest snapshot for the watchdog, without restarting its interval.
   const gameStateRef = useRef(gameState);
@@ -90,14 +118,22 @@ export default function BombHotPotatoScreen({ group, playerId }: Props) {
   const groupLatestRef = useRef(group);
   groupLatestRef.current = group;
 
-  // Local clock, only used for the nap banner.
+  // Local clock, only while a nap is scheduled or happening — drives the
+  // nap banner without re-rendering every 250ms all fuse long.
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 250);
+    const nap = gameState.hpNap;
+    if (!nap || Date.now() >= nap.until) return;
+    setNow(Date.now());
+    const t = setInterval(() => {
+      const n = Date.now();
+      setNow(n);
+      if (n >= nap.until) clearInterval(t);
+    }, 250);
     return () => clearInterval(t);
-  }, []);
+  }, [gameState.hpNap?.from, gameState.hpNap?.until]);
   const napping = hpIsNapping(gameState, now);
 
-  // ── Watchdog — every phone. Lands lazy passes and detonates the bomb.
+  // ── Watchdog — every phone. Detonates the bomb and lands lazy passes.
   // The host acts on time; everyone else steps in FAILSAFE_GRACE_MS late
   // if the host is gone. Both server calls are guarded transactions. ────
   useEffect(() => {
@@ -112,14 +148,15 @@ export default function BombHotPotatoScreen({ group, playerId }: Props) {
     const check = () => {
       const gs = gameStateRef.current;
       const g = groupLatestRef.current;
-      if (gs.phase !== "duel" || gs.hpTimerStartedAt == null) return;
+      if (!hpIsLive(gs)) return;
       const t = Date.now();
 
-      if (gs.hpLazy && t >= gs.hpLazy.arrivesAt + graceMs) {
-        attempt("lazy", t, () => completeLazyTransfer(g.id));
-      }
       if (t >= hpZeroAt(gs) + graceMs) {
         attempt("boom", t, () => explodeHotPotato(g));
+        return; // fuse is out — never land a lazy pass in the same tick
+      }
+      if (gs.hpLazy && t >= gs.hpLazy.arrivesAt + graceMs) {
+        attempt("lazy", t, () => completeLazyTransfer(g.id));
       }
     };
 
@@ -149,6 +186,7 @@ export default function BombHotPotatoScreen({ group, playerId }: Props) {
       loop.stop();
       pulseAnim.setValue(1);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mood]);
 
   // Mood change: fade the badge in and give a little buzz.
@@ -165,47 +203,65 @@ export default function BombHotPotatoScreen({ group, playerId }: Props) {
       useNativeDriver: true,
     }).start();
     Vibration.vibrate([0, 80, 60, 80]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mood]);
 
   // Buzz when the bomb lands in your hands.
   useEffect(() => {
     if (isHolder && !lazy) Vibration.vibrate(120);
-  }, [gameState.currentHolderId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [holderId]);
 
   const handlePass = async () => {
-    if (!isHolder || acting || !opponent || lazy || outOfPasses) return;
+    if (!isHolder || acting || lazy || outOfPasses || !nextId) return;
     setActing(true);
     try {
-      await hotPotatoPass(group, playerId, opponent.id);
+      const result = await hotPotatoPass(group, playerId);
+      if (!result.success) {
+        Vibration.vibrate([0, 60, 40, 60]);
+        showToast(
+          result.reason === "no-passes"
+            ? "🔒 No passes left — you're holding it."
+            : result.reason === "in-transit"
+              ? "😴 It's still dragging its feet…"
+              : "💥 Too late — that pass didn't go through!",
+        );
+      }
     } finally {
       setActing(false);
     }
   };
 
-  const passLabel = `${HP_PASS_MIN}–${HP_PASS_MAX} passes ${
+  const passLabel = `${gameState.hpPassMin ?? 4}–${gameState.hpPassMax ?? 7} passes ${
     passMode === "each" ? "each" : "total"
   }`;
   const passCountLine =
-    passMode === "each"
-      ? `You've used ${hpPassesUsed(gameState, playerId)} · ${nameOf(
-          opponent?.id,
-        )} ${opponent ? hpPassesUsed(gameState, opponent.id) : 0}`
-      : `${gameState.hpTotalPasses ?? 0} used between you`;
+    passMode === "total"
+      ? `${gameState.hpTotalPasses ?? 0} used between you`
+      : !isPlayer
+        ? `${gameState.hpTotalPasses ?? 0} passes so far`
+        : players.length === 2 && nextId
+          ? `You've used ${hpPassesUsed(gameState, playerId)} · ${nameOf(
+              nextId,
+            )} ${hpPassesUsed(gameState, nextId)}`
+          : `You've used ${hpPassesUsed(gameState, playerId)}`;
 
   const statusLine = lingeringWithMe
     ? "😴 You passed it… but it hasn't left your hands yet."
     : driftingToMe
       ? `😴 It's dragging its feet over from ${nameOf(lazy?.from)}…`
       : lazy
-        ? `😴 ${nameOf(lazy.from)} passed it… it's taking its time.`
+        ? `😴 ${nameOf(lazy.from)} passed it to ${nameOf(lazy.to)}… it's taking its time.`
         : isHolder
           ? "YOU'RE HOLDING IT"
-          : `${nameOf(gameState.currentHolderId)} is holding it`;
+          : `${nameOf(holderId)} is holding it`;
+
+  const canPass = isHolder && !lingeringWithMe && !outOfPasses;
 
   return (
     <View style={styles.container}>
-      <Text style={styles.banner}>🔥 HOT POTATO</Text>
-      <Text style={styles.sub}>Final duel · no clock, no wires</Text>
+      <Text style={styles.banner}>{title}</Text>
+      <Text style={styles.sub}>{subtitle}</Text>
 
       {/* Mood badge */}
       <Animated.View
@@ -222,6 +278,36 @@ export default function BombHotPotatoScreen({ group, playerId }: Props) {
           <Text style={styles.moodLine}>{moodInfo.line}</Text>
         </View>
       </Animated.View>
+
+      {/* Pass order — only worth showing in a group */}
+      {players.length > 2 && (
+        <View style={styles.orderBox}>
+          <Text style={styles.orderLabel}>PASS ORDER</Text>
+          <View style={styles.playerRow}>
+            {players.map((id, i) => (
+              <View key={id} style={styles.orderItem}>
+                <View
+                  style={[styles.chip, id === holderId && styles.chipHolder]}
+                >
+                  <Text
+                    style={[
+                      styles.chipText,
+                      id === holderId && styles.chipTextHolder,
+                    ]}
+                  >
+                    {id === holderId ? "💣 " : ""}
+                    {nameOf(id)}
+                    {id === playerId ? " (you)" : ""}
+                  </Text>
+                </View>
+                <Text style={styles.orderArrow}>
+                  {i < players.length - 1 ? "→" : "↺"}
+                </Text>
+              </View>
+            ))}
+          </View>
+        </View>
+      )}
 
       {/* The bomb */}
       <Animated.View
@@ -252,33 +338,38 @@ export default function BombHotPotatoScreen({ group, playerId }: Props) {
       </View>
 
       {/* Holder controls */}
-      {isHolder && !lingeringWithMe ? (
-        outOfPasses ? (
-          <View style={styles.lockedBox}>
-            <Text style={styles.lockedTitle}>🔒 No passes left</Text>
-            <Text style={styles.lockedLine}>Hold on. And pray.</Text>
-          </View>
-        ) : (
-          <TouchableOpacity
-            style={[styles.passBtn, acting && styles.passBtnDisabled]}
-            onPress={handlePass}
-            disabled={acting || !opponent}
-          >
-            <Text style={styles.passBtnText}>
-              Pass to {opponent?.name ?? "opponent"} →
-            </Text>
-          </TouchableOpacity>
-        )
+      {isHolder && !lingeringWithMe && outOfPasses ? (
+        <View style={styles.lockedBox}>
+          <Text style={styles.lockedTitle}>🔒 No passes left</Text>
+          <Text style={styles.lockedLine}>Hold on. And pray.</Text>
+        </View>
+      ) : canPass && nextId ? (
+        <TouchableOpacity
+          style={[styles.passBtn, acting && styles.passBtnDisabled]}
+          onPress={handlePass}
+          disabled={acting}
+        >
+          <Text style={styles.passBtnText}>Pass to {nameOf(nextId)} →</Text>
+        </TouchableOpacity>
       ) : !isHolder ? (
         <View style={styles.watchBox}>
           <Text style={styles.watchEmoji}>👀</Text>
-          <Text style={styles.watchText}>Wait for it…</Text>
+          <Text style={styles.watchText}>
+            {isPlayer
+              ? "Wait for it…"
+              : (watchText ?? "Watching from a safe distance…")}
+          </Text>
         </View>
       ) : null}
 
+      {toast && (
+        <View pointerEvents="none" style={styles.toast}>
+          <Text style={styles.toastText}>{toast}</Text>
+        </View>
+      )}
+
       <Text style={styles.footer}>
-        ✂️ No wires this time. Holding bomb when it blows = straight to heaven.
-        😇
+        ✂️ No wires. Holding it when it blows = straight to heaven. 😇
       </Text>
     </View>
   );
@@ -297,8 +388,15 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: "bold",
     letterSpacing: 2,
+    textAlign: "center",
   },
-  sub: { color: "#777", fontSize: 12, marginTop: 4, marginBottom: 18 },
+  sub: {
+    color: "#777",
+    fontSize: 12,
+    marginTop: 4,
+    marginBottom: 18,
+    textAlign: "center",
+  },
 
   moodCard: {
     flexDirection: "row",
@@ -309,12 +407,41 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     borderWidth: 1.5,
     padding: 12,
-    marginBottom: 18,
+    marginBottom: 14,
   },
   moodEmoji: { fontSize: 34 },
   moodText: { flex: 1 },
   moodTitle: { fontSize: 15, fontWeight: "800" },
   moodLine: { color: "#999", fontSize: 12, marginTop: 2, lineHeight: 17 },
+
+  orderBox: { width: "100%", alignItems: "center", marginBottom: 14 },
+  orderLabel: {
+    color: "#777",
+    fontSize: 10,
+    fontWeight: "bold",
+    letterSpacing: 1.5,
+    marginBottom: 6,
+  },
+  playerRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    alignItems: "center",
+    rowGap: 8,
+  },
+  orderItem: { flexDirection: "row", alignItems: "center" },
+  orderArrow: { color: "#555", fontSize: 14, marginHorizontal: 6 },
+  chip: {
+    backgroundColor: "#1A1A1A",
+    borderRadius: 10,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderWidth: 1,
+    borderColor: "#333",
+  },
+  chipHolder: { borderColor: "#FF4500", backgroundColor: "#2A0A0A" },
+  chipText: { color: "#999", fontSize: 12 },
+  chipTextHolder: { color: "#FF4500", fontWeight: "800" },
 
   bombCard: {
     width: "100%",
@@ -323,12 +450,12 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     borderWidth: 1,
     borderColor: "#333",
-    paddingVertical: 28,
+    paddingVertical: 24,
     paddingHorizontal: 16,
     marginBottom: 14,
   },
   bombCardHolder: { borderColor: "#FF4500", backgroundColor: "#2A0A0A" },
-  bombEmoji: { fontSize: 72, marginBottom: 10 },
+  bombEmoji: { fontSize: 64, marginBottom: 10 },
   status: { color: "#aaa", fontSize: 14, textAlign: "center", lineHeight: 20 },
   statusHolder: {
     color: "#FF4500",
@@ -347,7 +474,7 @@ const styles = StyleSheet.create({
   },
   napText: { color: "#C9B8FF", fontSize: 13, fontWeight: "600" },
 
-  passInfo: { alignItems: "center", marginBottom: 18 },
+  passInfo: { alignItems: "center", marginBottom: 16 },
   passRange: { color: "#FFD700", fontSize: 14, fontWeight: "800" },
   passCount: { color: "#888", fontSize: 12, marginTop: 3 },
 
@@ -376,6 +503,26 @@ const styles = StyleSheet.create({
   watchBox: { alignItems: "center", marginTop: 4 },
   watchEmoji: { fontSize: 48 },
   watchText: { color: "#888", fontSize: 13, marginTop: 6 },
+
+  toast: {
+    position: "absolute",
+    top: 12,
+    left: 16,
+    right: 16,
+    backgroundColor: "rgba(26,26,26,0.96)",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#FFD700",
+    paddingVertical: 10,
+    paddingHorizontal: 14,
+    zIndex: 20,
+  },
+  toastText: {
+    color: "#FFD700",
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "center",
+  },
 
   footer: {
     color: "#444",

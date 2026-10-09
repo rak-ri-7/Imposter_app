@@ -1,15 +1,48 @@
 import { useEffect, useRef, useState } from "react";
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import {
+  View,
+  Text,
+  TouchableOpacity,
+  StyleSheet,
+  Vibration,
+} from "react-native";
 import { Group, BombGameState } from "../../../shared/types";
 import { submitQuizAnswer } from "../logic/Fastestfinger";
 import {
   advanceTournamentStage,
   resolveTournamentQuestion,
   closeGhostTournament,
+  voteTournamentMode,
+  tournamentChallengers,
+  TournamentMode,
+  QUESTION_HARD_CAP_MS,
 } from "../logic/ghostTournament";
-import { playSound } from "../../../shared/sounds/soundManager";
+import { FAILSAFE_GRACE_MS, FAILSAFE_RETRY_MS } from "../logic/game";
+import {
+  playSound,
+  explosionSoundForRound,
+  pickDefuseSound,
+} from "../../../shared/sounds/soundManager";
+import BombHotPotatoScreen from "./BombHotPotatoScreen";
+import { hpDudLine } from "../logic/hotPotatoDuel";
 
 type Props = { group: Group; playerId: string };
+
+const MODE_INFO: Record<
+  TournamentMode,
+  { emoji: string; name: string; line: string }
+> = {
+  quiz: {
+    emoji: "⚡",
+    name: "Quiz Showdown",
+    line: "Everyone answers at once. Worst answer is out each round.",
+  },
+  "hot-potato": {
+    emoji: "🔥",
+    name: "Hot Potato",
+    line: "Pass it round in a set order. Holding it when it blows? You're out.",
+  },
+};
 
 export default function BombGhostTournamentScreen({ group, playerId }: Props) {
   const gameState = group.gameState as BombGameState;
@@ -21,52 +54,93 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
 
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [myAnswer, setMyAnswer] = useState<number | null>(null);
-  const resolvingRef = useRef(false);
+  const [voting, setVoting] = useState(false);
+  const [now, setNow] = useState(Date.now());
 
   const getName = (id: string) =>
     group.players.find((p) => p.id === id)?.name ?? "Unknown";
   const inPool = !!tournament?.poolIds.includes(playerId);
   const wasEliminated = !!tournament?.eliminatedIds.includes(playerId);
 
+  const challengers = tournament ? tournamentChallengers(tournament) : [];
+  const votes = (tournament?.modeVotes ?? {}) as Record<string, TournamentMode>;
+  const allVoted = challengers.every((id) => !!votes[id]);
+  const amChallenger = challengers.includes(playerId);
+  const myVote = votes[playerId];
+
   useEffect(() => {
     playSound("tbc-start");
   }, []);
 
-  // Host: move 'intro' / 'between' on to the next question once its
-  // timer has passed. The function is idempotent, so a retry is harmless.
+  // Intro countdown display (vote window).
   useEffect(() => {
-    if (!isHost || !nextStageAt) return;
-    if (stage !== "intro" && stage !== "between") return;
-    const interval = setInterval(() => {
-      if (Date.now() >= nextStageAt) advanceTournamentStage(group.id);
-    }, 400);
-    return () => clearInterval(interval);
-  }, [isHost, stage, nextStageAt, group.id]);
+    if (stage !== "intro") return;
+    const t = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [stage]);
 
-  // Host: resolve the question once every contender has answered, or the
-  // window since the FIRST answer has run out. Nothing happens while nobody
-  // has answered — same "let them think" rule as the other quiz modes.
+  // ── Stage watchdog — every phone. Moves intro / between on to the next
+  // question or fuse. The host acts on time; everyone else steps in
+  // FAILSAFE_GRACE_MS late if the host is gone. The server re-checks
+  // everything, so early or repeated calls do nothing. ─────────────────
   useEffect(() => {
-    if (!isHost || stage !== "question" || !activeQuiz || !tournament) return;
+    if (stage !== "intro" && stage !== "between") return;
+    const graceMs = isHost ? 0 : FAILSAFE_GRACE_MS;
+    let lastAttempt = 0;
+    const check = () => {
+      const t = Date.now();
+      let due: number | undefined;
+      if (stage === "intro") {
+        const minAt = tournament?.introMinUntil ?? 0;
+        due = allVoted ? minAt : nextStageAt;
+      } else {
+        due = nextStageAt;
+      }
+      if (!due || t < due + graceMs || t - lastAttempt < FAILSAFE_RETRY_MS)
+        return;
+      lastAttempt = t;
+      advanceTournamentStage(group.id);
+    };
+    check();
+    const interval = setInterval(check, 250);
+    return () => clearInterval(interval);
+  }, [
+    isHost,
+    stage,
+    nextStageAt,
+    allVoted,
+    tournament?.introMinUntil,
+    group.id,
+  ]);
+
+  // ── Quiz mode: resolve the question once every contender has answered,
+  // or the window since the FIRST answer has run out. Nothing happens while
+  // nobody has answered — same "let them think" rule as the other quiz
+  // modes. Host on time, everyone else as a backup. ────────────────────
+  useEffect(() => {
+    if (stage !== "question" || !activeQuiz || !tournament) return;
     const poolIds = tournament.poolIds;
     const startedAt = activeQuiz.startedAt;
+    const graceMs = isHost ? 0 : FAILSAFE_GRACE_MS;
+    let lastAttempt = 0;
 
     const check = () => {
-      if (resolvingRef.current) return;
       const stamps = poolIds
         .map((id) => activeQuiz.answers[id]?.timestamp)
         .filter((ts): ts is number => ts !== undefined);
-      if (stamps.length === 0) return;
-
+      // Normally the clock only starts at the first answer ("let them
+      // think"). If nobody answers at all, the hard cap resolves it anyway.
       const everyoneIn = stamps.length === poolIds.length;
-      const windowOver =
-        Date.now() - Math.min(...stamps) >= activeQuiz.durationMs;
-      if (!everyoneIn && !windowOver) return;
-
-      resolvingRef.current = true;
-      resolveTournamentQuestion(group.id, startedAt).finally(() => {
-        resolvingRef.current = false;
-      });
+      const due =
+        stamps.length === 0
+          ? startedAt + QUESTION_HARD_CAP_MS
+          : everyoneIn
+            ? Math.max(...stamps)
+            : Math.min(...stamps) + activeQuiz.durationMs;
+      const t = Date.now();
+      if (t < due + graceMs || t - lastAttempt < FAILSAFE_RETRY_MS) return;
+      lastAttempt = t;
+      resolveTournamentQuestion(group.id, startedAt);
     };
 
     check();
@@ -74,7 +148,7 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
     return () => clearInterval(interval);
   }, [isHost, stage, activeQuiz, tournament?.poolIds, group.id]);
 
-  // Countdown display — blank until someone has answered.
+  // Quiz countdown display — blank until someone has answered.
   useEffect(() => {
     if (stage !== "question" || !activeQuiz) {
       setTimeLeft(null);
@@ -98,10 +172,42 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
     setMyAnswer(null);
   }, [activeQuiz?.startedAt]);
 
+  // Someone was knocked out — boom and buzz on every phone, once per
+  // knockout. Knockouts from before this screen mounted don't replay.
+  const eliminatedCount = tournament?.eliminatedIds.length ?? 0;
+  const seenEliminatedRef = useRef(eliminatedCount);
+  useEffect(() => {
+    if (eliminatedCount > seenEliminatedRef.current) {
+      Vibration.vibrate(500);
+      playSound(explosionSoundForRound(gameState.roundNumber));
+    }
+    seenEliminatedRef.current = eliminatedCount;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eliminatedCount]);
+
+  // A dud — the relief sound, once.
+  const dudId =
+    tournament?.stage === "between" ? tournament.lastDudId : undefined;
+  useEffect(() => {
+    if (!dudId) return;
+    Vibration.vibrate(150);
+    playSound(pickDefuseSound());
+  }, [dudId, tournament?.nextStageAt]);
+
   const handleTap = async (index: number) => {
     if (myAnswer !== null || !inPool) return;
     setMyAnswer(index);
     await submitQuizAnswer(group, playerId, index);
+  };
+
+  const handleVote = async (mode: TournamentMode) => {
+    if (!amChallenger || voting) return;
+    setVoting(true);
+    try {
+      await voteTournamentMode(group.id, playerId, mode);
+    } finally {
+      setVoting(false);
+    }
   };
 
   if (!tournament) {
@@ -111,6 +217,10 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
       </View>
     );
   }
+
+  const modeName = tournament.mode
+    ? MODE_INFO[tournament.mode as TournamentMode].name
+    : "";
 
   const renderPool = () => (
     <View style={styles.poolRow}>
@@ -128,8 +238,29 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
     </View>
   );
 
-  // ── Intro ─────────────────────────────────────────────────────────
+  // ── Hot potato fuse — the shared hot potato screen does the rest ────
+  if (tournament.stage === "fuse") {
+    return (
+      <BombHotPotatoScreen
+        group={group}
+        playerId={playerId}
+        title="👻 GHOST CHALLENGE"
+        subtitle={`${tournament.poolIds.length} still standing · last one standing wins the life`}
+        watchText={
+          wasEliminated
+            ? "💥 You're out of the challenge — watching the rest sweat."
+            : undefined
+        }
+      />
+    );
+  }
+
+  // ── Intro + mode vote ─────────────────────────────────────────────
   if (tournament.stage === "intro") {
+    const secondsLeft = Math.max(
+      0,
+      Math.ceil(((tournament.nextStageAt ?? now) - now) / 1000),
+    );
     return (
       <View style={styles.centerContainer}>
         <Text style={styles.title}>👻 GHOST CHALLENGE</Text>
@@ -152,15 +283,52 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
               >
                 {id === tournament.wireCutterId
                   ? "🛡️ Defending"
-                  : "👻 Challenger"}
+                  : votes[id]
+                    ? `👻 ${MODE_INFO[votes[id]].emoji} voted`
+                    : "👻 Choosing..."}
               </Text>
             </View>
           ))}
         </View>
-        <Text style={styles.rules}>
-          Everyone answers at once. The weakest answer is out each round. Last
-          one standing wins the life.
+
+        <Text style={styles.voteLabel}>
+          {amChallenger
+            ? challengers.length > 1
+              ? "PICK THE GAME — MAJORITY WINS"
+              : "PICK THE GAME"
+            : "THE CHALLENGERS ARE PICKING THE GAME"}
         </Text>
+        <View style={styles.voteRow}>
+          {(Object.keys(MODE_INFO) as TournamentMode[]).map((mode) => {
+            const info = MODE_INFO[mode];
+            const count = Object.values(votes).filter((v) => v === mode).length;
+            const mine = myVote === mode;
+            return (
+              <TouchableOpacity
+                key={mode}
+                style={[styles.voteCard, mine && styles.voteCardMine]}
+                onPress={() => handleVote(mode)}
+                disabled={!amChallenger || voting}
+                activeOpacity={amChallenger ? 0.7 : 1}
+              >
+                <Text style={styles.voteEmoji}>{info.emoji}</Text>
+                <Text style={styles.voteName}>{info.name}</Text>
+                <Text style={styles.voteLine}>{info.line}</Text>
+                {count > 0 && (
+                  <Text style={styles.voteCount}>
+                    {count} vote{count === 1 ? "" : "s"}
+                  </Text>
+                )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+        <Text style={styles.rules}>
+          {allVoted
+            ? "Votes are in — starting..."
+            : `Starting in ${secondsLeft}s · a tie is a coin flip`}
+        </Text>
+        <Text style={styles.rules}>Last one standing wins the life.</Text>
         {tournament.debug && (
           <Text style={styles.debugTag}>🧪 Test run — nothing will change</Text>
         )}
@@ -168,8 +336,27 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
     );
   }
 
-  // ── Between questions ─────────────────────────────────────────────
+  // ── Between rounds ────────────────────────────────────────────────
   if (tournament.stage === "between") {
+    const dudId = tournament.lastDudId;
+    if (dudId) {
+      const dud = hpDudLine(tournament.lastDudLine);
+      return (
+        <View style={styles.centerContainer}>
+          <Text style={styles.bigEmoji}>{dud.emoji}</Text>
+          <Text style={styles.title}>IT'S A DUD!</Text>
+          <Text style={styles.dudTitle}>{dud.title}</Text>
+          <Text style={styles.dudLine}>{dud.line}</Text>
+          <Text style={styles.subtitle}>
+            {dudId === playerId
+              ? "It fizzled in your hands. You live!"
+              : `It fizzled on ${getName(dudId)}. Nobody's out.`}
+            {"\n"}New fuse, new order…
+          </Text>
+          {renderPool()}
+        </View>
+      );
+    }
     const outId = tournament.lastEliminatedId;
     return (
       <View style={styles.centerContainer}>
@@ -183,6 +370,7 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
         </Text>
         <Text style={styles.subtitle}>
           {tournament.poolIds.length} still standing
+          {tournament.mode === "hot-potato" ? " — new fuse, new order…" : ""}
         </Text>
         {renderPool()}
       </View>
@@ -231,7 +419,7 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
     );
   }
 
-  // ── Question ──────────────────────────────────────────────────────
+  // ── Quiz question ─────────────────────────────────────────────────
   if (!activeQuiz) {
     return (
       <View style={styles.centerContainer}>
@@ -243,6 +431,7 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
   return (
     <View style={styles.container}>
       <Text style={styles.title}>👻 GHOST CHALLENGE</Text>
+      {!!modeName && <Text style={styles.modeTag}>{modeName}</Text>}
       {renderPool()}
 
       {inPool ? (
@@ -341,7 +530,29 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     paddingHorizontal: 12,
   },
+  modeTag: {
+    color: "#888",
+    fontSize: 12,
+    textAlign: "center",
+    marginBottom: 12,
+  },
   bigEmoji: { fontSize: 72, marginBottom: 12 },
+  dudTitle: {
+    color: "#AAAAAA",
+    fontSize: 15,
+    fontWeight: "800",
+    textAlign: "center",
+    marginBottom: 6,
+  },
+  dudLine: {
+    color: "#ddd",
+    fontSize: 15,
+    fontStyle: "italic",
+    textAlign: "center",
+    lineHeight: 22,
+    marginBottom: 16,
+    paddingHorizontal: 8,
+  },
   card: {
     backgroundColor: "#1A1A1A",
     borderRadius: 16,
@@ -349,7 +560,7 @@ const styles = StyleSheet.create({
     width: "100%",
     borderWidth: 1,
     borderColor: "#FFD700",
-    marginBottom: 20,
+    marginBottom: 18,
     gap: 10,
   },
   contenderRow: {
@@ -360,6 +571,41 @@ const styles = StyleSheet.create({
   contenderName: { color: "#fff", fontSize: 16, fontWeight: "600" },
   tagDefender: { color: "#4FC3F7", fontSize: 13, fontWeight: "700" },
   tagChallenger: { color: "#B388FF", fontSize: 13, fontWeight: "700" },
+
+  voteLabel: {
+    color: "#aaa",
+    fontSize: 11,
+    fontWeight: "bold",
+    letterSpacing: 1.5,
+    marginBottom: 10,
+    textAlign: "center",
+  },
+  voteRow: { flexDirection: "row", gap: 10, width: "100%", marginBottom: 14 },
+  voteCard: {
+    flex: 1,
+    backgroundColor: "#1A1A1A",
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: "#333",
+    padding: 12,
+    alignItems: "center",
+  },
+  voteCardMine: { borderColor: "#B388FF", backgroundColor: "#1A1230" },
+  voteEmoji: { fontSize: 28, marginBottom: 4 },
+  voteName: { color: "#fff", fontSize: 14, fontWeight: "800", marginBottom: 4 },
+  voteLine: {
+    color: "#888",
+    fontSize: 11,
+    textAlign: "center",
+    lineHeight: 15,
+  },
+  voteCount: {
+    color: "#B388FF",
+    fontSize: 11,
+    fontWeight: "700",
+    marginTop: 6,
+  },
+
   rules: {
     color: "#666",
     fontSize: 12,

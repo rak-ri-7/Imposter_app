@@ -1365,8 +1365,13 @@ export const markDuelReady = async (
             transaction.update(groupRef, {
                 'gameState.duelReadyPlayers': newReady,
                 'gameState.phase': 'duel',
-                ...buildHotPotatoStart(Date.now()),
-            })
+                ...buildHotPotatoStart({
+                    now: Date.now(),
+                    players: activePlayerIds,
+                    holderId: gameState.currentHolderId,
+                    context: 'duel',
+                }),
+            });
         }
     });
 };

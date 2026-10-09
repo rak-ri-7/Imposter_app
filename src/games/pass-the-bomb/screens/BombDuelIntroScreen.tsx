@@ -61,18 +61,6 @@ export default function BombDuelIntroScreen({ group, playerId }: Props) {
       (p) => !gameState.ghosts.includes(p.id),
     );
     const bothReady = activePlayers.every((p) => readyPlayers.includes(p.id));
-    console.log(
-      "[DuelIntro effect] activePlayers:",
-      activePlayers.map((p) => p.id),
-      "bothReady:",
-      bothReady,
-      "duelMode:",
-      duelMode,
-      "phase:",
-      gameState.phase,
-      "readyPlayers:",
-      readyPlayers,
-    );
     if (
       isHost &&
       bothReady &&
