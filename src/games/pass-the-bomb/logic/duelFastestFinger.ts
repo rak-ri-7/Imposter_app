@@ -3,7 +3,7 @@ import { db } from '../../../shared/firebase/config';
 import { Group, BombGameState, ActiveQuiz } from '../../../shared/types';
 import { getRandomQuestion, generateQuizInstance } from '../data/quizQuestions';
 import { addScore } from '../../../shared/firebase/groups';
-import { ROUND_WIN_SCORE, FUSE_POINTS, applyFusePoints } from './bombHelpers';
+import { ROUND_WIN_SCORE, FUSE_POINTS, applyFusePoints, markDisputeOutcome } from './bombHelpers';
 import { applySuperShield } from './superShield';
 import { applyMissionEvent } from './missionEngine';
 
@@ -376,6 +376,7 @@ export const resolveTbcTimeout = async (group: Group): Promise<void> => {
         await addScore(group.id, winnerId, ROUND_WIN_SCORE, group.scores);
     }
 
+
     const updates: Record<string, unknown> = {
         'gameState.tbcLoserId': loserId,
         'gameState.lives': newLivesMap,
@@ -400,6 +401,16 @@ export const resolveTbcTimeout = async (group: Group): Promise<void> => {
             kind: 'penalty-survived',
             playerId: winnerId,
         });
+    }
+
+    if (challenge) {
+        markDisputeOutcome(
+            updates,
+            gameState,
+            challenge.accusedId,
+            loserId === challenge.accusedId ? 'tbc-lost' : 'tbc-won',
+            { tbcOpponentId: challenge.opponentId }
+        );
     }
 
     await updateDoc(groupRef, updates);

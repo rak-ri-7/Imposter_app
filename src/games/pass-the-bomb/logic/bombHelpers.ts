@@ -1,4 +1,4 @@
-import { BombGameState } from '../../../shared/types';
+import { BombGameState, PassDispute } from '../../../shared/types';
 
 export const MAX_POINT_EVENTS = 10;
 
@@ -64,3 +64,23 @@ export const applyFusePoints = (
     updates['gameState.pointEvents'] = [...currentEvents, newEvent].slice(-MAX_POINT_EVENTS);
 };
 
+// Records how a guilty verdict played out on the dispute itself, so the
+// replay still shows it after the penalty / TBC fields are cleared.
+export const markDisputeOutcome = (
+    updates: Record<string, unknown>,
+    gameState: BombGameState,
+    accusedId: string,
+    outcome: NonNullable<PassDispute['outcome']>,
+    extra: Partial<PassDispute> = {}
+): void => {
+    const disputes = gameState.disputes ?? [];
+    // The verdict being settled: the latest guilty one for this player with no outcome yet.
+    let idx = -1;
+    disputes.forEach((d, i) => {
+        if (d.guilty && d.accusedId === accusedId && !d.outcome) idx = i;
+    });
+    if (idx < 0) return;
+    updates['gameState.disputes'] = disputes.map((d, i) =>
+        i === idx ? { ...d, outcome, ...extra } : d
+    );
+};

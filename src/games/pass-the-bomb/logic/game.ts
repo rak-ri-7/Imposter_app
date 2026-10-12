@@ -11,7 +11,7 @@ import {
 import { assignMissions } from '../data/missions';
 import { applyMissionEvent, applyRoundEndMissions } from './missionEngine';
 import { buildActiveQuiz } from './Fastestfinger';
-import { FUSE_POINTS, applyFusePoints, ROUND_WIN_SCORE, GAME_WIN_SCORE_BONUS, RUNNER_UP_SCORE_BONUS } from './bombHelpers';
+import { FUSE_POINTS, applyFusePoints, ROUND_WIN_SCORE, GAME_WIN_SCORE_BONUS, RUNNER_UP_SCORE_BONUS, markDisputeOutcome } from './bombHelpers';
 import { settleWinnerBets } from './betEngine';
 import { payGhostStipends } from './ghostEconomy';
 import { isBoomerangPass } from './boomerang';
@@ -749,6 +749,7 @@ export const passBomb = async (
 
             if (gameState.phase === 'panic') {
                 updates['gameState.panicStartedAt'] = now;
+                updates['gameState.panicSeq'] = (gameState.panicSeq ?? 0) + 1; // a fresh countdown
 
                 // Any bets placed for THIS holder's cut never got their target
                 // event — refund the tickets rather than silently losing them.
@@ -1002,7 +1003,7 @@ export const lockInWire = async (
 // ghost whose bet correctly guessed the true correct wire wins when the
 // holder explodes, kicking off a ghost tournament for however many of
 // them won.
-export const resolvePanicOutcome = async (group: Group): Promise<void> => {
+export const resolvePanicOutcome = async (group: Group, seenSeq?: number): Promise<void> => {
     const groupRef = doc(db, 'groups', group.id);
     let scoreDefuserId: string | null = null;
 
@@ -1017,7 +1018,14 @@ export const resolvePanicOutcome = async (group: Group): Promise<void> => {
         // Countdown must actually be running and actually be over. This also
         // stops a stale call landing just after a pass restarted the 5 seconds.
         if (!gameState.panicStartedAt || gameState.ghostWindowEndsAt) return;
-        if (Date.now() < gameState.panicStartedAt + PANIC_THRESHOLD * 1000 - CLOCK_TOLERANCE_MS) return;
+        if (!gameState.panicStartedAt || gameState.ghostWindowEndsAt) return;
+        if (seenSeq !== undefined) {
+            // The caller timed the 5s on its own clock. If the bomb has been
+            // passed since, that countdown is gone — do nothing.
+            if ((gameState.panicSeq ?? 0) !== seenSeq) return;
+        } else if (Date.now() < gameState.panicStartedAt + PANIC_THRESHOLD * 1000 - CLOCK_TOLERANCE_MS) {
+            return;
+        }
 
         const playerId = gameState.currentHolderId;
         const wire = gameState.wireChoice; // may be undefined — holder never locked one in
@@ -1287,6 +1295,8 @@ export const cutPenaltyWire = async (
                 applyMissionEvent(updates, gameState, group.players, playerId, { kind: 'penalty-survived', playerId });
             }
 
+            markDisputeOutcome(updates, gameState, playerId, caught ? 'caught' : 'safe');
+
             transaction.update(groupRef, updates);
         });
     } catch (e) {
@@ -1434,11 +1444,13 @@ export const markDuelReady = async (
         const bothReady = activePlayerIds.every((id) => newReady.includes(id));
 
 
-        if (bothReady && (gameState.duelMode === 'fastest-finger' || gameState.duelMode === 'hot-seat')) {
+        // Not everyone is ready yet, or the mode's own starter (host effect in
+        // BombDuelIntroScreen) takes over once the ready list is complete.
+        if (!bothReady || gameState.duelMode === 'fastest-finger' || gameState.duelMode === 'hot-seat') {
             transaction.update(groupRef, {
                 'gameState.duelReadyPlayers': newReady,
             });
-        } else if (bothReady) {
+        } else {
             transaction.update(groupRef, {
                 'gameState.duelReadyPlayers': newReady,
                 'gameState.phase': 'duel',

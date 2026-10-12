@@ -18,7 +18,6 @@ import {
   passBomb,
   forceEndRound,
   placeBet,
-  computePanicRemaining,
   declineBet,
   PANIC_THRESHOLD,
   FAILSAFE_GRACE_MS,
@@ -222,6 +221,36 @@ export default function BombPanicScreen({ group, playerId }: Props) {
   const countdownRunning =
     !gameState.ghostWindowEndsAt && !!gameState.panicStartedAt;
 
+  // Each phone times the 5s from when IT saw the countdown start, so phones
+  // with different clocks can't cut each other's countdown short. Up to 1s
+  // of real network delay is honoured; anything more is clock difference.
+  const MAX_TRUSTED_LAG_MS = 1000;
+  const anchorRef = useRef<{ key: number; seq: number; at: number } | null>(
+    null,
+  );
+  if (
+    countdownRunning &&
+    gameState.panicStartedAt &&
+    anchorRef.current?.key !== gameState.panicStartedAt
+  ) {
+    const now = Date.now();
+    const lag = Math.min(
+      Math.max(0, now - gameState.panicStartedAt),
+      MAX_TRUSTED_LAG_MS,
+    );
+    anchorRef.current = {
+      key: gameState.panicStartedAt,
+      seq: gameState.panicSeq ?? 0,
+      at: now - lag,
+    };
+  }
+  const localPanicRemaining = () => {
+    const a = anchorRef.current;
+    return a
+      ? Math.max(0, PANIC_THRESHOLD - (Date.now() - a.at) / 1000)
+      : PANIC_THRESHOLD;
+  };
+
   const [ghostWindowRemaining, setGhostWindowRemaining] = useState(0);
   const myBet = gameState.activeBets?.[playerId];
   const myBettingTickets = gameState.bettingTickets?.[playerId] ?? 0;
@@ -297,9 +326,11 @@ export default function BombPanicScreen({ group, playerId }: Props) {
         if (now >= revealEndsAt + graceMs)
           attempt(now, () => startPanicCountdown(g.id));
       } else {
-        // Stage 3: the real countdown has run out.
-        if (now >= gs.panicStartedAt + PANIC_THRESHOLD * 1000 + graceMs)
-          attempt(now, () => resolvePanicOutcome(g));
+        // Stage 3: the real countdown has run out — on THIS phone's clock.
+        const a = anchorRef.current;
+        if (!a || a.key !== gs.panicStartedAt) return; // haven't seen this countdown yet
+        if (now >= a.at + PANIC_THRESHOLD * 1000 + graceMs)
+          attempt(now, () => resolvePanicOutcome(g, a.seq));
       }
     };
 
@@ -313,6 +344,7 @@ export default function BombPanicScreen({ group, playerId }: Props) {
   // stack extra loops on the same value. Stopped on unmount. ───────────
   useEffect(() => {
     if (!countdownRunning) return;
+
     const loop = Animated.loop(
       Animated.sequence([
         Animated.timing(flashAnim, {
@@ -346,7 +378,7 @@ export default function BombPanicScreen({ group, playerId }: Props) {
   // panicStartedAt. No host sync, no per-second writes. ────────────────
   useEffect(() => {
     if (!countdownRunning) return;
-    const tick = () => setTimeLeft(computePanicRemaining(gameState));
+    const tick = () => setTimeLeft(localPanicRemaining());
     tick();
     const interval = setInterval(tick, 100);
     return () => clearInterval(interval);

@@ -8,7 +8,7 @@ import {
   Animated,
   Modal,
 } from "react-native";
-import { Group, BombGameState } from "../../../shared/types";
+import { Group, BombGameState, PassDispute } from "../../../shared/types";
 import { startNextRound, endBombGame, toggleDisputeVote } from "../logic/game";
 import BombAlleyScreen from "./BombAlleyScreen";
 import MissionsButton from "./MissionsButton";
@@ -24,6 +24,37 @@ type Props = {
 const isDuelPass = (p: { instruction?: string }) =>
   p.instruction === "(Hot potato)" ||
   p.instruction === "(Fastest Finger First)";
+
+const verdictInfo = (
+  d: PassDispute,
+  nameOf: (id?: string) => string,
+): { text: string; good: boolean } => {
+  const opp = d.tbcOpponentId ? nameOf(d.tbcOpponentId) : "their accuser";
+  switch (d.outcome) {
+    case "caught":
+      return {
+        text: "🔨 Found guilty — cut the wrong wire and paid the price",
+        good: false,
+      };
+    case "safe":
+      return {
+        text: "😅 Found guilty — but cut the right wire and walked free",
+        good: true,
+      };
+    case "tbc-won":
+      return {
+        text: `⚔️ Found guilty — won Trial by Combat! ${opp} paid the price`,
+        good: true,
+      };
+    case "tbc-lost":
+      return {
+        text: `⚔️ Found guilty — lost Trial by Combat to ${opp}`,
+        good: false,
+      };
+    default:
+      return { text: "🔨 Found guilty — penalty underway", good: false };
+  }
+};
 
 export default function BombReplayScreen({ group, playerId }: Props) {
   const gameState = group.gameState as BombGameState;
@@ -48,6 +79,9 @@ export default function BombReplayScreen({ group, playerId }: Props) {
   );
   const gameOver = activePlayers.length <= 1;
   const disputes = gameState.disputes ?? [];
+
+  const nameOf = (id?: string) =>
+    group.players.find((p) => p.id === id)?.name ?? "Someone";
 
   // Host settles any open bets that this replay can decide. Safe to repeat.
   const openBetCount = (gameState.matchBets ?? []).filter(
@@ -316,12 +350,27 @@ export default function BombReplayScreen({ group, playerId }: Props) {
                     <Text style={styles.boomerangTag}>
                       🪃 Fair play — a boomerang can't be called out
                     </Text>
-                  ) : isDuelPass(event) ? null : guiltyVerdict ? (
-                    <View style={styles.guiltyTag}>
-                      <Text style={styles.guiltyTagText}>
-                        🔨 Found guilty — paid the price
-                      </Text>
-                    </View>
+                  ) : isDuelPass(event) ? null : guiltyVerdict && dispute ? (
+                    (() => {
+                      const v = verdictInfo(dispute, nameOf);
+                      return (
+                        <View
+                          style={[
+                            styles.guiltyTag,
+                            v.good && styles.verdictGoodTag,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.guiltyTagText,
+                              v.good && styles.verdictGoodText,
+                            ]}
+                          >
+                            {v.text}
+                          </Text>
+                        </View>
+                      );
+                    })()
                   ) : !iAmAccused ? (
                     <TouchableOpacity
                       style={[
@@ -808,4 +857,7 @@ const styles = StyleSheet.create({
   calloutSlideText: { color: "#aaa", fontSize: 14, fontWeight: "600" },
   calloutGuiltyBtn: { backgroundColor: "#E63946" },
   calloutGuiltyText: { color: "#fff", fontSize: 14, fontWeight: "800" },
+
+  verdictGoodTag: { backgroundColor: "#0A1E0A", borderColor: "#4CAF50" },
+  verdictGoodText: { color: "#4CAF50" },
 });

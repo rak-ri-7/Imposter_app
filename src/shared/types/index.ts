@@ -319,6 +319,7 @@ export type BombGameState = {
     roundDuelShields?: string[];
     duelShieldAbsorbedPlayerId?: string;
     roundStartLives?: Record<string, number>;
+    panicSeq?: number;
 
     // Seating / directional passes
     seatingOrder: string[];
