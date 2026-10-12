@@ -12,7 +12,7 @@ import ImposterQuickPlayScreen from "./src/games/imposter/screens/ImposterQuickP
 import TimerFlowScreen from "./src/games/stop-the-timer/TimerFlowScreen";
 import TeamSetupScreen from "./src/shared/screens/TeamSetupScreen";
 
-import BombFlowScreen from "./src/games/pass-the-bomb/screens/BombFlowScreen";
+import BombFlowScreen from "./src/games/pass-the-bomb/screens/shared/BombFlowScreen";
 import { preloadSounds } from "./src/shared/audio/sounds";
 
 export type RootStackParamList = {
