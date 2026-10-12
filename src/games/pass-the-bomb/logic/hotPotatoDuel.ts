@@ -39,6 +39,8 @@ import {
     applyLifeGain,
     ROUND_WIN_SCORE,
 } from './bombHelpers';
+import { applySuperShield } from './superShield';
+import { applyMissionEvent } from './missionEngine';
 
 export type HpMood = 'neutral' | 'angry' | 'lazy' | 'bored';
 export type HpContext = 'duel' | 'tournament';
@@ -563,12 +565,9 @@ export const explodeHotPotato = async (group: Group): Promise<void> => {
                 return;
             }
 
-            // Duel: the victim loses a life, the other duelist scores.
+            // Duel: the victim loses a life, the other duelist scores — unless
+            // a Barely-Used Shield takes the hit (the opponent still scores).
             const survivor = (gs.hpPlayers ?? []).find((id) => id !== victim);
-            const currentLives = gs.lives[victim] ?? 0;
-            const newLives = Math.max(0, currentLives - 1);
-            const eliminated = newLives === 0 && !gs.ghosts.includes(victim);
-
             const updates: Record<string, unknown> = {
                 'gameState.phase': 'exploded',
                 'gameState.defused': false,
@@ -577,20 +576,27 @@ export const explodeHotPotato = async (group: Group): Promise<void> => {
                 'gameState.hpHolderId': victim,
                 'gameState.wireChoice': deleteField(),
                 'gameState.hpLazy': deleteField(),
-                'gameState.lives': { ...gs.lives, [victim]: newLives },
-                'gameState.lastLifeLostPlayerId': victim,
             };
-            if (eliminated) {
-                updates['gameState.ghosts'] = [...gs.ghosts, victim];
-                updates['gameState.ghostEvents'] = [...(gs.ghostEvents ?? []), victim];
-                if (!(gs.everGhosted ?? []).includes(victim)) {
-                    updates['gameState.everGhosted'] = [...(gs.everGhosted ?? []), victim];
-                }
-            }
 
-            applyFusePoints(updates, gs, victim, FUSE_POINTS.WIRE_EXPLODED_SELF, 'Hot potato!');
+            const shielded = applySuperShield(updates, gs, victim);
+            if (!shielded) {
+                const currentLives = gs.lives[victim] ?? 0;
+                const newLives = Math.max(0, currentLives - 1);
+                const eliminated = newLives === 0 && !gs.ghosts.includes(victim);
+                updates['gameState.lives'] = { ...gs.lives, [victim]: newLives };
+                updates['gameState.lastLifeLostPlayerId'] = victim;
+                if (eliminated) {
+                    updates['gameState.ghosts'] = [...gs.ghosts, victim];
+                    updates['gameState.ghostEvents'] = [...(gs.ghostEvents ?? []), victim];
+                    if (!(gs.everGhosted ?? []).includes(victim)) {
+                        updates['gameState.everGhosted'] = [...(gs.everGhosted ?? []), victim];
+                    }
+                }
+                applyFusePoints(updates, gs, victim, FUSE_POINTS.WIRE_EXPLODED_SELF, 'Hot potato!');
+            }
             if (survivor) {
                 applyFusePoints(updates, gs, survivor, FUSE_POINTS.WIRE_DEFUSED, 'Survived the hot potato!');
+                applyMissionEvent(updates, gs, group.players, survivor, { kind: 'duel-won', playerId: survivor });
             }
 
             transaction.update(groupRef, updates);

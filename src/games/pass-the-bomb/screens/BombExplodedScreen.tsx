@@ -45,6 +45,10 @@ export default function BombExplodedScreen({ group, playerId }: Props) {
     !!gameState.shieldAbsorbedPlayerId &&
     gameState.shieldAbsorbedPlayerId === gameState.explodedPlayerId;
 
+  const superSaved =
+    !!gameState.duelShieldAbsorbedPlayerId &&
+    gameState.duelShieldAbsorbedPlayerId === gameState.explodedPlayerId;
+
   useEffect(() => {
     Vibration.vibrate(500);
     Animated.parallel([
@@ -68,7 +72,7 @@ export default function BombExplodedScreen({ group, playerId }: Props) {
   // screen shows. Explosion intensity scales with roundNumber; defuse
   // and ghost-immunity both use the same "survived" sound.
   useEffect(() => {
-    if (gameState.defused || wasImmune || shieldSaved || wasDud) {
+    if (gameState.defused || wasImmune || shieldSaved || wasDud || superSaved) {
       playSound(pickDefuseSound());
     } else {
       playSound(explosionSoundForRound(gameState.roundNumber));
@@ -102,13 +106,28 @@ export default function BombExplodedScreen({ group, playerId }: Props) {
                 : `It fizzled on ${explodedPlayer?.name}. No life lost.`}
             </Text>
           </>
+        ) : superSaved ? (
+          <>
+            <Text style={styles.emoji}>🛡️</Text>
+            <Text style={[styles.title, { color: "#5FD38D" }]}>
+              SHIELD HELD!
+            </Text>
+            <Text style={styles.subtitle}>
+              {isMe
+                ? "It blew up in your hands — but that Barely-Used Shield took it."
+                : `It blew up on ${explodedPlayer?.name} — but they had a Barely-Used Shield!`}
+            </Text>
+            <Text style={styles.immuneDesc}>
+              No life lost. The round still goes to their opponent.
+            </Text>
+          </>
         ) : shieldSaved ? (
           <>
             <Text style={styles.emoji}>🛡️</Text>
             <Text style={[styles.title, { color: "#5FD38D" }]}>SHIELD UP!</Text>
             <Text style={styles.subtitle}>
               {isMe
-                ? "It blew up in your hands — but the armour took the impact."
+                ? "It blew up in your hands — but the Second-Hand Shield took the impact."
                 : `It blew up on ${explodedPlayer?.name} — but they were wearing an armour!`}
             </Text>
             {gameState.wireChoice && (

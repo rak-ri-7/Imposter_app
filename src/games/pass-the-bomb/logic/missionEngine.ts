@@ -115,22 +115,62 @@ export const applyMissionEvent = (
     }
 };
 
+// A mission aimed at a player who is now a ghost can never finish — point it
+// at a living player instead. Progress is kept.
+const retargetMissions = (
+    updates: Record<string, unknown>,
+    gameState: BombGameState,
+    players: Roster
+): void => {
+    const alive = players.filter((p) => !gameState.ghosts.includes(p.id));
+    for (const owner of alive) {
+        for (const key of MISSION_KEYS) {
+            const m = readMission(updates, gameState, owner.id, key);
+            if (!m || m.completed || !m.targetId) continue;
+            if (!gameState.ghosts.includes(m.targetId)) continue;
+
+            const taken = MISSION_KEYS.filter((k) => k !== key)
+                .map((k) => readMission(updates, gameState, owner.id, k)?.targetId)
+                .filter((id): id is string => !!id);
+            const pool = alive.filter((p) => p.id !== owner.id && !taken.includes(p.id));
+            if (pool.length === 0) continue;
+
+            const t = pool[Math.floor(Math.random() * pool.length)];
+            updates[missionPath(owner.id, key)] = {
+                ...m,
+                targetId: t.id,
+                targetName: t.name,
+                text: m.targetName ? m.text.replace(m.targetName, t.name) : m.text,
+                roundFlag: false,
+            };
+        }
+    }
+};
+
 // Host calls this as a round is closed out (start of startNextRound).
 export const applyRoundEndMissions = async (group: Group): Promise<void> => {
     const gameState = group.gameState as BombGameState;
-    if (!gameState.explodedPlayerId) return; // nothing resolved (e.g. force-ended)
-
     const updates: Record<string, unknown> = {};
-    for (const player of group.players) {
-        applyMissionEvent(updates, gameState, group.players, player.id, {
-            kind: 'round-end',
-            lostLife: gameState.explodedPlayerId === player.id && !gameState.defused,
-        });
+
+    retargetMissions(updates, gameState, group.players);
+
+    if (gameState.explodedPlayerId) { // nothing resolved if force-ended
+        const isDuel = !gameState.personality; // duels clear the personality
+        for (const player of group.players) {
+            const startLives = gameState.roundStartLives?.[player.id];
+            const lostLife = startLives !== undefined
+                ? (gameState.lives[player.id] ?? 0) < startLives
+                : gameState.explodedPlayerId === player.id && !gameState.defused;
+            applyMissionEvent(updates, gameState, group.players, player.id, {
+                kind: 'round-end',
+                lostLife,
+                isDuel,
+            });
+        }
     }
     if (Object.keys(updates).length === 0) return;
-
     await updateDoc(doc(db, 'groups', group.id), updates);
-};
+};;
 
 // ── GROUP-VOTE CLAIMS (social missions) ───────────────────────────────
 export const startMissionClaim = async (

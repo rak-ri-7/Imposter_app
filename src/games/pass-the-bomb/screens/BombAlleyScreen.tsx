@@ -25,6 +25,12 @@ import {
   GHOST_STIPEND_FP,
   LIFE_PURCHASE_GHOSTS_ONLY,
 } from "../logic/ghostEconomy";
+import {
+  purchaseSuperShield,
+  armSuperShield,
+  SUPER_SHIELD_PRICE,
+  SUPER_SHIELD_MAX_PER_GAME,
+} from "../logic/superShield";
 
 type Props = {
   group: Group;
@@ -242,6 +248,43 @@ export default function BombAlleyScreen({ group, playerId, onClose }: Props) {
     }
   };
 
+  // ── Barely-Used Shield ─────────────────────────────────────────────
+  const superCredits = gameState.superShieldCredits?.[playerId] ?? 0;
+  const superBought = gameState.superShieldBought?.[playerId] ?? 0;
+  const superOwned = gameState.superShieldItems?.[playerId] ?? 0;
+  const superArmed = (gameState.duelShieldArmed ?? []).includes(playerId);
+  const superSoldOut = superBought >= SUPER_SHIELD_MAX_PER_GAME;
+  const superBuyBlock: string | null = superSoldOut
+    ? "Sold out — two per customer."
+    : superCredits <= 0
+      ? "🔒 Survive a wrong cut behind a Second-Hand Shield to unlock"
+      : null;
+  const superArmBlock: string | null =
+    gameState.phase !== "replay"
+      ? "Arm it between rounds"
+      : isGhost
+        ? "Ghosts don't need shields"
+        : activeCount !== 2
+          ? "Final duel only"
+          : null;
+
+  const handleArmSuper = async () => {
+    if (buying || superArmBlock || superOwned <= 0 || superArmed) return;
+    setBuying(true);
+    try {
+      const result = await armSuperShield(group, playerId);
+      if (result.success) {
+        Alert.alert(
+          "🛡️✨ Strapped on",
+          "Covered for the next duel round. Keep it quiet.",
+        );
+      } else {
+        Alert.alert("Can't strap it on", "Something changed — try again.");
+      }
+    } finally {
+      setBuying(false);
+    }
+  };
   return (
     <View style={styles.container}>
       {/* the streetlamp */}
@@ -385,12 +428,13 @@ export default function BombAlleyScreen({ group, playerId, onClose }: Props) {
             <Text style={styles.crateEmoji}>🛡️</Text>
           </View>
           <View style={styles.crateInfo}>
-            <Text style={styles.crateName}>KEVLAR VEST</Text>
+            <Text style={styles.crateName}>SECOND-HAND SHIELD</Text>
             <Text style={styles.crateSub}>bomb shield</Text>
             <Text style={styles.crateDesc}>
-              Strap it on between rounds. If the bomb blows up in your hands
-              next round, you keep the life. Not holding it when it goes off?
-              Vest's gone anyway. Not allowed in the final duel.
+              Previous owner "didn't need it any more". Strap it on between
+              rounds — if the bomb blows up in your hands next round, you keep
+              the life. Not holding it when it goes off? Shield's gone anyway.
+              Not allowed in the final duel.
             </Text>
             <Text style={styles.crateOwned}>
               In your pocket: {myShields}
@@ -418,6 +462,54 @@ export default function BombAlleyScreen({ group, playerId, onClose }: Props) {
             onPress={() =>
               handleBuy(ITEM_PRICES.BOMB_SHIELD, purchaseBombShield)
             }
+          />
+        </View>
+
+        <View style={styles.crate}>
+          <View style={styles.crateIcon}>
+            <Text style={styles.crateEmoji}>🛡️</Text>
+          </View>
+          <View style={styles.crateInfo}>
+            <Text style={styles.crateName}>BARELY-USED SHIELD</Text>
+            <Text style={styles.crateSub}>duel shield</Text>
+            <Text style={styles.crateDesc}>
+              Same shield, someone actually cleaned it. Works in the final duel
+              — blow up, keep the life (they still win the round). Only sold to
+              people who've already survived a wrong cut behind a Second-Hand
+              Shield. Two per customer.
+            </Text>
+            <Text
+              style={superBuyBlock ? styles.crateBlocked : styles.crateOwned}
+            >
+              {superBuyBlock ??
+                `${superCredits} unlock${superCredits === 1 ? "" : "s"} ready`}
+            </Text>
+            <Text style={styles.crateOwned}>
+              In your pocket: {superOwned}
+              {superArmed ? " · 🛡️ armed for the next duel round" : ""}
+            </Text>
+            {superOwned > 0 && !superArmed && (
+              <TouchableOpacity
+                style={[
+                  styles.armBtn,
+                  (!!superArmBlock || buying) && styles.armBtnDisabled,
+                ]}
+                onPress={handleArmSuper}
+                disabled={!!superArmBlock || buying}
+              >
+                <Text style={styles.armBtnText}>
+                  {superArmBlock ?? "STRAP IT ON"}
+                </Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <PriceTag
+            price={String(SUPER_SHIELD_PRICE)}
+            unit="FP"
+            disabled={
+              buying || !!superBuyBlock || !canAfford(SUPER_SHIELD_PRICE)
+            }
+            onPress={() => handleBuy(SUPER_SHIELD_PRICE, purchaseSuperShield)}
           />
         </View>
 

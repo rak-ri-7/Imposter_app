@@ -21,6 +21,10 @@ type Props = {
   playerId: string;
 };
 
+const isDuelPass = (p: { instruction?: string }) =>
+  p.instruction === "(Hot potato)" ||
+  p.instruction === "(Fastest Finger First)";
+
 export default function BombReplayScreen({ group, playerId }: Props) {
   const gameState = group.gameState as BombGameState;
   const isHost = group.hostId === playerId;
@@ -312,7 +316,7 @@ export default function BombReplayScreen({ group, playerId }: Props) {
                     <Text style={styles.boomerangTag}>
                       🪃 Fair play — a boomerang can't be called out
                     </Text>
-                  ) : guiltyVerdict ? (
+                  ) : isDuelPass(event) ? null : guiltyVerdict ? (
                     <View style={styles.guiltyTag}>
                       <Text style={styles.guiltyTagText}>
                         🔨 Found guilty — paid the price

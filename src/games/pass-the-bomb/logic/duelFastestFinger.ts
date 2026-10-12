@@ -4,6 +4,8 @@ import { Group, BombGameState, ActiveQuiz } from '../../../shared/types';
 import { getRandomQuestion, generateQuizInstance } from '../data/quizQuestions';
 import { addScore } from '../../../shared/firebase/groups';
 import { ROUND_WIN_SCORE, FUSE_POINTS, applyFusePoints } from './bombHelpers';
+import { applySuperShield } from './superShield';
+import { applyMissionEvent } from './missionEngine';
 
 const DUEL_FFF_IDLE_TIMEOUT_MS = 8000; // silent-skip window
 const DUEL_FFF_LOCK_MS = 3000;         // holder lock duration on failure
@@ -363,7 +365,18 @@ export const resolveTbcTimeout = async (group: Group): Promise<void> => {
             ? [...(gameState.everGhosted ?? []), loserId]
             : gameState.everGhosted ?? [];
 
-    await updateDoc(groupRef, {
+    const challenge = gameState.tbcChallenge;
+    const winnerId =
+        challenge && loserId === challenge.accusedId
+            ? challenge.opponentId
+            : challenge && loserId === challenge.opponentId
+                ? challenge.accusedId
+                : undefined;
+    if (winnerId) {
+        await addScore(group.id, winnerId, ROUND_WIN_SCORE, group.scores);
+    }
+
+    const updates: Record<string, unknown> = {
         'gameState.tbcLoserId': loserId,
         'gameState.lives': newLivesMap,
         'gameState.ghosts': newGhosts,
@@ -379,18 +392,19 @@ export const resolveTbcTimeout = async (group: Group): Promise<void> => {
         'gameState.duelFffLockedUntil': deleteField(),
         'gameState.duelFffHolderCanPass': deleteField(),
         'gameState.duelFffLockReason': deleteField(),
-    });
-    // The other combatant wins the duel — leaderboard points, same as a defuse.
-    const challenge = gameState.tbcChallenge;
-    const winnerId =
-        challenge && loserId === challenge.accusedId
-            ? challenge.opponentId
-            : challenge && loserId === challenge.opponentId
-                ? challenge.accusedId
-                : undefined;
-    if (winnerId) {
-        await addScore(group.id, winnerId, ROUND_WIN_SCORE, group.scores);
+    };
+
+    // The accused beat their accuser — they survived the penalty.
+    if (challenge && winnerId === challenge.accusedId) {
+        applyMissionEvent(updates, gameState, group.players, winnerId, {
+            kind: 'penalty-survived',
+            playerId: winnerId,
+        });
     }
+
+    await updateDoc(groupRef, updates);
+    // The other combatant wins the duel — leaderboard points, same as a defuse.
+
 };
 
 // ── CLEANUP — host taps "Back to Replay" from the TBC result screen ───
@@ -448,8 +462,6 @@ export const explodeDuelFuse = async (group: Group): Promise<void> => {
                 'gameState.defused': false,
                 'gameState.explodedPlayerId': victim,
                 'gameState.wireChoice': deleteField(),
-                'gameState.lives': { ...gs.lives, [victim]: newLives },
-                'gameState.lastLifeLostPlayerId': victim,
                 'gameState.activeQuiz': deleteField(),
                 'gameState.duelFffTimerStartedAt': deleteField(),
                 'gameState.duelFffTimerDuration': deleteField(),
@@ -457,19 +469,25 @@ export const explodeDuelFuse = async (group: Group): Promise<void> => {
                 'gameState.duelFffHolderCanPass': deleteField(),
                 'gameState.duelFffLockReason': deleteField(),
             };
-            if (eliminated) {
-                updates['gameState.ghosts'] = [...gs.ghosts, victim];
-                updates['gameState.ghostEvents'] = [...(gs.ghostEvents ?? []), victim];
-                if (!(gs.everGhosted ?? []).includes(victim)) {
-                    updates['gameState.everGhosted'] = [...(gs.everGhosted ?? []), victim];
-                }
-            }
 
-            applyFusePoints(updates, gs, victim, FUSE_POINTS.WIRE_EXPLODED_SELF, 'Out of time!');
+            if (!applySuperShield(updates, gs, victim)) {
+                const currentLives = gs.lives[victim] ?? 0;
+                const newLives = Math.max(0, currentLives - 1);
+                updates['gameState.lives'] = { ...gs.lives, [victim]: newLives };
+                updates['gameState.lastLifeLostPlayerId'] = victim;
+                if (newLives === 0 && !gs.ghosts.includes(victim)) {
+                    updates['gameState.ghosts'] = [...gs.ghosts, victim];
+                    updates['gameState.ghostEvents'] = [...(gs.ghostEvents ?? []), victim];
+                    if (!(gs.everGhosted ?? []).includes(victim)) {
+                        updates['gameState.everGhosted'] = [...(gs.everGhosted ?? []), victim];
+                    }
+                }
+                applyFusePoints(updates, gs, victim, FUSE_POINTS.WIRE_EXPLODED_SELF, 'Out of time!');
+            }
             if (survivor) {
                 applyFusePoints(updates, gs, survivor, FUSE_POINTS.WIRE_DEFUSED, 'Survived the duel round!');
+                applyMissionEvent(updates, gs, group.players, survivor, { kind: 'duel-won', playerId: survivor });
             }
-
             transaction.update(groupRef, updates);
             survivorId = survivor ?? null;
         });

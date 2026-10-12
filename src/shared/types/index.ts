@@ -153,6 +153,7 @@ export type BombMission = {
     progressSet?: string[];
     roundFlag?: boolean; // avoid-target missions: this round is spoiled
     rewardText?: string; // what it paid; shown in the toast and the reveal
+    roundTouched?: boolean;
 };
 
 export type PlayerMissions = {
@@ -311,6 +312,13 @@ export type BombGameState = {
     hpDudPlayerId?: string;
     lastDudId?: string;
     hpDudLine?: number;
+    superShieldCredits?: Record<string, number>;
+    superShieldBought?: Record<string, number>;
+    superShieldItems?: Record<string, number>;
+    duelShieldArmed?: string[];
+    roundDuelShields?: string[];
+    duelShieldAbsorbedPlayerId?: string;
+    roundStartLives?: Record<string, number>;
 
     // Seating / directional passes
     seatingOrder: string[];

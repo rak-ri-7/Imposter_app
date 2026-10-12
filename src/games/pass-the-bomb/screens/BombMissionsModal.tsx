@@ -20,17 +20,20 @@ type Props = {
 
 type Key = "mission1" | "mission2" | "lifeMission";
 
-const progressLabel = (m: BombMission, otherCount: number): string | null => {
+const progressLabel = (m: BombMission, aliveOthers: number): string | null => {
   if (m.type === "vote") return null;
   const goal = m.conditionValue ?? 1;
   switch (m.conditionType) {
     case "pass-to-everyone":
-      return `${m.progressSet?.length ?? 0}/${otherCount}`;
+      return `${m.progressSet?.length ?? 0}/${aliveOthers}`;
     case "pass-distinct-n":
       return `${m.progressSet?.length ?? 0}/${goal}`;
     case "avoid-target-rounds":
     case "safe-rounds-streak-n":
+    case "clean-rounds-streak-n":
       return `${m.progress ?? 0}/${goal} rounds`;
+    case "quick-pass-streak-n":
+      return `${m.progress ?? 0}/${goal} in a row`;
     default:
       return `${m.progress ?? 0}/${goal}`;
   }
@@ -53,8 +56,12 @@ export default function BombMissionsModal({
   const claim = gameState.missionClaim;
   const [busy, setBusy] = useState(false);
 
-  const otherCount = group.players.length - 1;
+  const otherCount = group.players.length - 1; // for votesNeeded
   const votesNeeded = Math.floor(otherCount / 2) + 1;
+  // Only living players count toward "pass to everyone".
+  const aliveOthers = group.players.filter(
+    (p) => p.id !== playerId && !(gameState.ghosts ?? []).includes(p.id),
+  ).length;
 
   const handleClaim = async (key: "mission1" | "mission2") => {
     if (busy) return;
@@ -111,7 +118,7 @@ export default function BombMissionsModal({
                   );
                 }
 
-                const progress = progressLabel(m, otherCount);
+                const progress = progressLabel(m, aliveOthers);
                 const claimKey = key === "lifeMission" ? null : key;
                 const isMyClaim =
                   !!claim &&

@@ -182,6 +182,15 @@ export const purchaseBettingTicket = async (
             updates[`gameState.freeBettingClaimed.${playerId}`] = true;
         }
 
+        // Mission sees the FP *after* the purchase, so a completion can't undo the charge.
+        const gsAfter = {
+            ...gameState,
+            fusePoints: { ...gameState.fusePoints, [playerId]: currentFP - price },
+        };
+        if (price > 0) { // a free first ticket doesn't count as "buying"
+            applyMissionEvent(updates, gsAfter, group.players, playerId, { kind: 'bought-item', playerId });
+        }
+
         transaction.update(groupRef, updates);
         result = { success: true };
     });
@@ -222,6 +231,15 @@ export const purchaseTbcTicket = async (
             updates[`gameState.freeTbcClaimed.${playerId}`] = true;
         }
 
+        // Mission sees the FP *after* the purchase, so a completion can't undo the charge.
+        const gsAfter = {
+            ...gameState,
+            fusePoints: { ...gameState.fusePoints, [playerId]: currentFP - price },
+        };
+        if (price > 0) { // a free first ticket doesn't count as "buying"
+            applyMissionEvent(updates, gsAfter, group.players, playerId, { kind: 'bought-item', playerId });
+        }
+
         transaction.update(groupRef, updates);
         result = { success: true };
     });
@@ -253,11 +271,20 @@ export const purchaseWireRevealer = async (
         const owned = [...(gameState.revealerItems?.[playerId] ?? []), accuracy]
             .sort((a, b) => b - a); // best first
 
-        transaction.update(groupRef, {
+        const updates: Record<string, unknown> = {
             [`gameState.fusePoints.${playerId}`]: fp - ITEM_PRICES.WIRE_REVEALER,
             [`gameState.revealerPurchases.${playerId}`]: bought + 1,
             [`gameState.revealerItems.${playerId}`]: owned,
-        });
+        };
+
+        // Mission sees the FP *after* the purchase, so a completion can't undo the charge.
+        const gsAfter = {
+            ...gameState,
+            fusePoints: { ...gameState.fusePoints, [playerId]: fp - ITEM_PRICES.WIRE_REVEALER },
+        };
+        applyMissionEvent(updates, gsAfter, group.players, playerId, { kind: 'bought-item', playerId });
+
+        transaction.update(groupRef, updates);
         result = { success: true, accuracy };
     });
     return result;
@@ -281,10 +308,19 @@ export const purchaseBombShield = async (
             result = { success: false, reason: 'insufficient-fp' };
             return;
         }
-        transaction.update(groupRef, {
+
+        const updates: Record<string, unknown> = {
             [`gameState.fusePoints.${playerId}`]: fp - ITEM_PRICES.BOMB_SHIELD,
             [`gameState.shieldItems.${playerId}`]: (gameState.shieldItems?.[playerId] ?? 0) + 1,
-        });
+        };
+
+        const gsAfter = {
+            ...gameState,
+            fusePoints: { ...gameState.fusePoints, [playerId]: fp - ITEM_PRICES.BOMB_SHIELD },
+        };
+        applyMissionEvent(updates, gsAfter, group.players, playerId, { kind: 'bought-item', playerId });
+
+        transaction.update(groupRef, updates);
         result = { success: true };
     });
     return result;
@@ -469,7 +505,8 @@ export const startBombGame = async (
         bettingTickets: {},
         tbcTickets: {},
         freeBettingClaimed: {},
-        freeTbcClaimed: {}
+        freeTbcClaimed: {},
+        roundStartLives: lives,
 
     };
 
@@ -580,6 +617,11 @@ export const passBomb = async (
                     },
                 };
                 applyFusePoints(wrongPassUpdates, gameState, fromId, FUSE_POINTS.CLINGY_WRONG_PASS, 'Wrong pass!');
+
+                applyMissionEvent(wrongPassUpdates, gameState, group.players, fromId, {
+                    kind: 'wrong-pass',
+                    playerId: fromId,
+                });
 
                 // wrong-answer branch: replace the updateDoc + return with
                 transaction.update(groupRef, wrongPassUpdates);
@@ -741,12 +783,18 @@ export const passBomb = async (
                 ].slice(-MAX_USED_QUIZ_QUESTIONS);
             }
 
+            // When did the passer catch it? The last pass this round, or the round start.
+            const lastIn = gameState.passHistory[gameState.passHistory.length - 1];
+            const caughtAt = lastIn && lastIn.to === fromId ? lastIn.timestamp : gameState.timerStartedAt;
+            const heldMs = Math.max(0, now - caughtAt);
+
             applyMissionEvent(updates, gameState, group.players, fromId, {
                 kind: 'pass',
                 fromId,
                 toId,
                 activePlayerIds,
                 duringPanic: gameState.phase === 'panic',
+                heldMs,
             });
             applyMissionEvent(updates, gameState, group.players, fromId, {
                 kind: 'survived-hold',
@@ -981,7 +1029,7 @@ export const resolvePanicOutcome = async (group: Group): Promise<void> => {
             : [...(gameState.wireCutters ?? []), playerId];
 
         if (isImmune) {
-            transaction.update(groupRef, {
+            const immuneUpdates: Record<string, unknown> = {
                 'gameState.phase': 'exploded',
                 'gameState.wireChoice': wire ?? deleteField(),
                 'gameState.defused': true,
@@ -989,10 +1037,12 @@ export const resolvePanicOutcome = async (group: Group): Promise<void> => {
                 'gameState.lastWireCutPlayerId': playerId,
                 'gameState.clingy': deleteField(),
                 'gameState.wireCutters': newWireCutters,
-                // Void — nothing could be won against an immune holder, so the
-                // tickets go back, same as when a pass or force-end cancels the cut.
                 ...refundActiveBets(gameState),
-            });
+            };
+            if (wire != null) {
+                applyMissionEvent(immuneUpdates, gameState, group.players, playerId, { kind: 'wire-cut', playerId });
+            }
+            transaction.update(groupRef, immuneUpdates);
             return;
         }
 
@@ -1013,8 +1063,13 @@ export const resolvePanicOutcome = async (group: Group): Promise<void> => {
             };
 
             applyFusePoints(updates, gameState, playerId, FUSE_POINTS.WIRE_DEFUSED, 'Wire defused!');
-            applyMissionEvent(updates, gameState, group.players, playerId, { kind: 'defused', playerId });
-            applyMissionEvent(updates, gameState, group.players, playerId, { kind: 'survived-hold', playerId });
+            applyMissionEvent(updates, gameState, group.players, playerId, {
+                kind: 'defused',
+                playerId,
+                usedRevealer: !!gameState.revealerHints?.[playerId],
+                betsAgainst: Object.keys(gameState.activeBets ?? {}).length,
+            });
+            applyMissionEvent(updates, gameState, group.players, playerId, { kind: 'wire-cut', playerId }); applyMissionEvent(updates, gameState, group.players, playerId, { kind: 'survived-hold', playerId });
 
             transaction.update(groupRef, updates);
             scoreDefuserId = playerId;
@@ -1037,12 +1092,19 @@ export const resolvePanicOutcome = async (group: Group): Promise<void> => {
         };
 
         if (shielded) {
+            // Vest took the hit: no life loss and no ghosting.
             updates['gameState.shieldAbsorbedPlayerId'] = playerId;
             updates['gameState.roundShields'] = (gameState.roundShields ?? []).filter(
                 (id) => id !== playerId
             );
-            // Lives, ghosts and the wrong-wire FP penalty are all skipped —
-            // the vest took the hit.
+            // Only a real wrong cut earns a Barely-Used Shield credit.
+            // Running the clock out without cutting doesn't count (anti-farming).
+            if (wire != null) {
+                updates[`gameState.superShieldCredits.${playerId}`] =
+                    (gameState.superShieldCredits?.[playerId] ?? 0) + 1;
+            }
+            // The FP penalty still applies, so tanking a round isn't free.
+            applyFusePoints(updates, gameState, playerId, FUSE_POINTS.WIRE_EXPLODED_SELF, 'Wrong wire! (shield held)');
         } else {
             const currentLives = gameState.lives[playerId] ?? 0;
             const newLives = Math.max(0, currentLives - 1);
@@ -1060,12 +1122,13 @@ export const resolvePanicOutcome = async (group: Group): Promise<void> => {
             applyFusePoints(updates, gameState, playerId, FUSE_POINTS.WIRE_EXPLODED_SELF, 'Wrong wire!');
 
             // Whoever handed the bomb to the victim earns credit for "assassin"
-            // missions — only when it actually cost them something.
+            // missions, but only when it actually cost the victim a life.
             const lastPass = gameState.passHistory[gameState.passHistory.length - 1];
             if (lastPass && lastPass.to === playerId && lastPass.from !== playerId) {
                 applyMissionEvent(updates, gameState, group.players, lastPass.from, {
                     kind: 'caused-explosion',
                     passerId: lastPass.from,
+                    eliminated,
                 });
             }
         }
@@ -1122,6 +1185,8 @@ export const toggleDisputeVote = async (
         if (!passEvent) return;
         if (voterId === passEvent.from) return;
         if (passEvent.boomerang) return;
+        // Duel passes follow no instruction — the game picked the target.
+        if (passEvent.instruction === '(Hot potato)' || passEvent.instruction === '(Fastest Finger First)') return;
 
         const disputes = [...(gameState.disputes ?? [])];
         const existingIndex = disputes.findIndex((d) => d.passIndex === passIndex);
@@ -1168,6 +1233,12 @@ export const toggleDisputeVote = async (
                 'gameState.penaltyResult': deleteField(),
             };
             applyFusePoints(disputeUpdates, gameState, dispute.accusedId, FUSE_POINTS.CALLOUT_VOTED_OUT, 'Called out!');
+            for (const voterId of dispute.voterIds) {
+                applyMissionEvent(disputeUpdates, gameState, group.players, voterId, {
+                    kind: 'callout-passed',
+                    voterIds: dispute.voterIds,
+                });
+            }
             transaction.update(groupRef, disputeUpdates);
         } else {
             transaction.update(groupRef, { 'gameState.disputes': updatedDisputes });
@@ -1212,6 +1283,8 @@ export const cutPenaltyWire = async (
                         updates['gameState.everGhosted'] = [...(gameState.everGhosted ?? []), playerId];
                     }
                 }
+            } else {
+                applyMissionEvent(updates, gameState, group.players, playerId, { kind: 'penalty-survived', playerId });
             }
 
             transaction.update(groupRef, updates);
@@ -1333,6 +1406,10 @@ const startDuelRound = async (
         'gameState.roundShields': [],
         'gameState.shieldAbsorbedPlayerId': deleteField(),
         'gameState.revealerHints': {},
+        'gameState.roundDuelShields': gameState.duelShieldArmed ?? [],
+        'gameState.duelShieldArmed': [],
+        'gameState.duelShieldAbsorbedPlayerId': deleteField(),
+        'gameState.roundStartLives': gameState.lives,
     });
 };
 
@@ -1460,6 +1537,12 @@ export const startNextRound = async (group: Group): Promise<void> => {
             ? playerIds[Math.floor(Math.random() * playerIds.length)]
             : '';
 
+    const duelShieldRefunds: Record<string, unknown> = {};
+    for (const id of gameState.duelShieldArmed ?? []) {
+        duelShieldRefunds[`gameState.superShieldItems.${id}`] =
+            (gameState.superShieldItems?.[id] ?? 0) + 1;
+    }
+
     const updates: Record<string, unknown> = {
         'gameState.phase': 'reveal',
         'gameState.revealEndsAt': Date.now() + REVEAL_DURATION_MS,
@@ -1525,6 +1608,12 @@ export const startNextRound = async (group: Group): Promise<void> => {
         'gameState.shieldArmed': [],
         'gameState.shieldAbsorbedPlayerId': deleteField(),
         'gameState.revealerHints': {},
+        ...duelShieldRefunds,
+        'gameState.duelShieldArmed': [],
+        'gameState.roundDuelShields': [],
+        'gameState.duelShieldAbsorbedPlayerId': deleteField(),
+        'gameState.roundStartLives': gameState.lives,
+
     };
 
     // Quiz Bomb: fold the first question of this round into the same
