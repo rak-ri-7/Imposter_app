@@ -6,7 +6,8 @@ export type SoundKey =
     | 'defuse' | 'defuse-yes'
     | 'panic-start1' | 'panic-start2'
     | 'ghost-presence1' | 'ghost-presence2'
-    | 'ghost-bet-placed' | 'tbc-start' | 'wire-lock-in';
+    | 'ghost-bet-placed' | 'tbc-start' | 'wire-lock-in'
+    | 'wrong-answer' | 'right-answer';
 
 const SOUND_SOURCES: Record<SoundKey, number> = {
     'reveal-1': require('../../../assets/sounds/reveal-1.mp3'),
@@ -23,6 +24,8 @@ const SOUND_SOURCES: Record<SoundKey, number> = {
     'ghost-bet-placed': require('../../../assets/sounds/ghost-bet-placed.mp3'),
     'tbc-start': require('../../../assets/sounds/tbc-start.mp3'),
     'wire-lock-in': require('../../../assets/sounds/wire-lock-in.mp3'),
+    'wrong-answer': require('../../../assets/sounds/wrong-answer.mp3'),
+    'right-answer': require('../../../assets/sounds/right-answer.mp3')
 };
 
 const players: Partial<Record<SoundKey, AudioPlayer>> = {};

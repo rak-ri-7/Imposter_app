@@ -39,6 +39,7 @@ import { playSound } from "../../../../shared/sounds/soundManager";
 
 // Set this to one of your existing "wrong answer" sound keys.
 const WRONG_SOUND = "wrong-answer";
+const RIGHT_SOUND = "right-answer";
 
 type Props = { group: Group; playerId: string };
 
@@ -109,6 +110,7 @@ export default function PassPlayScreen({ group, playerId }: Props) {
       if (gs.lastSwap!.sideId !== mySide)
         showFlash(`🔄 ${sideName(gs.lastSwap!.sideId)} swapped their question`);
     } else if (justNow(gs.lastPass)) {
+      playSound(RIGHT_SOUND); // correct answer — everyone hears it
       const p = gs.lastPass!;
       const earn = justNow(gs.lastEarn) ? gs.lastEarn! : null;
       if (p.to === mySide) {
@@ -481,20 +483,18 @@ export default function PassPlayScreen({ group, playerId }: Props) {
           </>
         )}
         <Text style={styles.subLine}>
-          {targetId
-            ? aimingAtMe
-              ? `😬 Aiming at ${you.toUpperCase()}`
-              : `Aiming at ${sideName(targetId)}`
-            : muffled && wrongCount > 0
-              ? "🤔 Answering…" // a silent fumble shouldn't show as a re-pick
+          {muffled
+            ? "🤔 Answering…" // gloves: no target, no re-picks, nothing to read
+            : targetId
+              ? aimingAtMe
+                ? `😬 Aiming at ${you.toUpperCase()}`
+                : `Aiming at ${sideName(targetId)}`
               : "Choosing a target…"}
         </Text>
-        {targetId && (
+        {targetId && !muffled && (
           <Text style={styles.answering}>
             🤔 Answering…
-            {wrongCount > 0 && !muffled
-              ? `  ❌ ${wrongCount} wrong so far`
-              : ""}
+            {wrongCount > 0 ? `  ❌ ${wrongCount} wrong so far` : ""}
           </Text>
         )}
         {isOut && (

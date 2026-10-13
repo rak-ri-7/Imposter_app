@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -66,7 +66,7 @@ export default function PassStoreSheet({
 }: Props) {
   const gs = group.gameState as PassGameState;
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
+  const [note, setNote] = useState<{ text: string; ok: boolean } | null>(null);
 
   const mySide = sideOf(gs, playerId);
   const team = gs.teamMode;
@@ -83,15 +83,26 @@ export default function PassStoreSheet({
       const { result, total } = await buyAudit(group, playerId, targetId);
       setNote(
         result === "ok"
-          ? `🔎 Audit: ${sideById(gs, targetId)?.name} has ${total} passes left`
-          : result === "insufficient"
-            ? `Not enough ${CURRENCY.short}`
-            : "Can't audit right now",
+          ? {
+              ok: true,
+              text: `🔎 Audit: ${sideById(gs, targetId)?.name} has ${total} passes left`,
+            }
+          : {
+              ok: false,
+              text:
+                result === "insufficient"
+                  ? `Not enough ${CURRENCY.short}`
+                  : "Can't audit right now",
+            },
       );
     } finally {
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (visible) setNote(null);
+  }, [visible]);
 
   const run = async (action: () => Promise<StoreResult>, okText: string) => {
     if (busy) return;
@@ -100,12 +111,16 @@ export default function PassStoreSheet({
       const r = await action();
       setNote(
         r === "ok"
-          ? okText
-          : r === "insufficient"
-            ? `Not enough ${CURRENCY.short}`
-            : r === "not-allowed"
-              ? "Can't buy that right now"
-              : "Something went wrong — try again",
+          ? { text: okText, ok: true }
+          : {
+              ok: false,
+              text:
+                r === "insufficient"
+                  ? `Not enough ${CURRENCY.short}`
+                  : r === "not-allowed"
+                    ? "Can't buy that right now"
+                    : "Something went wrong — try again",
+            },
       );
     } finally {
       setBusy(false);
@@ -143,7 +158,11 @@ export default function PassStoreSheet({
               😬 The bomb is aiming at {team ? "your team" : "you"}!
             </Text>
           )}
-          {note && <Text style={styles.note}>{note}</Text>}
+          {note && (
+            <Text style={[styles.note, !note.ok && styles.noteError]}>
+              {note.text}
+            </Text>
+          )}
 
           <ScrollView style={styles.list}>
             <Text style={styles.section}>
@@ -363,4 +382,5 @@ const styles = StyleSheet.create({
     borderColor: "#333",
   },
   closeText: { color: "#888", fontSize: 14, fontWeight: "600" },
+  noteError: { color: "#E63946" },
 });

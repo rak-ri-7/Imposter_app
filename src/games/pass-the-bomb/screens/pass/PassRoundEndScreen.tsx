@@ -164,7 +164,10 @@ export default function PassRoundEndScreen({ group, playerId }: Props) {
                 ? victimIsMine
                   ? `${team ? "Your team is" : "You're"} out of lives. 👻`
                   : `${victimLabel} ${team ? "are" : "is"} out of the game. 👻`
-                : `${victimIsMine ? (team ? "Your team loses" : "You lose") : `${victimLabel} ${team ? "lose" : "loses"}`} a life, and gets topped back up to ${refill} passes per ${team ? "team" : "player"}.`}
+                : `${victimIsMine ? (team ? "Your team loses" : "You lose") : `${victimLabel} ${team ? "lose" : "loses"}`} a life` +
+                  (!gs.hiddenPasses || victimIsMine
+                    ? `, and gets topped back up to ${refill} passes per ${team ? "team" : "player"}.`
+                    : ", and gets a top-up.")}
             </Text>
 
             <View style={styles.card}>
@@ -209,7 +212,9 @@ export default function PassRoundEndScreen({ group, playerId }: Props) {
 
             {!gameOverNext && (
               <Text style={styles.hint}>
-                The bomb goes to whoever has the fewest passes left.
+                {gs.hiddenPasses
+                  ? "Someone random gets the bomb next…"
+                  : "The bomb goes to whoever has the fewest passes left."}
               </Text>
             )}
 

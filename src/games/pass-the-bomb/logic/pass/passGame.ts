@@ -62,7 +62,7 @@ export const PRICE_GLOVES = 10;   // Hush Gloves — your fumbles make no sound�
 export const GLOVES_TURNS = 5;    // …for your next 5 turns holding the bomb
 export const PRICE_AUDIT = 8;     // privately see one side's exact pass total
 
-export const STORE = { name: 'Kiosk', icon: '🏪' } as const;
+export const STORE = { name: 'Front Office', icon: '🏪' } as const;
 
 export type PassItem = 'fiftyFifty' | 'swap';
 
@@ -597,12 +597,16 @@ export const continuePassGame = async (group: Group): Promise<void> => {
                 tx.update(groupRef, updates);
                 return;
             }
-
             const withPasses = alive.filter((id) => totalPassesLeft(gs, id) > 0);
             const pool = withPasses.length > 0 ? withPasses : alive;
+            // Visible mode: the side with the fewest passes starts (the best
+            // players' reward). Hidden mode: random — otherwise who starts
+            // would give away who's lowest.
             const fewest = Math.min(...pool.map((id) => totalPassesLeft(gs, id)));
-            const tied = pool.filter((id) => totalPassesLeft(gs, id) === fewest);
-            const holderId = tied[Math.floor(Math.random() * tied.length)];
+            const candidates = gs.hiddenPasses
+                ? pool
+                : pool.filter((id) => totalPassesLeft(gs, id) === fewest);
+            const holderId = candidates[Math.floor(Math.random() * candidates.length)];
 
             const { lastPass: _drop, ...rest } = gs;
             let next = withFreshTurn(

@@ -18,6 +18,8 @@ import {
   PassBudget,
   PASS_START_LIVES,
   canPlayPassAsTeams,
+  CURRENCY,
+  STORE,
 } from "../../logic/pass/passGame";
 
 type GameMode = "timer" | "pass";
@@ -137,6 +139,7 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
       } else {
         await startBombGame(group, timerMode, seatingOrder, strictMemoryMode);
       }
+      setBombLobby(group.id, null); // game's running — the lobby choice is done with
     } finally {
       setLoading(false);
     }
@@ -182,7 +185,8 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
         ❌ Wrong answer = lose 1 pass to them, try again
       </Text>
       <Text style={styles.rule}>
-        🔁 Your passes to each player never refill
+        🔁 Your passes to each player never refill - unless you pay for them or
+        get as disaster relief
       </Text>
       <Text style={styles.rule}>
         💥 Out of passes to everyone? It blows up on you
@@ -190,6 +194,20 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
       <Text style={styles.rule}>
         ❤️ {PASS_START_LIVES} lives each — last one standing wins!
       </Text>
+      <Text style={styles.rule}>
+        🏪 Earn {CURRENCY.name} for clean answers and spend them at the{" "}
+        {STORE.name}
+      </Text>
+      <Text style={styles.rule}>
+        🚨 Think someone's cheating? Call it out — a majority vote costs them
+        passes
+      </Text>
+      {shownHidden && (
+        <Text style={styles.rule}>
+          🔒 Hidden passes: you only see your own count — listen for fumbles and
+          keep track
+        </Text>
+      )}
     </View>
   );
 
@@ -298,7 +316,7 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
                   </Text>
                   <Text style={styles.memoryModeDesc}>
                     {hiddenPasses
-                      ? "You only see your own passes. Listen for fumbles and keep count — Hush Gloves and Audits unlock at the Kiosk."
+                      ? "You only see your own passes. Listen for fumbles and keep count — Hush Gloves and Audits unlock at the Front Office."
                       : "Everyone can see how many passes everyone has left"}
                   </Text>
                 </View>

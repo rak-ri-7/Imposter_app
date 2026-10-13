@@ -207,20 +207,31 @@ export const returnToMenu = async (
     restoreOptions?: { currentPlayers: Player[]; benchedPlayers: Player[] }
 ): Promise<void> => {
     const groupRef = doc(db, 'groups', groupId);
-    const updates: Record<string, unknown> = {
-        currentGame: 'menu',
-        status: 'menu',
-        gameState: emptyImposterState,
-    };
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(groupRef);
+        if (!snap.exists()) return;
+        const g = snap.data() as Group;
 
-    if (restoreOptions && restoreOptions.benchedPlayers.length > 0) {
-        updates.players = [...restoreOptions.currentPlayers, ...restoreOptions.benchedPlayers];
-        updates.benchedPlayers = [];
-    }
+        const updates: Record<string, unknown> = {
+            currentGame: 'menu',
+            status: 'menu',
+            gameState: emptyImposterState,
+        };
 
-    await updateDoc(groupRef, updates);
+        // Bring benched players back. Callers may pass the lists explicitly
+        // (older games do); otherwise use what's stored on the group, so no
+        // game can forget to restore them.
+        const current = restoreOptions?.currentPlayers ?? g.players ?? [];
+        const benched = restoreOptions?.benchedPlayers ?? g.benchedPlayers ?? [];
+        if (benched.length > 0) {
+            const ids = new Set(current.map((p) => p.id));
+            updates.players = [...current, ...benched.filter((p) => !ids.has(p.id))];
+            updates.benchedPlayers = [];
+        }
+
+        transaction.update(groupRef, updates);
+    });
 };
-
 export const startSelectedGame = async (
     groupId: string,
     game: 'imposter' | 'stop-the-timer' | 'pass-the-bomb'
