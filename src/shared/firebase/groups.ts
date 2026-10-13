@@ -291,3 +291,16 @@ export const claimHostIfStale = async (
         // contention — the watcher retries
     }
 };
+
+// The host's lobby choices for Pass the Bomb, shared so every player can
+// read the rules for the mode being set up. null clears it.
+export const setBombLobby = async (
+    groupId: string,
+    settings: { mode: 'timer' | 'pass' | null; passBudget: number; passAsTeams: boolean; hiddenPasses?: boolean } | null
+): Promise<void> => {
+    try {
+        await updateDoc(doc(db, 'groups', groupId), { bombLobby: settings });
+    } catch {
+        // cosmetic only — the next change re-sends it
+    }
+};

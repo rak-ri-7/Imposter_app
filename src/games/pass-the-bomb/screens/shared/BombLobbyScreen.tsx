@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,36 @@ import {
 } from "react-native";
 import { Group, BombTimerMode } from "../../../../shared/types";
 import { startBombGame } from "../../logic/timer/game";
+import { setBombLobby } from "../../../../shared/firebase/groups";
+import {
+  startPassGame,
+  PASS_BUDGETS,
+  PassBudget,
+  PASS_START_LIVES,
+  canPlayPassAsTeams,
+} from "../../logic/pass/passGame";
+
+type GameMode = "timer" | "pass";
+
+const GAME_MODES: {
+  id: GameMode;
+  emoji: string;
+  label: string;
+  desc: string;
+}[] = [
+  {
+    id: "timer",
+    emoji: "⏱️",
+    label: "Timer Mode",
+    desc: "Secret instructions, panic wires, ghosts and chaos",
+  },
+  {
+    id: "pass",
+    emoji: "🔁",
+    label: "Pass Mode",
+    desc: "No clock. Answer to pass — run out of passes and it blows",
+  },
+];
 
 type Props = {
   group: Group;
@@ -18,6 +48,12 @@ type Props = {
 };
 
 export default function BombLobbyScreen({ group, playerId }: Props) {
+  const [gameMode, setGameMode] = useState<GameMode | null>(null); // nothing pre-selected
+  const [passBudget, setPassBudget] = useState<PassBudget>(20);
+  // Teams set up in the Game Menu? Pass mode can use them (on by default).
+  const teamsAvailable = canPlayPassAsTeams(group);
+  const [passAsTeams, setPassAsTeams] = useState(true);
+  const [hiddenPasses, setHiddenPasses] = useState(false); // advanced: off by default
   const [timerMode, setTimerMode] = useState<BombTimerMode>("on");
   const [loading, setLoading] = useState(false);
   const [seatingOrder, setSeatingOrder] = useState<string[]>(
@@ -25,6 +61,54 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
   );
   const [strictMemoryMode, setStrictMemoryMode] = useState(true); // default ON
   const isHost = group.hostId === playerId;
+
+  // The host's choices are shared so everyone else can read the rules for the
+  // chosen mode. Cleared when the host opens the lobby: nothing pre-selected.
+  useEffect(() => {
+    if (isHost) setBombLobby(group.id, null);
+  }, [isHost]);
+
+  const share = (
+    patch: Partial<{
+      mode: GameMode;
+      passBudget: number;
+      passAsTeams: boolean;
+      hiddenPasses: boolean;
+    }>,
+  ) =>
+    setBombLobby(group.id, {
+      mode: gameMode,
+      passBudget,
+      passAsTeams,
+      hiddenPasses,
+      ...patch,
+    });
+  const pickMode = (m: GameMode) => {
+    setGameMode(m);
+    share({ mode: m });
+  };
+  const pickBudget = (b: PassBudget) => {
+    setPassBudget(b);
+    share({ passBudget: b });
+  };
+  const pickHidden = (v: boolean) => {
+    setHiddenPasses(v);
+    share({ hiddenPasses: v });
+  };
+  const pickTeams = (v: boolean) => {
+    setPassAsTeams(v);
+    share({ passAsTeams: v });
+  };
+
+  // What everyone sees: the host's live choice (host) or the shared one (others).
+  const shownMode: GameMode | null = isHost
+    ? gameMode
+    : (group.bombLobby?.mode ?? null);
+  const shownBudget = isHost ? passBudget : (group.bombLobby?.passBudget ?? 20);
+  const shownHidden = isHost ? hiddenPasses : !!group.bombLobby?.hiddenPasses;
+  const shownTeams =
+    teamsAvailable &&
+    (isHost ? passAsTeams : (group.bombLobby?.passAsTeams ?? true));
 
   const moveSeat = (index: number, direction: -1 | 1) => {
     const target = index + direction;
@@ -38,9 +122,21 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
     if (group.players.length < 3) {
       return Alert.alert("Need at least 3 players!");
     }
+    if (!gameMode) {
+      return Alert.alert("Pick a game mode first!");
+    }
     setLoading(true);
     try {
-      await startBombGame(group, timerMode, seatingOrder, strictMemoryMode);
+      if (gameMode === "pass") {
+        await startPassGame(
+          group,
+          passBudget,
+          teamsAvailable && passAsTeams,
+          hiddenPasses,
+        );
+      } else {
+        await startBombGame(group, timerMode, seatingOrder, strictMemoryMode);
+      }
     } finally {
       setLoading(false);
     }
@@ -72,6 +168,45 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
     },
   ];
 
+  const passRules = (
+    <View style={styles.rulesBox}>
+      <Text style={styles.rulesTitle}>HOW TO PLAY — PASS MODE</Text>
+      <Text style={styles.rule}>💣 One player holds the bomb</Text>
+      <Text style={styles.rule}>
+        🎯 Pick who you're passing to, then answer a question
+      </Text>
+      <Text style={styles.rule}>
+        ✅ Right answer = the bomb moves (costs 1 pass to them)
+      </Text>
+      <Text style={styles.rule}>
+        ❌ Wrong answer = lose 1 pass to them, try again
+      </Text>
+      <Text style={styles.rule}>
+        🔁 Your passes to each player never refill
+      </Text>
+      <Text style={styles.rule}>
+        💥 Out of passes to everyone? It blows up on you
+      </Text>
+      <Text style={styles.rule}>
+        ❤️ {PASS_START_LIVES} lives each — last one standing wins!
+      </Text>
+    </View>
+  );
+
+  const timerRules = (
+    <View style={styles.rulesBox}>
+      <Text style={styles.rulesTitle}>HOW TO PLAY — TIMER MODE</Text>
+      <Text style={styles.rule}>💣 One player holds the bomb</Text>
+      <Text style={styles.rule}>
+        📜 They get a secret instruction to pass it
+      </Text>
+      <Text style={styles.rule}>🎯 Tap a player's name to pass</Text>
+      <Text style={styles.rule}>⚠️ At panic time — cut red or blue wire</Text>
+      <Text style={styles.rule}>💥 Wrong wire or no time = lose a life</Text>
+      <Text style={styles.rule}>❤️ 3 lives each — last one standing wins!</Text>
+    </View>
+  );
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>💣 Pass the Bomb</Text>
@@ -82,26 +217,140 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        <View style={styles.rulesBox}>
-          <Text style={styles.rulesTitle}>HOW TO PLAY</Text>
-          <Text style={styles.rule}>💣 One player holds the bomb</Text>
-          <Text style={styles.rule}>
-            📜 They get a secret instruction to pass it
-          </Text>
-          <Text style={styles.rule}>🎯 Tap a player's name to pass</Text>
-          <Text style={styles.rule}>
-            ⚠️ At panic time — cut red or blue wire
-          </Text>
-          <Text style={styles.rule}>
-            💥 Wrong wire or no time = lose a life
-          </Text>
-          <Text style={styles.rule}>
-            ❤️ 3 lives each — last one standing wins!
-          </Text>
-        </View>
-
         {isHost && (
           <>
+            <Text style={styles.sectionLabel}>GAME MODE</Text>
+            <View style={styles.gameModes}>
+              {GAME_MODES.map((m) => {
+                const active = gameMode === m.id;
+                return (
+                  <TouchableOpacity
+                    key={m.id}
+                    style={[
+                      styles.gameModeCard,
+                      active && styles.modeBtnActive,
+                    ]}
+                    onPress={() => pickMode(m.id)}
+                  >
+                    <Text style={styles.gameModeEmoji}>{m.emoji}</Text>
+                    <Text
+                      style={[
+                        styles.gameModeLabel,
+                        active && styles.modeLabelActive,
+                      ]}
+                    >
+                      {m.label}
+                    </Text>
+                    <Text style={styles.gameModeDesc}>{m.desc}</Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </>
+        )}
+
+        {isHost && !gameMode && (
+          <View style={styles.waitingSettings}>
+            <Text style={styles.waitingSettingsText}>
+              Choose a mode to see its rules and settings
+            </Text>
+          </View>
+        )}
+
+        {isHost && gameMode === "pass" && (
+          <>
+            {passRules}
+
+            {teamsAvailable && (
+              <View style={styles.memoryModeBox}>
+                <Text style={styles.memoryModeLabel}>TEAMS</Text>
+                <View style={styles.memoryModeRow}>
+                  <View style={styles.memoryModeTextCol}>
+                    <Text style={styles.memoryModeTitle}>
+                      {passAsTeams
+                        ? "👥 Play as teams"
+                        : "🙋 Everyone for themselves"}
+                    </Text>
+                    <Text style={styles.memoryModeDesc}>
+                      {passAsTeams
+                        ? `${group.teams?.length ?? 0} teams from the Game Menu. The whole team sees the question — anyone can answer.`
+                        : "Ignore the teams and play solo"}
+                    </Text>
+                  </View>
+                  <Switch
+                    value={passAsTeams}
+                    onValueChange={pickTeams}
+                    trackColor={{ false: "#333", true: "#FF4500" }}
+                    thumbColor="#fff"
+                  />
+                </View>
+              </View>
+            )}
+
+            <View style={styles.memoryModeBox}>
+              <Text style={styles.memoryModeLabel}>DIFFICULTY</Text>
+              <View style={styles.memoryModeRow}>
+                <View style={styles.memoryModeTextCol}>
+                  <Text style={styles.memoryModeTitle}>
+                    {hiddenPasses
+                      ? "🔒 Hidden passes (advanced)"
+                      : "👀 Passes visible"}
+                  </Text>
+                  <Text style={styles.memoryModeDesc}>
+                    {hiddenPasses
+                      ? "You only see your own passes. Listen for fumbles and keep count — Hush Gloves and Audits unlock at the Kiosk."
+                      : "Everyone can see how many passes everyone has left"}
+                  </Text>
+                </View>
+                <Switch
+                  value={hiddenPasses}
+                  onValueChange={pickHidden}
+                  trackColor={{ false: "#333", true: "#FF4500" }}
+                  thumbColor="#fff"
+                />
+              </View>
+            </View>
+
+            <Text style={styles.sectionLabel}>
+              {teamsAvailable && passAsTeams
+                ? "PASSES TO EACH TEAM"
+                : "PASSES TO EACH PLAYER"}
+            </Text>
+            <View style={styles.timerModes}>
+              {PASS_BUDGETS.map((b) => (
+                <TouchableOpacity
+                  key={b}
+                  style={[
+                    styles.modeBtn,
+                    passBudget === b && styles.modeBtnActive,
+                  ]}
+                  onPress={() => pickBudget(b)}
+                >
+                  <Text
+                    style={[
+                      styles.budgetNumber,
+                      passBudget === b && styles.modeLabelActive,
+                    ]}
+                  >
+                    {b}
+                  </Text>
+                  <Text style={styles.modeDesc}>
+                    {b === 10
+                      ? "Quick game"
+                      : b === 20
+                        ? "Standard"
+                        : "Long haul"}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          </>
+        )}
+
+        {isHost && gameMode === "timer" && (
+          <>
+            {timerRules}
+
             <Text style={styles.sectionLabel}>TIMER MODE</Text>
             <View style={styles.timerModes}>
               {timerModes.map((mode) => (
@@ -219,12 +468,23 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
           </>
         )}
 
-        {!isHost && (
+        {!isHost && !shownMode && (
           <View style={styles.waitingSettings}>
             <Text style={styles.waitingSettingsText}>
-              Host is setting up the game...
+              Host is choosing a mode...
             </Text>
           </View>
+        )}
+
+        {!isHost && shownMode && (
+          <>
+            <Text style={styles.chosenMode}>
+              {shownMode === "pass"
+                ? `🔁 Pass Mode · ${shownBudget} passes${shownTeams ? " · teams" : ""}${shownHidden ? " · 🔒 hidden" : ""}`
+                : "⏱️ Timer Mode"}
+            </Text>
+            {shownMode === "pass" ? passRules : timerRules}
+          </>
         )}
 
         {!isHost && (
@@ -265,12 +525,16 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
 
       {isHost ? (
         <TouchableOpacity
-          style={styles.startBtn}
+          style={[styles.startBtn, !gameMode && styles.startBtnDisabled]}
           onPress={onStart}
-          disabled={loading}
+          disabled={loading || !gameMode}
         >
           <Text style={styles.startBtnText}>
-            {loading ? "Starting..." : "Light the Fuse 💣"}
+            {loading
+              ? "Starting..."
+              : gameMode
+                ? "Light the Fuse 💣"
+                : "Pick a mode first"}
           </Text>
         </TouchableOpacity>
       ) : (
@@ -449,6 +713,13 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     alignItems: "center",
   },
+  chosenMode: {
+    color: "#FF4500",
+    fontSize: 15,
+    fontWeight: "800",
+    textAlign: "center",
+    marginBottom: 12,
+  },
   waitingSettingsText: {
     color: "#888",
     fontSize: 13,
@@ -488,7 +759,43 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginTop: 12,
   },
+  startBtnDisabled: { opacity: 0.4 },
   startBtnText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+
+  // Game mode selector
+  gameModes: {
+    flexDirection: "row",
+    gap: 10,
+    marginBottom: 20,
+  },
+  gameModeCard: {
+    flex: 1,
+    backgroundColor: "#1A1A1A",
+    borderRadius: 14,
+    padding: 14,
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "#333",
+  },
+  gameModeEmoji: { fontSize: 28, marginBottom: 6 },
+  gameModeLabel: {
+    color: "#ccc",
+    fontSize: 15,
+    fontWeight: "800",
+    marginBottom: 4,
+  },
+  gameModeDesc: {
+    color: "#666",
+    fontSize: 11,
+    textAlign: "center",
+    lineHeight: 15,
+  },
+  budgetNumber: {
+    color: "#888",
+    fontSize: 22,
+    fontWeight: "800",
+    marginBottom: 2,
+  },
   waitingBox: { padding: 18, alignItems: "center" },
   waitingText: { color: "#888", fontSize: 14, textAlign: "center" },
 

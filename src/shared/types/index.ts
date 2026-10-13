@@ -40,12 +40,13 @@ export type Group = {
     scores: Record<string, number>;
     currentGame: GameType | 'menu';
     status: GameStatus;
-    gameState: ImposterGameState | TimerGameState | BombGameState;
+    gameState: ImposterGameState | TimerGameState | BombGameState | PassGameState;
     createdAt?: number;
     teams?: Team[];
     teamsEnabled?: boolean;
     benchedPlayers?: Player[];
     hostHeartbeatAt?: number
+    bombLobby?: { mode: 'timer' | 'pass' | null; passBudget: number; passAsTeams: boolean; hiddenPasses?: boolean; } | null;
 };
 
 export type ImposterGameState = {
@@ -434,6 +435,8 @@ export type PassDispute = {
     voterIds: string[]; // players who've tapped "Call It Out" on this pass
     resolved: boolean;
     guilty: boolean;
+    outcome?: 'caught' | 'safe' | 'tbc-won' | 'tbc-lost';
+    tbcOpponentId?: string;
 };
 
 export type QuizAnswer = {
@@ -476,4 +479,67 @@ export type ActiveQuiz = {
     // three different code paths.
     mode: 'quiz-round' | 'duel' | 'duel-fff' | 'trial-by-combat' | 'ghost-tournament' | 'hot-seat';
     chainNext: boolean;
+};
+
+export type PassQuestion = {
+    questionId: string;
+    prompt: string;
+    options: { text: string; correct: boolean }[];
+};
+
+export type PassTurn = {
+    seq: number;
+    targetId: string | null;   // a side id
+    question: PassQuestion;
+    wrongPicks: number[];
+    removed?: number[];   // options knocked out by 50/50
+    muffled?: boolean;
+};
+
+// A side is one player in solo play, or one team in team play.
+export type PassSide = {
+    id: string;          // player id (solo) or team id (teams)
+    name: string;
+    memberIds: string[];
+    color?: string;      // teams only
+};
+
+export type PassReceipt = {
+    item: 'pass' | 'fiftyFifty' | 'swap' | 'gloves' | 'audit';
+    byPlayerId: string;
+    round: number;
+    targetId?: string;   // who a bought pass / an audit was aimed at
+};
+
+export type PassGameState = {
+    mode: 'pass';
+    teamMode: boolean;
+    phase: 'pass-playing' | 'pass-exploded' | 'pass-result';
+    budget: number;
+    sides: PassSide[];
+    sideIds: string[];
+    holderId: string;                               // a side id
+    pools: Record<string, Record<string, number>>;  // pools[fromSide][toSide]
+    lives: Record<string, number>;                  // per side
+    ghosts: string[];                               // side ids
+    eliminationOrder: string[];
+    round: number;
+    turn: PassTurn;
+    usedQuestionIds: string[];
+    stats: Record<string, { passes: number; wrong: number }>
+    callout: { seq: number; voterIds: string[]; againstIds?: string[] };
+    lastCalloutDropped?: { seq: number };
+    lastPass?: { from: string; to: string; seq: number; byPlayerId: string };
+    lastExplosion?: { sideId: string; eliminated: boolean; round: number; reason?: 'left' | 'skipped' };
+    lastCallout?: { sideId: string; seq: number; targetKept?: boolean };
+    winnerId?: string | null;
+    wallet?: Record<string, number>;          // per side (team wallet in team play)
+    streak?: Record<string, number>;          // first-try answers in a row
+    passesBought?: Record<string, number>;    // drives the rising pass price
+    items?: Record<string, { fiftyFifty?: number; swap?: number }>;
+    lastEarn?: { sideId: string; amount: number; streak: number; seq: number };
+    lastSwap?: { sideId: string; seq: number };
+    hiddenPasses?: boolean;
+    glovesTurns?: Record<string, number>;
+    receipts?: Record<string, PassReceipt[]>;
 };

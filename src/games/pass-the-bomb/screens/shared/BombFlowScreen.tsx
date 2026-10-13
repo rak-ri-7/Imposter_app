@@ -11,7 +11,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RouteProp } from "@react-navigation/native";
 import { RootStackParamList } from "../../../../../App";
 import { useGroup } from "../../../../shared/hooks/useGroup";
-import { BombGameState } from "../../../../shared/types";
+import { BombGameState, PassGameState } from "../../../../shared/types";
 import BombLobbyScreen from "./BombLobbyScreen";
 import BombPlayScreen from "../timer/BombPlayScreen";
 import BombPanicScreen from "../timer/BombPanicScreen";
@@ -25,6 +25,9 @@ import BombFastestFingerScreen from "../timer/FastestFingerScreen";
 import BombDuelFastestFingerScreen from "../timer/BombDuelFastestFingerScreen";
 import BombGhostTournamentScreen from "../timer/BombGhostTournamentScreen";
 import BombHotPotatoScreen from "../timer/BombHotPotatoScreen";
+import PassPlayScreen from "../pass/PassPlayScreen";
+import PassRoundEndScreen from "../pass/PassRoundEndScreen";
+
 import {
   triggerPanic,
   endPersonalityReveal,
@@ -70,6 +73,9 @@ export default function BombFlowScreen({ navigation, route }: Props) {
   // zone crash, and `isHost` wasn't declared anywhere at all.
   const gameState = group?.gameState as BombGameState | undefined;
   const phase = gameState?.phase;
+
+  const isPassMode =
+    (group?.gameState as { mode?: string } | undefined)?.mode === "pass";
   // "The jury has spoken" — shown on every phone for a moment when a
   // callout reaches a guilty verdict and the game moves to the penalty.
   const [verdictFor, setVerdictFor] = useState<string | null>(null);
@@ -267,7 +273,15 @@ export default function BombFlowScreen({ navigation, route }: Props) {
 
   let content;
 
-  if (!phase || phase === "lobby") {
+  if (isPassMode) {
+    const passPhase = (group.gameState as unknown as PassGameState).phase;
+    content =
+      passPhase === "pass-playing" ? (
+        <PassPlayScreen group={group} playerId={playerId} />
+      ) : (
+        <PassRoundEndScreen group={group} playerId={playerId} />
+      );
+  } else if (!phase || phase === "lobby") {
     content = <BombLobbyScreen group={group} playerId={playerId} />;
   } else if (phase === "reveal") {
     content = <BombPersonalityRevealScreen group={group} playerId={playerId} />;
