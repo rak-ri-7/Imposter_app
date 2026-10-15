@@ -1,7 +1,7 @@
 import { doc, updateDoc, deleteField, getDoc, runTransaction } from 'firebase/firestore';
 import { db } from '../../../../shared/firebase/config';
 import { Group, BombGameState, ActiveQuiz } from '../../../../shared/types';
-import { getRandomQuestion, generateSingleCorrectInstance } from '../../data/quizQuestions';
+import { getRandomQuestion, generateSingleCorrectInstance, TIMER_QUIZ } from '../../data/quizQuestions';
 
 const HOT_SEAT_LOCK_DURATIONS_MS = [3000, 5000, 8000]; // indexed by wrongCount - 1
 const HOT_SEAT_HIDDEN_TIMER_MIN = 25; // reuses the same hidden-timer feel as FFF duel
@@ -45,7 +45,7 @@ const buildFreshQuestion = (
     let fallback: { question: { id: string }; instance: ActiveQuiz['question'] } | null = null;
 
     for (let attempt = 0; attempt < MAX_QUESTION_ATTEMPTS; attempt++) {
-        const question = getRandomQuestion([...usedQuizQuestions, ...rejected]);
+        const question = getRandomQuestion([...usedQuizQuestions, ...rejected], TIMER_QUIZ);
         let instance: ActiveQuiz['question'];
         try {
             instance = generateSingleCorrectInstance(question);
@@ -62,7 +62,7 @@ const buildFreshQuestion = (
 
     // Nothing clean turned up — better a slightly short question than a stalled duel.
     if (fallback) return make(fallback.question, fallback.instance);
-    const question = getRandomQuestion(usedQuizQuestions);
+    const question = getRandomQuestion(usedQuizQuestions, TIMER_QUIZ);
     return make(question, generateSingleCorrectInstance(question));
 };
 // ── START (first question of the duel) ────────────────────────────

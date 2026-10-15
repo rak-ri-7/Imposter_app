@@ -7,7 +7,7 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../../../shared/firebase/config';
 import { Group, BombGameState, ActiveQuiz } from '../../../../shared/types';
-import { getRandomQuestion, generateQuizInstance } from '../../data/quizQuestions';
+import { getRandomQuestion, generateQuizInstance, TIMER_QUIZ } from '../../data/quizQuestions';
 // import { applyLifeGain, ROUND_WIN_SCORE } from './bombHelpers';
 import { addScore } from '../../../../shared/firebase/groups';
 
@@ -18,7 +18,7 @@ export const buildActiveQuiz = (
     mode: ActiveQuiz['mode'],
     chainNext: boolean
 ): { activeQuiz: ActiveQuiz; usedQuestionId: string } => {
-    const question = getRandomQuestion(usedQuizQuestions);
+    const question = getRandomQuestion(usedQuizQuestions, TIMER_QUIZ);
     const instance = generateQuizInstance(question);
     return {
         activeQuiz: {
@@ -262,7 +262,7 @@ export const startGhostTournament = async (
     const gameState = group.gameState as BombGameState;
     const poolIds = [wireCutterId, ...winningGhostIds];
 
-    const question = getRandomQuestion(gameState.usedQuizQuestions ?? []);
+    const question = getRandomQuestion(gameState.usedQuizQuestions ?? [], TIMER_QUIZ);
     const instance = generateQuizInstance(question);
     const activeQuiz: ActiveQuiz = {
         question: instance,

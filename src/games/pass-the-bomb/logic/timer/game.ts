@@ -616,7 +616,6 @@ export const passBomb = async (
                         penaltySeconds,
                     },
                 };
-                applyFusePoints(wrongPassUpdates, gameState, fromId, FUSE_POINTS.CLINGY_WRONG_PASS, 'Wrong pass!');
 
                 applyMissionEvent(wrongPassUpdates, gameState, group.players, fromId, {
                     kind: 'wrong-pass',
@@ -1111,8 +1110,6 @@ export const resolvePanicOutcome = async (group: Group, seenSeq?: number): Promi
                 updates[`gameState.superShieldCredits.${playerId}`] =
                     (gameState.superShieldCredits?.[playerId] ?? 0) + 1;
             }
-            // The FP penalty still applies, so tanking a round isn't free.
-            applyFusePoints(updates, gameState, playerId, FUSE_POINTS.WIRE_EXPLODED_SELF, 'Wrong wire! (shield held)');
         } else {
             const currentLives = gameState.lives[playerId] ?? 0;
             const newLives = Math.max(0, currentLives - 1);
@@ -1127,7 +1124,6 @@ export const resolvePanicOutcome = async (group: Group, seenSeq?: number): Promi
                     updates['gameState.everGhosted'] = [...(gameState.everGhosted ?? []), playerId];
                 }
             }
-            applyFusePoints(updates, gameState, playerId, FUSE_POINTS.WIRE_EXPLODED_SELF, 'Wrong wire!');
 
             // Whoever handed the bomb to the victim earns credit for "assassin"
             // missions, but only when it actually cost the victim a life.

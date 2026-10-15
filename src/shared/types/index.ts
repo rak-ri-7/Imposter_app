@@ -1,4 +1,5 @@
 import { Timestamp } from 'firebase/firestore';
+import type { QuizCategory } from '../quiz'
 
 export type Player = {
     id: string;
@@ -451,7 +452,7 @@ export type QuizAnswer = {
 // routing automatically swaps away from the quiz screen with zero extra
 // "cancel the quiz" code needed.
 export type ActiveQuiz = {
-    // Mirrors QuizInstance from logic/quizQuestions.ts. Duplicated here
+    // Mirrors QuizInstance from shared/quiz. Duplicated here
     // (rather than imported) since shared/types shouldn't depend on a
     // per-game logic file — keep the two in sync by hand if that file's
     // shape changes.
@@ -494,6 +495,10 @@ export type PassTurn = {
     wrongPicks: number[];
     removed?: number[];   // options knocked out by 50/50
     muffled?: boolean;
+    // Category Card: dealt with this turn (1 in 3). Pending until the holder picks or declines.
+    card?: { offered: QuizCategory[]; status: 'pending' | 'picked' | 'declined'; pick?: QuizCategory };
+    // This side's question was sent in a category picked by the passer.
+    sentCategory?: { category: QuizCategory; bySideId: string };
 };
 
 // A side is one player in solo play, or one team in team play.

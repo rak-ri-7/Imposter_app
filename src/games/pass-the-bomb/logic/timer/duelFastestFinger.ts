@@ -1,7 +1,7 @@
 import { doc, updateDoc, deleteField, getDoc, runTransaction } from 'firebase/firestore';
 import { db } from '../../../../shared/firebase/config';
 import { Group, BombGameState, ActiveQuiz } from '../../../../shared/types';
-import { getRandomQuestion, generateQuizInstance } from '../../data/quizQuestions';
+import { getRandomQuestion, generateQuizInstance, TIMER_QUIZ } from '../../data/quizQuestions';
 import { addScore } from '../../../../shared/firebase/groups';
 import { ROUND_WIN_SCORE, FUSE_POINTS, applyFusePoints, markDisputeOutcome } from './bombHelpers';
 import { applySuperShield } from './superShield';
@@ -21,7 +21,7 @@ const getRandomHiddenDuration = () =>
     ) + DUEL_FFF_HIDDEN_TIMER_MIN;
 
 const rollNextQuestion = (usedQuizQuestions: string[]) => {
-    const question = getRandomQuestion(usedQuizQuestions);
+    const question = getRandomQuestion(usedQuizQuestions, TIMER_QUIZ);
     const instance = generateQuizInstance(question);
     const activeQuiz: ActiveQuiz = {
         question: instance,
@@ -269,7 +269,7 @@ export const startTrialByCombat = async (group: Group): Promise<void> => {
     const challenge = gameState.tbcChallenge;
     if (!challenge) return;
 
-    const question = getRandomQuestion(gameState.usedQuizQuestions ?? []);
+    const question = getRandomQuestion(gameState.usedQuizQuestions ?? [], TIMER_QUIZ);
     const instance = generateQuizInstance(question);
     const activeQuiz: ActiveQuiz = {
         question: instance,
@@ -493,7 +493,6 @@ export const explodeDuelFuse = async (group: Group): Promise<void> => {
                         updates['gameState.everGhosted'] = [...(gs.everGhosted ?? []), victim];
                     }
                 }
-                applyFusePoints(updates, gs, victim, FUSE_POINTS.WIRE_EXPLODED_SELF, 'Out of time!');
             }
             if (survivor) {
                 applyFusePoints(updates, gs, survivor, FUSE_POINTS.WIRE_DEFUSED, 'Survived the duel round!');

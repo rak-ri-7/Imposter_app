@@ -1,7 +1,14 @@
 import { doc, updateDoc, runTransaction, increment } from 'firebase/firestore';
 import { db } from '../../../../shared/firebase/config';
 import { Group, PassGameState, PassSide, PassTurn, PassReceipt } from '../../../../shared/types';
-import { getRandomQuestion, generateSingleCorrectInstance } from '../../data/quizQuestions';
+import {
+    getRandomQuestion,
+    generateSingleCorrectInstance,
+    getQuestionBank,
+    PASS_QUIZ,
+    QuizCategory,
+    QuizDifficulty,
+} from '../../data/quizQuestions';
 import {
     settleTicketOnAnswer,
     settleTicketOnCallout,
@@ -131,8 +138,33 @@ const withStack = (gs: PassGameState, sideId: string, value: number): PassGameSt
     [sideId]: Math.max(0, value),
 });
 
-const drawQuestion = (used: string[]) => {
-    const q = getRandomQuestion(used);
+// ── CATEGORY CARD ─────────────────────────────────────────────────────
+export const CARD_CHANCE = 1 / 3;
+export const CARD_CHOICES = 4;
+const CARD_MIN_QUESTIONS = 8; // only offer categories with this many unused questions left
+
+const PASS_DIFFICULTIES: QuizDifficulty[] = Array.isArray(PASS_QUIZ.difficulty)
+    ? PASS_QUIZ.difficulty
+    : PASS_QUIZ.difficulty
+        ? [PASS_QUIZ.difficulty]
+        : ['easy', 'medium', 'hard'];
+
+const cardCategories = (used: string[]): QuizCategory[] => {
+    const counts = new Map<QuizCategory, number>();
+    for (const q of getQuestionBank()) {
+        if (!PASS_DIFFICULTIES.includes(q.difficulty) || used.includes(q.id)) continue;
+        counts.set(q.category, (counts.get(q.category) ?? 0) + 1);
+    }
+    const eligible = [...counts].filter(([, n]) => n >= CARD_MIN_QUESTIONS).map(([c]) => c);
+    for (let i = eligible.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [eligible[i], eligible[j]] = [eligible[j], eligible[i]];
+    }
+    return eligible.slice(0, CARD_CHOICES);
+};
+
+const drawQuestion = (used: string[], category?: QuizCategory) => {
+    const q = getRandomQuestion(used, category ? { ...PASS_QUIZ, category } : PASS_QUIZ);
     return {
         question: generateSingleCorrectInstance(q),
         used: [...used, q.id].slice(-MAX_USED_QUESTIONS),
@@ -149,8 +181,8 @@ const autoTarget = (gs: PassGameState, holderId: string): string | null => {
 // `newStint` = the bomb has just arrived at this side (a new turn holding it),
 // which is when Hush Gloves are checked and one of their turns is used up.
 // A new question within the same stint (a callout) keeps the current muffle.
-const withFreshTurn = (gs: PassGameState, seq: number, newStint: boolean): PassGameState => {
-    const { question, used } = drawQuestion(gs.usedQuestionIds);
+const withFreshTurn = (gs: PassGameState, seq: number, newStint: boolean, sent?: PassTurn['sentCategory']): PassGameState => {
+    const { question, used } = drawQuestion(gs.usedQuestionIds, sent?.category);
     let muffled = !newStint && !!gs.turn?.muffled;
     let glovesTurns = gs.glovesTurns;
     if (newStint && gs.hiddenPasses) {
@@ -160,6 +192,8 @@ const withFreshTurn = (gs: PassGameState, seq: number, newStint: boolean): PassG
             glovesTurns = { ...(gs.glovesTurns ?? {}), [gs.holderId]: left - 1 };
         }
     }
+    // Deal a Category Card? (Needs at least 2 categories worth choosing between.)
+    const offered = newStint && Math.random() < CARD_CHANCE ? cardCategories(used) : [];
     const turn: PassTurn = {
         seq,
         targetId: autoTarget(gs, gs.holderId),
@@ -167,6 +201,8 @@ const withFreshTurn = (gs: PassGameState, seq: number, newStint: boolean): PassG
         wrongPicks: [],
         removed: [],
         muffled,
+        ...(offered.length >= 2 ? { card: { offered, status: 'pending' as const } } : {}),
+        ...(sent ? { sentCategory: sent } : {}),
     };
     return {
         ...gs,
@@ -346,6 +382,39 @@ export const choosePassTarget = async (
     return ok;
 };
 
+// ── CATEGORY CARD: pick ───────────────────────────────────────────────
+// After the receiver is chosen. `category` = null declines the card.
+export const pickPassCategory = async (
+    group: Group,
+    playerId: string,
+    seq: number,
+    category: QuizCategory | null
+): Promise<boolean> => {
+    const groupRef = doc(db, 'groups', group.id);
+    let ok = false;
+    try {
+        await runTransaction(db, async (tx) => {
+            ok = false;
+            const snap = await tx.get(groupRef);
+            if (!snap.exists()) return;
+            const gs = snap.data().gameState as PassGameState | undefined;
+            if (!holderGuard(gs, playerId)) return;
+            const t = gs.turn;
+            if (t.seq !== seq || !t.targetId || t.card?.status !== 'pending') return;
+            if (category && !t.card.offered.includes(category)) return;
+
+            tx.update(groupRef, {
+                'gameState.turn.card': category
+                    ? { offered: t.card.offered, status: 'picked', pick: category }
+                    : { offered: t.card.offered, status: 'declined' },
+            });
+            ok = true;
+        });
+    } catch (e) {
+        if (__DEV__) console.warn('[pickPassCategory] failed', e);
+    }
+    return ok;
+};
 // ── ANSWER ────────────────────────────────────────────────────────────
 // In team play every member of the holding side can tap; the first tap to
 // land counts. A second tap on the same question still counts if it lands
@@ -371,6 +440,7 @@ export const answerPassQuestion = async (
             const t = gs.turn;
             // seq: a tap on an old question (double tap, or after a callout) does nothing.
             if (t.seq !== seq || !t.targetId) return;
+            if (t.card?.status === 'pending') return; // pick (or decline) the category first
             if (t.wrongPicks.includes(optionIndex) || (t.removed ?? []).includes(optionIndex)) return;
             const option = t.question.options[optionIndex];
             if (!option) return;
@@ -403,7 +473,12 @@ export const answerPassQuestion = async (
                         lastEarn: { sideId: from, amount: earned, streak, seq: t.seq },
                     },
                     t.seq + 1,
-                    true
+                    true,
+                    // Category Card: the receiver's question comes from the picked category.
+                    t.card?.status === 'picked' && t.card.pick
+                        ? { category: t.card.pick, bySideId: from }
+                        : undefined
+
                 );
                 // Lucky Centre: this side's ticket, if any.
                 next = settleTicketOnAnswer(next, from, wrongBefore === 0 ? 'first-try' : 'correct', news);
@@ -464,7 +539,9 @@ export const votePassCallout = async (
             if (gs.turn.seq !== seq) return;
             // No calling cheating before the holder has even seen a question
             // (still picking a target). Taking a vote back is always allowed.
-            const questionSeen = !!gs.turn.targetId || gs.turn.wrongPicks.length > 0;
+            const questionSeen =
+                (!!gs.turn.targetId && gs.turn.card?.status !== 'pending') ||
+                gs.turn.wrongPicks.length > 0;
             if (choice === 'cheating' && !questionSeen) return;
             const voters = calloutVoters(gs);
             if (voters.length < CALLOUT_MIN_VOTERS || !voters.includes(voterId)) return;
@@ -506,7 +583,8 @@ export const votePassCallout = async (
                     streak: { ...(gs.streak ?? {}), [holder]: 0 },
                 },
                 seq + 1,
-                false
+                false,
+                gs.turn.sentCategory
             );
             // Keep the chosen target.
             if (target) {
@@ -775,7 +853,7 @@ export const applyPassItem = async (
             // Swap: new question, same target. The seq bump voids any tap still
             // aimed at the old question. A live cheating call carries over —
             // swapping isn't a way to dodge one.
-            const { question, used } = drawQuestion(gs.usedQuestionIds);
+            const { question, used } = drawQuestion(gs.usedQuestionIds, t.sentCategory?.category);
             const live = gs.callout?.seq === seq ? gs.callout : null;
             tx.update(groupRef, {
                 ...spend,
@@ -786,6 +864,8 @@ export const applyPassItem = async (
                     wrongPicks: [],
                     removed: [],
                     muffled: !!t.muffled, // same stint — the gloves stay on
+                    ...(t.card ? { card: t.card } : {}),
+                    ...(t.sentCategory ? { sentCategory: t.sentCategory } : {}),
                 },
                 'gameState.usedQuestionIds': used,
                 'gameState.callout': {

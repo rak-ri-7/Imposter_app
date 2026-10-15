@@ -592,7 +592,6 @@ export const explodeHotPotato = async (group: Group): Promise<void> => {
                         updates['gameState.everGhosted'] = [...(gs.everGhosted ?? []), victim];
                     }
                 }
-                applyFusePoints(updates, gs, victim, FUSE_POINTS.WIRE_EXPLODED_SELF, 'Hot potato!');
             }
             if (survivor) {
                 applyFusePoints(updates, gs, survivor, FUSE_POINTS.WIRE_DEFUSED, 'Survived the hot potato!');

@@ -16,7 +16,7 @@
 import { doc, updateDoc, deleteField, runTransaction, increment } from 'firebase/firestore';
 import { db } from '../../../../shared/firebase/config';
 import { Group, BombGameState, ActiveQuiz } from '../../../../shared/types';
-import { getRandomQuestion, generateQuizInstance } from '../../data/quizQuestions';
+import { getRandomQuestion, generateQuizInstance, TIMER_QUIZ } from '../../data/quizQuestions';
 import { applyLifeGain, ROUND_WIN_SCORE } from './bombHelpers';
 import { buildHotPotatoStart, hotPotatoResetFields } from './hotPotatoDuel';
 
@@ -32,7 +32,7 @@ const MAX_USED_QUIZ_QUESTIONS = 40;
 export const QUESTION_HARD_CAP_MS = 45000;
 
 const buildQuestion = (usedQuizQuestions: string[]) => {
-    const question = getRandomQuestion(usedQuizQuestions);
+    const question = getRandomQuestion(usedQuizQuestions, TIMER_QUIZ);
     const instance = generateQuizInstance(question);
     const activeQuiz: ActiveQuiz = {
         question: instance,

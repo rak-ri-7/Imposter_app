@@ -26,6 +26,7 @@ const SOUND_SOURCES: Record<SoundKey, number> = {
     'wire-lock-in': require('../../../assets/sounds/wire-lock-in.mp3'),
     'wrong-answer': require('../../../assets/sounds/wrong-answer.mp3'),
     'right-answer': require('../../../assets/sounds/right-answer.mp3')
+
 };
 
 const players: Partial<Record<SoundKey, AudioPlayer>> = {};

@@ -33,6 +33,8 @@ import {
   STORE,
   glovesLeft,
 } from "../../logic/pass/passGame";
+import { pickPassCategory } from "../../logic/pass/passGame";
+import { QUIZ_CATEGORIES, QuizCategory } from "../../data/quizQuestions";
 import PassStoreSheet from "./PassStoreSheet";
 import PassReceiptsSheet from "./PassReceiptsSheet";
 import PassHauntPanel from "./PassHauntPanel";
@@ -168,6 +170,21 @@ export default function PassPlayScreen({ group, playerId }: Props) {
   }, [wrongCount, turn.seq]);
 
   // ── Holder actions ─────────────────────────────────────────────────
+  const card = turn.card;
+  const cardPending = card?.status === "pending";
+  const catLabel = (c?: QuizCategory) =>
+    c ? `${QUIZ_CATEGORIES[c].emoji} ${QUIZ_CATEGORIES[c].label}` : "";
+
+  const pickCategory = async (c: QuizCategory | null) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await pickPassCategory(group, playerId, turn.seq, c);
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const pickTarget = async (id: string) => {
     if (busy) return;
     setBusy(true);
@@ -242,7 +259,7 @@ export default function PassPlayScreen({ group, playerId }: Props) {
   ) : null;
 
   // Cheating can only be called once the holder has seen a question.
-  const questionSeen = !!targetId || wrongCount > 0;
+  const questionSeen = (!!targetId && !cardPending) || wrongCount > 0;
 
   // ── Stuck holder ───────────────────────────────────────────────────
   const holderGone = isSideGone(gs, gs.holderId, group.players);
@@ -358,6 +375,12 @@ export default function PassPlayScreen({ group, playerId }: Props) {
 
   const question = (
     <View style={styles.questionBox}>
+      {turn.sentCategory && (
+        <Text style={styles.sentTag}>
+          {catLabel(turn.sentCategory.category)} · picked by{" "}
+          {sideName(turn.sentCategory.bySideId)}
+        </Text>
+      )}
       <Text style={styles.questionText}>{turn.question.prompt}</Text>
       {turn.question.options.map((opt, i) => {
         const tried = turn.wrongPicks.includes(i);
@@ -431,6 +454,11 @@ export default function PassPlayScreen({ group, playerId }: Props) {
           Pick who {you} {team ? "is" : "are"} passing to, then answer to pass.
           {canSeeCount(gs.holderId) ? ` ${holderTotal} passes left.` : ""}
         </Text>
+        {card && (
+          <Text style={styles.cardNote}>
+            🎯 Category Card! After you pick who, you choose their category.
+          </Text>
+        )}
         {calloutStatus}
         {others.map((id) => (
           <TouchableOpacity
@@ -447,6 +475,36 @@ export default function PassPlayScreen({ group, playerId }: Props) {
         ))}
       </>
     );
+  } else if (isHolder && cardPending) {
+    // Step 1½: Category Card — pick what the receiver gets.
+    main = (
+      <>
+        <Text style={styles.bigLine}>🎯 Category Card</Text>
+        <Text style={styles.subLine}>
+          Pick {sideName(targetId)}'s category. It only counts if your pass
+          lands.
+        </Text>
+        <View style={styles.cardRow}>
+          {card!.offered.map((c) => (
+            <TouchableOpacity
+              key={c}
+              style={styles.cardChip}
+              disabled={busy}
+              onPress={() => pickCategory(c)}
+            >
+              <Text style={styles.cardChipText}>{catLabel(c)}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <TouchableOpacity
+          style={styles.cardSkip}
+          disabled={busy}
+          onPress={() => pickCategory(null)}
+        >
+          <Text style={styles.cardSkipText}>No thanks — surprise them</Text>
+        </TouchableOpacity>
+      </>
+    );
   } else if (isHolder) {
     // Step 2: answer to pass.
     main = (
@@ -454,6 +512,11 @@ export default function PassPlayScreen({ group, playerId }: Props) {
         <Text style={styles.bigLine}>
           Passing to {sideName(targetId)} · {holderTotal} passes left
         </Text>
+        {card?.status === "picked" && (
+          <Text style={styles.cardNote}>
+            🎯 Sending them {catLabel(card.pick)}
+          </Text>
+        )}
         <Text style={styles.subLine}>Every wrong answer costs a pass</Text>
         {muffled && (
           <Text style={styles.glovesNote}>
@@ -484,12 +547,18 @@ export default function PassPlayScreen({ group, playerId }: Props) {
           </>
         )}
         <Text style={styles.subLine}>
-          {muffled
-            ? "🤔 Answering…" // gloves: no target, no re-picks, nothing to read
-            : targetId
-              ? aimingAtMe
-                ? `😬 Aiming at ${you.toUpperCase()}`
-                : `Aiming at ${sideName(targetId)}`
+          {targetId
+            ? cardPending
+              ? `🎯 ${holderName} is picking a category for ${aimingAtMe ? you.toUpperCase() : sideName(targetId)}…`
+              : card?.status === "picked"
+                ? aimingAtMe
+                  ? `😬 ${holderName} is sending YOU ${catLabel(card.pick)}`
+                  : `Sending ${sideName(targetId)} ${catLabel(card.pick)}`
+                : aimingAtMe
+                  ? `😬 Aiming at ${you.toUpperCase()}`
+                  : `Aiming at ${sideName(targetId)}`
+            : muffled && wrongCount > 0
+              ? "🤔 Answering…"
               : "Choosing a target…"}
         </Text>
         {targetId && !muffled && (
@@ -629,6 +698,39 @@ const styles = StyleSheet.create({
     fontWeight: "800",
     textAlign: "center",
     marginBottom: 6,
+  },
+  cardNote: {
+    color: "#4FC3F7",
+    fontSize: 13,
+    fontWeight: "700",
+    textAlign: "center",
+    marginBottom: 8,
+  },
+  cardRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    justifyContent: "center",
+    gap: 8,
+    marginVertical: 10,
+  },
+  cardChip: {
+    borderWidth: 1,
+    borderColor: "#4FC3F7",
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    minWidth: "45%",
+    alignItems: "center",
+  },
+  cardChipText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+  cardSkip: { alignSelf: "center", padding: 10 },
+  cardSkipText: { color: "#888", fontSize: 13 },
+  sentTag: {
+    color: "#4FC3F7",
+    fontSize: 12,
+    fontWeight: "700",
+    marginBottom: 6,
+    textAlign: "center",
   },
   subLine: {
     color: "#888",
