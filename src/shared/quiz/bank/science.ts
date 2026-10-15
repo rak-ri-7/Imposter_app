@@ -396,4 +396,37 @@ export const scienceQuestions: QuizQuestion[] = [
         correctPool: ['Gravity', 'Electromagnetism', 'Strong nuclear force', 'Weak nuclear force'],
         wrongPool: ['Friction', 'Tension', 'Centrifugal force', 'Buoyancy'],
     },
+    {
+        id: 'q483',
+        difficulty: 'easy',
+        category: 'science',
+        prompt: '[NOT_A] metal?',
+        correctPool: ['Iron', 'Copper', 'Gold', 'Aluminium', 'Silver', 'Zinc'],
+        wrongPool: ['Oxygen', 'Carbon', 'Sulphur', 'Nitrogen', 'Neon'],
+    },
+    {
+        id: 'q484',
+        difficulty: 'easy',
+        category: 'science',
+        prompt: '[NOT_A] bone in the human body?',
+        correctPool: ['Femur', 'Tibia', 'Humerus', 'Radius', 'Patella', 'Clavicle'],
+        wrongPool: ['Aorta', 'Retina', 'Pancreas', 'Cornea', 'Tendon'],
+    },
+    {
+        id: 'q485',
+        difficulty: 'medium',
+        category: 'science',
+        prompt: '[NOT_AN] SI base unit?',
+        correctPool: ['Metre', 'Kilogram', 'Second', 'Ampere', 'Kelvin', 'Mole', 'Candela'],
+        wrongPool: ['Litre', 'Newton', 'Joule', 'Watt', 'Pascal'],
+    },
+    {
+        id: 'q486',
+        difficulty: 'medium',
+        category: 'science',
+        prompt: '[NOT_A] gas at room temperature?',
+        correctPool: ['Oxygen', 'Nitrogen', 'Helium', 'Carbon dioxide', 'Chlorine', 'Neon'],
+        wrongPool: ['Mercury', 'Bromine', 'Iodine', 'Sulphur', 'Iron'],
+    },
+
 ];

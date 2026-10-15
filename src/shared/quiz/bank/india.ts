@@ -186,4 +186,29 @@ export const indiaQuestions: QuizQuestion[] = [
         correctPool: ['Lothal'],
         wrongPool: ['Kalibangan', 'Mohenjo-daro', 'Rakhigarhi', 'Harappa'],
     },
+    {
+        id: 'q476',
+        difficulty: 'easy',
+        category: 'india',
+        prompt: '[NOT_AN] Indian Prime Minister?',
+        correctPool: ['Jawaharlal Nehru', 'Lal Bahadur Shastri', 'Indira Gandhi', 'Atal Bihari Vajpayee', 'Manmohan Singh', 'Narendra Modi'],
+        wrongPool: ['Sardar Vallabhbhai Patel', 'B. R. Ambedkar', 'A. P. J. Abdul Kalam', 'Subhas Chandra Bose', 'Rajendra Prasad'],
+    },
+    {
+        id: 'q477',
+        difficulty: 'medium',
+        category: 'india',
+        prompt: '[NOT_A] state or union territory that borders Pakistan?',
+        correctPool: ['Punjab', 'Rajasthan', 'Gujarat', 'Jammu and Kashmir', 'Ladakh'],
+        wrongPool: ['Haryana', 'Himachal Pradesh', 'Uttar Pradesh', 'Madhya Pradesh', 'Maharashtra'],
+    },
+    {
+        id: 'q478',
+        difficulty: 'medium',
+        category: 'india',
+        prompt: '[NOT_A] UNESCO World Heritage Site in India?',
+        correctPool: ['Taj Mahal', 'Qutub Minar', 'Hampi', 'Ajanta Caves', 'Konark Sun Temple', 'Khajuraho'],
+        wrongPool: ['India Gate', 'Gateway of India', 'Golden Temple', 'Charminar', 'Lotus Temple'],
+    },
+
 ];

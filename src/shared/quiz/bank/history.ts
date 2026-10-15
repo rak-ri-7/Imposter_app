@@ -152,4 +152,37 @@ export const historyQuestions: QuizQuestion[] = [
         correctPool: ['Vasco da Gama'],
         wrongPool: ['Christopher Columbus', 'Ferdinand Magellan', 'Bartolomeu Dias', 'Amerigo Vespucci'],
     },
+    {
+        id: 'q479',
+        difficulty: 'easy',
+        category: 'history',
+        prompt: '[NOT_A] Mughal emperor?',
+        correctPool: ['Babur', 'Humayun', 'Akbar', 'Jahangir', 'Shah Jahan', 'Aurangzeb'],
+        wrongPool: ['Ashoka', 'Shivaji', 'Tipu Sultan', 'Prithviraj Chauhan', 'Chandragupta Maurya'],
+    },
+    {
+        id: 'q480',
+        difficulty: 'easy',
+        category: 'history',
+        prompt: '[NOT_AN] ancient Greek philosopher?',
+        correctPool: ['Socrates', 'Plato', 'Aristotle', 'Pythagoras', 'Diogenes'],
+        wrongPool: ['Confucius', 'Julius Caesar', 'Napoleon', 'Cleopatra', 'Nero'],
+    },
+    {
+        id: 'q481',
+        difficulty: 'medium',
+        category: 'history',
+        prompt: '[NOT_A] country that fought on the Axis side in World War II?',
+        correctPool: ['Germany', 'Italy', 'Japan', 'Hungary', 'Romania', 'Bulgaria'],
+        wrongPool: ['United Kingdom', 'United States', 'Soviet Union', 'China', 'France'],
+    },
+    {
+        id: 'q482',
+        difficulty: 'medium',
+        category: 'history',
+        prompt: '[NOT_A] US President?',
+        correctPool: ['Abraham Lincoln', 'George Washington', 'Theodore Roosevelt', 'John F. Kennedy', 'Barack Obama', 'Thomas Jefferson'],
+        wrongPool: ['Benjamin Franklin', 'Alexander Hamilton', 'Martin Luther King Jr.', 'Al Gore', 'Hillary Clinton'],
+    },
+
 ];

@@ -467,4 +467,21 @@ export const logicQuestions: QuizQuestion[] = [
         correctPool: ['13'],
         wrongPool: ['11', '12', '15', '16'],
     },
+    {
+        id: 'q459',
+        difficulty: 'medium',
+        category: 'logic',
+        prompt: '[NOT_A] prime number?',
+        correctPool: ['2', '3', '5', '7', '11', '13', '17', '19', '23'],
+        wrongPool: ['1', '9', '15', '21', '27', '51'],
+    },
+    {
+        id: 'q460',
+        difficulty: 'medium',
+        category: 'logic',
+        prompt: '[NOT_A] multiple of 7?',
+        correctPool: ['14', '21', '49', '63', '91'],
+        wrongPool: ['27', '57', '87', '39', '51'],
+    },
+
 ];

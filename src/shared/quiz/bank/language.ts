@@ -252,4 +252,28 @@ export const languageQuestions: QuizQuestion[] = [
         correctPool: ['A lover of books'],
         wrongPool: ['A person who studies the Bible', 'A seller of rare books', 'A person who fears books', 'A person who writes books'],
     },
+    {
+        id: 'q456',
+        difficulty: 'easy',
+        category: 'language',
+        prompt: '[NOT_A] synonym of \'quick\'?',
+        correctPool: ['Fast', 'Swift', 'Rapid', 'Speedy', 'Hasty'],
+        wrongPool: ['Slow', 'Sluggish', 'Lazy', 'Idle', 'Leisurely'],
+    },
+    {
+        id: 'q457',
+        difficulty: 'medium',
+        category: 'language',
+        prompt: '[NOT_A] figure of speech?',
+        correctPool: ['Metaphor', 'Simile', 'Hyperbole', 'Alliteration', 'Personification', 'Oxymoron'],
+        wrongPool: ['Paragraph', 'Syllable', 'Pronoun', 'Conjunction', 'Comma'],
+    },
+    {
+        id: 'q458',
+        difficulty: 'medium',
+        category: 'language',
+        prompt: '[NOT_A] word English borrowed from Hindi or Urdu?',
+        correctPool: ['Shampoo', 'Bungalow', 'Pyjamas', 'Jungle', 'Thug', 'Loot'],
+        wrongPool: ['Ketchup', 'Tsunami', 'Kindergarten', 'Ballet', 'Safari'],
+    },
 ];

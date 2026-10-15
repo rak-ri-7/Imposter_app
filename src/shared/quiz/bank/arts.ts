@@ -130,4 +130,29 @@ export const artsQuestions: QuizQuestion[] = [
         correctPool: ['Pink Floyd'],
         wrongPool: ['Led Zeppelin', 'The Beatles', 'Queen', 'The Rolling Stones'],
     },
+    {
+        id: 'q465',
+        difficulty: 'easy',
+        category: 'arts',
+        prompt: '[NOT_A] painting by Leonardo da Vinci?',
+        correctPool: ['Mona Lisa', 'The Last Supper', 'Lady with an Ermine', 'The Virgin of the Rocks'],
+        wrongPool: ['The Starry Night', 'The Scream', 'Girl with a Pearl Earring', 'The Birth of Venus', 'Guernica'],
+    },
+    {
+        id: 'q466',
+        difficulty: 'medium',
+        category: 'arts',
+        prompt: '[NOT_A] member of the Beatles?',
+        correctPool: ['John Lennon', 'Paul McCartney', 'George Harrison', 'Ringo Starr'],
+        wrongPool: ['Mick Jagger', 'Freddie Mercury', 'Elton John', 'David Bowie', 'Bob Dylan'],
+    },
+    {
+        id: 'q467',
+        difficulty: 'medium',
+        category: 'arts',
+        prompt: '[NOT_AN] Indian classical instrument?',
+        correctPool: ['Sitar', 'Tabla', 'Sarod', 'Veena', 'Santoor', 'Mridangam'],
+        wrongPool: ['Banjo', 'Bagpipes', 'Ukulele', 'Harmonica', 'Accordion'],
+    },
+
 ];
