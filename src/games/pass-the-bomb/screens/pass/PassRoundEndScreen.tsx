@@ -1,33 +1,45 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   View,
   Text,
   TouchableOpacity,
   StyleSheet,
   ScrollView,
+  Vibration,
 } from "react-native";
 import { Group, PassGameState } from "../../../../shared/types";
+import { playSound, SoundKey } from "../../../../shared/sounds/soundManager";
 import {
   continuePassGame,
   passAlive,
   totalPassesLeft,
   sideById,
   sideOf,
-  EXPLODED_REFILL_SHARE,
   CURRENCY,
+  EARN_CLUTCH,
   walletOf,
   STORE,
 } from "../../logic/pass/passGame";
 import PassStoreSheet from "./PassStoreSheet";
+import PassPerkNews from "./PassPerkNews";
 import { returnToMenu } from "../../../../shared/firebase/groups";
+import PassLuckySheet from "./PassLuckySheet";
+import { LUCKY, ticketsAllowed } from "../../logic/pass/passPerks";
 
 type Props = { group: Group; playerId: string };
+
+const BOOM_SOUND: SoundKey = "explosion-tier3";
+
+// Remembers which explosion already went boom on this phone, so remounting
+// the screen (rotation, app resume) doesn't replay it.
+let lastBoomKey: string | null = null;
 
 // Shown for both 'pass-exploded' (between rounds) and 'pass-result' (game over).
 export default function PassRoundEndScreen({ group, playerId }: Props) {
   const gs = group.gameState as PassGameState;
   const [busy, setBusy] = useState(false);
   const [storeOpen, setStoreOpen] = useState(false);
+  const [luckyOpen, setLuckyOpen] = useState(false);
   const playerName = (id?: string | null) =>
     group.players.find((p) => p.id === id)?.name ?? "Someone";
   const sideName = (id?: string | null) => sideById(gs, id)?.name ?? "Someone";
@@ -36,13 +48,13 @@ export default function PassRoundEndScreen({ group, playerId }: Props) {
   const mySide = sideOf(gs, playerId);
   const isResult = gs.phase === "pass-result";
   const boom = gs.lastExplosion;
+
   const victimIsMine = !!boom && boom.sideId === mySide;
   const victimLabel = victimIsMine
     ? team
       ? "your team"
       : "you"
     : sideName(boom?.sideId);
-  const refill = Math.max(1, Math.ceil(gs.budget * EXPLODED_REFILL_SHARE));
   const gameOverNext = passAlive(gs).length <= 1;
 
   // Per-side totals (in solo a side has one member, so this is just the player).
@@ -93,6 +105,21 @@ export default function PassRoundEndScreen({ group, playerId }: Props) {
     ...[...gs.eliminationOrder].reverse(),
   ];
   const iWon = !!gs.winnerId && gs.winnerId === mySide;
+
+  // 💥 Sound + buzz the moment the round-end screen appears for a new explosion.
+  useEffect(() => {
+    if (isResult || !boom) return;
+    const key = `${group.id}:${boom.round}:${boom.sideId}`;
+    if (lastBoomKey === key) return;
+    lastBoomKey = key;
+
+    playSound(BOOM_SOUND);
+    Vibration.vibrate(
+      victimIsMine
+        ? [0, 600, 150, 400, 150, 800] // it's you — long and brutal
+        : [0, 400], // someone else — one solid thud
+    );
+  }, [boom?.round, boom?.sideId, isResult]);
 
   return (
     <View style={styles.container}>
@@ -164,10 +191,7 @@ export default function PassRoundEndScreen({ group, playerId }: Props) {
                 ? victimIsMine
                   ? `${team ? "Your team is" : "You're"} out of lives. 👻`
                   : `${victimLabel} ${team ? "are" : "is"} out of the game. 👻`
-                : `${victimIsMine ? (team ? "Your team loses" : "You lose") : `${victimLabel} ${team ? "lose" : "loses"}`} a life` +
-                  (!gs.hiddenPasses || victimIsMine
-                    ? `, and gets topped back up to ${refill} passes per ${team ? "team" : "player"}.`
-                    : ", and gets a top-up.")}
+                : `${victimIsMine ? (team ? "Your team loses" : "You lose") : `${victimLabel} ${team ? "lose" : "loses"}`} a life.`}
             </Text>
 
             <View style={styles.card}>
@@ -210,24 +234,46 @@ export default function PassRoundEndScreen({ group, playerId }: Props) {
               })}
             </View>
 
+            {(boom?.clutch?.length ?? 0) > 0 && (
+              <Text style={styles.hint}>
+                🧗 Clutch survival +{EARN_CLUTCH} {CURRENCY.icon}:{" "}
+                {boom!
+                  .clutch!.map((id) =>
+                    id === mySide ? (team ? "your team" : "you") : sideName(id),
+                  )
+                  .join(", ")}
+              </Text>
+            )}
+            <PassPerkNews group={group} playerId={playerId} variant="list" />
+
             {!gameOverNext && (
               <Text style={styles.hint}>
                 {gs.hiddenPasses
-                  ? "Someone random gets the bomb next…"
-                  : "The bomb goes to whoever has the fewest passes left."}
+                  ? `Next round everyone's topped back up to ${gs.budget} passes. Someone random gets the bomb next…`
+                  : `Next round everyone's topped back up to ${gs.budget} passes. The bomb starts with whoever has the fewest left — not ${victimIsMine ? (team ? "your team" : "you") : victimLabel}.`}
               </Text>
             )}
 
             {!gameOverNext && mySide && !gs.ghosts.includes(mySide) && (
-              <TouchableOpacity
-                style={styles.storeBtn}
-                onPress={() => setStoreOpen(true)}
-              >
-                <Text style={styles.storeBtnText}>
-                  {STORE.icon} {STORE.name} · {CURRENCY.icon}{" "}
-                  {walletOf(gs, mySide)} {CURRENCY.short}
-                </Text>
-              </TouchableOpacity>
+              <View style={styles.shopRow}>
+                <TouchableOpacity
+                  style={styles.storeBtn}
+                  onPress={() => setStoreOpen(true)}
+                >
+                  <Text style={styles.storeBtnText}>
+                    {STORE.icon} {STORE.name} · {CURRENCY.icon}{" "}
+                    {walletOf(gs, mySide)} {CURRENCY.short}
+                  </Text>
+                </TouchableOpacity>
+                {ticketsAllowed(gs) && (
+                  <TouchableOpacity
+                    style={styles.luckyBtn}
+                    onPress={() => setLuckyOpen(true)}
+                  >
+                    <Text style={styles.luckyBtnText}>{LUCKY.icon}</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
             )}
           </>
         )}
@@ -236,6 +282,12 @@ export default function PassRoundEndScreen({ group, playerId }: Props) {
       <PassStoreSheet
         visible={storeOpen && !isResult}
         onClose={() => setStoreOpen(false)}
+        group={group}
+        playerId={playerId}
+      />
+      <PassLuckySheet
+        visible={luckyOpen && !isResult}
+        onClose={() => setLuckyOpen(false)}
         group={group}
         playerId={playerId}
       />
@@ -315,14 +367,27 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   storeBtn: {
-    alignSelf: "center",
-    marginTop: 16,
     borderRadius: 10,
     paddingVertical: 10,
     paddingHorizontal: 16,
     borderWidth: 1,
     borderColor: "#FFD700",
   },
+  shopRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    gap: 10,
+    marginTop: 16,
+  },
+  luckyBtn: {
+    borderRadius: 10,
+    paddingVertical: 9,
+    paddingHorizontal: 12,
+    borderWidth: 1,
+    borderColor: "#4CAF50",
+  },
+  luckyBtnText: { fontSize: 16 },
   storeBtnText: { color: "#FFD700", fontSize: 14, fontWeight: "700" },
   btn: {
     backgroundColor: "#FF4500",

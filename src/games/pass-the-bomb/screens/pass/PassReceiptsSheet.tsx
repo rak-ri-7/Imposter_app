@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { Group, PassGameState, PassReceipt } from "../../../../shared/types";
 import { sideById, STORE } from "../../logic/pass/passGame";
+import { TICKETS } from "../../logic/pass/passPerks";
 
 type Props = {
   sideId: string | null; // whose receipts to show; null = closed
@@ -21,6 +22,7 @@ const ITEM_LABEL: Record<PassReceipt["item"], string> = {
   swap: "🔄 Swap",
   gloves: "🧤 Hush Gloves",
   audit: "🔎 Audit",
+  ticket: "🍀 Lucky ticket",
 };
 
 // Every side's Kiosk purchases are public record. Nobody is told when
@@ -37,6 +39,8 @@ export default function PassReceiptsSheet({ sideId, onClose, group }: Props) {
     const target = r.targetId ? sideById(gs, r.targetId)?.name : undefined;
     if (r.item === "pass" && target) return `${label} to ${target}`;
     if (r.item === "audit" && target) return `${label} on ${target}`;
+    if (r.item === "ticket" && r.ticketKind)
+      return `${label}: ${TICKETS[r.ticketKind].name}`;
     return label;
   };
 

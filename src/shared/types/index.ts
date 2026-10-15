@@ -505,21 +505,22 @@ export type PassSide = {
 };
 
 export type PassReceipt = {
-    item: 'pass' | 'fiftyFifty' | 'swap' | 'gloves' | 'audit';
+    item: 'pass' | 'fiftyFifty' | 'swap' | 'gloves' | 'audit' | 'ticket';
     byPlayerId: string;
     round: number;
     targetId?: string;   // who a bought pass / an audit was aimed at
+    ticketKind?: PassTicketKind
 };
 
 export type PassGameState = {
     mode: 'pass';
     teamMode: boolean;
     phase: 'pass-playing' | 'pass-exploded' | 'pass-result';
-    budget: number;
+    budget: number;                                 // starting passes per side
     sides: PassSide[];
     sideIds: string[];
     holderId: string;                               // a side id
-    pools: Record<string, Record<string, number>>;  // pools[fromSide][toSide]
+    stacks: Record<string, number>;                 // passes left this round, per side
     lives: Record<string, number>;                  // per side
     ghosts: string[];                               // side ids
     eliminationOrder: string[];
@@ -530,7 +531,7 @@ export type PassGameState = {
     callout: { seq: number; voterIds: string[]; againstIds?: string[] };
     lastCalloutDropped?: { seq: number };
     lastPass?: { from: string; to: string; seq: number; byPlayerId: string };
-    lastExplosion?: { sideId: string; eliminated: boolean; round: number; reason?: 'left' | 'skipped' };
+    lastExplosion?: { sideId: string; eliminated: boolean; round: number; reason?: 'left' | 'skipped'; clutch?: string[] /* sides that survived on <= 2 passes */ };
     lastCallout?: { sideId: string; seq: number; targetKept?: boolean };
     winnerId?: string | null;
     wallet?: Record<string, number>;          // per side (team wallet in team play)
@@ -542,4 +543,19 @@ export type PassGameState = {
     hiddenPasses?: boolean;
     glovesTurns?: Record<string, number>;
     receipts?: Record<string, PassReceipt[]>;
+    stint?: number;                                  // counts turns holding the bomb
+    tickets?: Record<string, PassTicket>;
+    ticketNews?: {
+        id: number;
+        round: number;
+        roundEnd: boolean;   // came from the tap that ended the round
+        items: { sideId: string; kind: PassTicketKind; won: boolean; payout: number }[];
+    };
+    haunt?: { ghostId: string; stint: number; byPlayerId: string } | null;
+    stash?: Record<string, number>;
+    revived?: string[];
+    lastRevival?: { sideId: string; id: number; round: number };
 };
+
+export type PassTicketKind = 'double-clean' | 'triple-clean' | 'clean-sheet' | 'survivor';
+export type PassTicket = { kind: PassTicketKind; progress: number; round: number };

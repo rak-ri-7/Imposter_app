@@ -15,15 +15,15 @@ import {
   votePassCallout,
   CalloutChoice,
   passAlive,
-  passesTo,
   totalPassesLeft,
   calloutVoters,
   calloutVotesNeeded,
   sideById,
   sideOf,
   CALLOUT_MIN_VOTERS,
-  CALLOUT_PENALTY,
+  calloutPenalty,
   CURRENCY,
+  EARN_HAZARD,
   walletOf,
   itemsOf,
   applyPassItem,
@@ -35,6 +35,10 @@ import {
 } from "../../logic/pass/passGame";
 import PassStoreSheet from "./PassStoreSheet";
 import PassReceiptsSheet from "./PassReceiptsSheet";
+import PassHauntPanel from "./PassHauntPanel";
+import PassPerkNews from "./PassPerkNews";
+import { LUCKY, ticketsAllowed } from "../../logic/pass/passPerks";
+import PassLuckySheet from "./PassLuckySheet";
 import { playSound } from "../../../../shared/sounds/soundManager";
 
 // Set this to one of your existing "wrong answer" sound keys.
@@ -48,6 +52,7 @@ export default function PassPlayScreen({ group, playerId }: Props) {
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [storeOpen, setStoreOpen] = useState(false);
+  const [luckyOpen, setLuckyOpen] = useState(false);
   const [receiptsFor, setReceiptsFor] = useState<string | null>(null);
 
   const playerName = (id?: string | null) =>
@@ -96,13 +101,13 @@ export default function PassPlayScreen({ group, playerId }: Props) {
       if (c.sideId === mySide) {
         Vibration.vibrate([0, 300, 100, 300]);
         showFlash(
-          `🚨 Caught! ${You} lost ${CALLOUT_PENALTY} passes.\nThat question is gone — here's a new one` +
+          `🚨 Caught! ${You} lost ${calloutPenalty(gs)} passes.\nThat question is gone — here's a new one` +
             (c.targetKept === false ? ", and pick a new target." : "."),
           3500,
         );
       } else {
         showFlash(
-          `🚨 ${sideName(c.sideId)} caught — ${CALLOUT_PENALTY} passes stripped, question skipped`,
+          `🚨 ${sideName(c.sideId)} caught — ${calloutPenalty(gs)} passes stripped, question skipped`,
           3000,
         );
       }
@@ -115,7 +120,9 @@ export default function PassPlayScreen({ group, playerId }: Props) {
       const earn = justNow(gs.lastEarn) ? gs.lastEarn! : null;
       if (p.to === mySide) {
         Vibration.vibrate([0, 150, 80, 150]);
-        showFlash(`💣 ${sideName(p.from)} passed it to ${you.toUpperCase()}!`);
+        showFlash(
+          `💣 ${sideName(p.from)} passed it to ${you.toUpperCase()}!  +${EARN_HAZARD} ${CURRENCY.icon}`,
+        );
       } else if (p.from === mySide && earn && earn.amount > 0) {
         showFlash(
           `💣 Passed! +${earn.amount} ${CURRENCY.icon}` +
@@ -201,6 +208,7 @@ export default function PassPlayScreen({ group, playerId }: Props) {
   // The store closes itself the moment the bomb lands on you.
   useEffect(() => {
     if (isHolder) setStoreOpen(false);
+    setLuckyOpen(false);
   }, [isHolder]);
   const canShop = !isHolder && !isOut;
 
@@ -420,27 +428,23 @@ export default function PassPlayScreen({ group, playerId }: Props) {
           💣 {You} {team ? "has" : "have"} the bomb!
         </Text>
         <Text style={styles.subLine}>
-          {wrongCount > 0
-            ? "That pool ran dry — pick someone else. Same question."
-            : `Pick who ${you} ${team ? "is" : "are"} passing to, then answer to pass.`}
+          Pick who {you} {team ? "is" : "are"} passing to, then answer to pass.
+          {canSeeCount(gs.holderId) ? ` ${holderTotal} passes left.` : ""}
         </Text>
         {calloutStatus}
-        {others.map((id) => {
-          const left = passesTo(gs, gs.holderId, id);
-          return (
-            <TouchableOpacity
-              key={id}
-              style={[styles.targetBtn, left === 0 && styles.targetBtnEmpty]}
-              disabled={left === 0 || busy}
-              onPress={() => pickTarget(id)}
-            >
-              <Text style={styles.targetName}>{sideName(id)}</Text>
-              <Text style={styles.targetPasses}>
-                {left === 0 ? "no passes left" : `${left} left`}
-              </Text>
-            </TouchableOpacity>
-          );
-        })}
+        {others.map((id) => (
+          <TouchableOpacity
+            key={id}
+            style={styles.targetBtn}
+            disabled={busy}
+            onPress={() => pickTarget(id)}
+          >
+            <Text style={styles.targetName}>{sideName(id)}</Text>
+            <Text style={styles.targetPasses}>
+              {canSeeCount(id) ? `${totalPassesLeft(gs, id)} left` : "🔒"}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </>
     );
   } else if (isHolder) {
@@ -448,12 +452,9 @@ export default function PassPlayScreen({ group, playerId }: Props) {
     main = (
       <>
         <Text style={styles.bigLine}>
-          Passing to {sideName(targetId)} ·{" "}
-          {passesTo(gs, gs.holderId, targetId!)} left
+          Passing to {sideName(targetId)} · {holderTotal} passes left
         </Text>
-        <Text style={styles.subLine}>
-          Wrong answers cost a pass to {sideName(targetId)}
-        </Text>
+        <Text style={styles.subLine}>Every wrong answer costs a pass</Text>
         {muffled && (
           <Text style={styles.glovesNote}>
             🧤 Hush Gloves on — your fumbles are silent
@@ -530,7 +531,7 @@ export default function PassPlayScreen({ group, playerId }: Props) {
               {CURRENCY.icon} {walletOf(gs, mySide)}
             </Text>
           )}
-          {canShop && (
+          {canShop && ticketsAllowed(gs) && (
             <TouchableOpacity
               style={styles.storeBtn}
               onPress={() => setStoreOpen(true)}
@@ -538,11 +539,13 @@ export default function PassPlayScreen({ group, playerId }: Props) {
               <Text style={styles.storeBtnText}>
                 {STORE.icon} {STORE.name}
               </Text>
+              <Text style={styles.luckyBtnText}>{LUCKY.icon}</Text>
             </TouchableOpacity>
           )}
         </View>
       </View>
       <ScrollView contentContainerStyle={styles.scroll}>
+        <PassHauntPanel group={group} playerId={playerId} />
         {main}
         {scoreboard}
       </ScrollView>
@@ -559,6 +562,14 @@ export default function PassPlayScreen({ group, playerId }: Props) {
         group={group}
         playerId={playerId}
       />
+      <PassLuckySheet
+        visible={luckyOpen && canShop}
+        onClose={() => setLuckyOpen(false)}
+        group={group}
+        playerId={playerId}
+      />
+
+      <PassPerkNews group={group} playerId={playerId} variant="toast" />
 
       {flash && (
         <View pointerEvents="none" style={styles.flash}>
@@ -810,4 +821,12 @@ const styles = StyleSheet.create({
     fontWeight: "700",
     textAlign: "center",
   },
+  luckyBtn: {
+    borderRadius: 8,
+    paddingVertical: 4,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: "#4CAF50",
+  },
+  luckyBtnText: { fontSize: 14 },
 });

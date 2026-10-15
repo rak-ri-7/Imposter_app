@@ -8,15 +8,19 @@ import {
   ScrollView,
   Alert,
   Switch,
+  TextInput,
 } from "react-native";
 import { Group, BombTimerMode } from "../../../../shared/types";
 import { startBombGame } from "../../logic/timer/game";
 import { setBombLobby } from "../../../../shared/firebase/groups";
 import {
   startPassGame,
-  PASS_BUDGETS,
-  PassBudget,
-  PASS_START_LIVES,
+  PASS_STACK_DEFAULT,
+  PASS_STACK_MIN,
+  PASS_STACK_MAX,
+  clampStack,
+  livesFor,
+  passSideCount,
   canPlayPassAsTeams,
   CURRENCY,
   STORE,
@@ -51,7 +55,10 @@ type Props = {
 
 export default function BombLobbyScreen({ group, playerId }: Props) {
   const [gameMode, setGameMode] = useState<GameMode | null>(null); // nothing pre-selected
-  const [passBudget, setPassBudget] = useState<PassBudget>(20);
+  const [passStackText, setPassStackText] = useState(
+    String(PASS_STACK_DEFAULT),
+  );
+  const passStack = clampStack(Number(passStackText));
   // Teams set up in the Game Menu? Pass mode can use them (on by default).
   const teamsAvailable = canPlayPassAsTeams(group);
   const [passAsTeams, setPassAsTeams] = useState(true);
@@ -80,7 +87,7 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
   ) =>
     setBombLobby(group.id, {
       mode: gameMode,
-      passBudget,
+      passBudget: passStack,
       passAsTeams,
       hiddenPasses,
       ...patch,
@@ -89,9 +96,9 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
     setGameMode(m);
     share({ mode: m });
   };
-  const pickBudget = (b: PassBudget) => {
-    setPassBudget(b);
-    share({ passBudget: b });
+  const commitStack = () => {
+    setPassStackText(String(passStack));
+    share({ passBudget: passStack });
   };
   const pickHidden = (v: boolean) => {
     setHiddenPasses(v);
@@ -106,11 +113,15 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
   const shownMode: GameMode | null = isHost
     ? gameMode
     : (group.bombLobby?.mode ?? null);
-  const shownBudget = isHost ? passBudget : (group.bombLobby?.passBudget ?? 20);
+  const shownBudget = isHost
+    ? passStack
+    : (group.bombLobby?.passBudget ?? PASS_STACK_DEFAULT);
   const shownHidden = isHost ? hiddenPasses : !!group.bombLobby?.hiddenPasses;
   const shownTeams =
     teamsAvailable &&
     (isHost ? passAsTeams : (group.bombLobby?.passAsTeams ?? true));
+  const shownSides = passSideCount(group, shownTeams);
+  const shownLives = livesFor(shownSides);
 
   const moveSeat = (index: number, direction: -1 | 1) => {
     const target = index + direction;
@@ -132,7 +143,7 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
       if (gameMode === "pass") {
         await startPassGame(
           group,
-          passBudget,
+          passStack,
           teamsAvailable && passAsTeams,
           hiddenPasses,
         );
@@ -179,20 +190,19 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
         🎯 Pick who you're passing to, then answer a question
       </Text>
       <Text style={styles.rule}>
-        ✅ Right answer = the bomb moves (costs 1 pass to them)
+        🎒 {shownBudget} passes each per round — spend them on anyone
       </Text>
       <Text style={styles.rule}>
-        ❌ Wrong answer = lose 1 pass to them, try again
+        ✅ Right answer = the bomb moves (costs 1 pass)
+      </Text>
+      <Text style={styles.rule}>❌ Wrong answer = lose 1 pass, try again</Text>
+      <Text style={styles.rule}>💥 Can't pay a pass? It blows up on you</Text>
+      <Text style={styles.rule}>
+        🔁 New round = everyone topped back up to {shownBudget}
       </Text>
       <Text style={styles.rule}>
-        🔁 Your passes to each player never refill - unless you pay for them or
-        get as disaster relief
-      </Text>
-      <Text style={styles.rule}>
-        💥 Out of passes to everyone? It blows up on you
-      </Text>
-      <Text style={styles.rule}>
-        ❤️ {PASS_START_LIVES} lives each — last one standing wins!
+        ❤️ {shownLives} {shownLives === 1 ? "life" : "lives"} each — last one
+        standing wins!
       </Text>
       <Text style={styles.rule}>
         🏪 Earn {CURRENCY.name} for clean answers and spend them at the{" "}
@@ -331,36 +341,25 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
 
             <Text style={styles.sectionLabel}>
               {teamsAvailable && passAsTeams
-                ? "PASSES TO EACH TEAM"
-                : "PASSES TO EACH PLAYER"}
+                ? "PASSES PER TEAM"
+                : "PASSES PER PLAYER"}
             </Text>
-            <View style={styles.timerModes}>
-              {PASS_BUDGETS.map((b) => (
-                <TouchableOpacity
-                  key={b}
-                  style={[
-                    styles.modeBtn,
-                    passBudget === b && styles.modeBtnActive,
-                  ]}
-                  onPress={() => pickBudget(b)}
-                >
-                  <Text
-                    style={[
-                      styles.budgetNumber,
-                      passBudget === b && styles.modeLabelActive,
-                    ]}
-                  >
-                    {b}
-                  </Text>
-                  <Text style={styles.modeDesc}>
-                    {b === 10
-                      ? "Quick game"
-                      : b === 20
-                        ? "Standard"
-                        : "Long haul"}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+            <View style={styles.stackRow}>
+              <TextInput
+                style={styles.stackInput}
+                value={passStackText}
+                onChangeText={(t) => setPassStackText(t.replace(/[^0-9]/g, ""))}
+                onEndEditing={commitStack}
+                keyboardType="number-pad"
+                maxLength={2}
+                selectTextOnFocus
+              />
+              <Text style={styles.stackHint}>
+                {PASS_STACK_MIN}–{PASS_STACK_MAX}. A round runs up to ~
+                {passSideCount(group, teamsAvailable && passAsTeams) *
+                  passStack}{" "}
+                questions.
+              </Text>
             </View>
           </>
         )}
@@ -808,12 +807,25 @@ const styles = StyleSheet.create({
     textAlign: "center",
     lineHeight: 15,
   },
-  budgetNumber: {
-    color: "#888",
-    fontSize: 22,
-    fontWeight: "800",
-    marginBottom: 2,
+  stackRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 16,
   },
+  stackInput: {
+    width: 72,
+    backgroundColor: "#1A1A1A",
+    borderWidth: 1,
+    borderColor: "#FF4500",
+    borderRadius: 12,
+    color: "#fff",
+    fontSize: 24,
+    fontWeight: "800",
+    textAlign: "center",
+    paddingVertical: 10,
+  },
+  stackHint: { color: "#888", fontSize: 12, flex: 1, lineHeight: 17 },
   waitingBox: { padding: 18, alignItems: "center" },
   waitingText: { color: "#888", fontSize: 14, textAlign: "center" },
 

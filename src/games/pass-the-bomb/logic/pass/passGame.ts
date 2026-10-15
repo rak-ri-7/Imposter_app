@@ -2,6 +2,14 @@ import { doc, updateDoc, runTransaction, increment } from 'firebase/firestore';
 import { db } from '../../../../shared/firebase/config';
 import { Group, PassGameState, PassSide, PassTurn, PassReceipt } from '../../../../shared/types';
 import { getRandomQuestion, generateSingleCorrectInstance } from '../../data/quizQuestions';
+import {
+    settleTicketOnAnswer,
+    settleTicketOnCallout,
+    settleTicketsOnRoundEnd,
+    catchFumble,
+    publishTicketNews,
+    TicketNewsItem,
+} from './passPerks';
 
 // ── PASS MODE ────────────────────────────────────────────────────────
 // Turn-based, no clocks anywhere. Every change is a player's tap, applied in
@@ -14,24 +22,34 @@ import { getRandomQuestion, generateSingleCorrectInstance } from '../../data/qui
 // both. Any member of the holding side can pick the target and answer —
 // in solo that's just the one player.
 //
-// Each side has a pool of passes to every other side. The holder picks a
-// target (automatic when only one is possible), then answers a 4-option
-// question:
-//   • wrong  → 1 pass to that target is lost, try again (same question)
-//   • right  → the bomb moves to the target, costing 1 more pass
-// If a pool hits 0 mid-question, the holder picks another target and keeps
-// the same question. Out of passes to everyone alive → the bomb goes off.
+// Each side has ONE stack of passes for the round (gs.budget at the start),
+// spent on anyone still alive. The holder picks a target (automatic when only
+// one is possible), then answers a 4-option question:
+//   • right → the bomb moves to the target, costing 1 pass
+//   • wrong → the FIRST miss on a question costs 1 pass; further misses on
+//             the same question are free (the options are just greyed out).
+//             So the worst one brutal question can cost is 2 passes.
+// Can't pay (stack at 0) → the bomb goes off. Every new round tops all
+// stacks back up to the starting size, so a round is always about
+// players × stack questions long, however many people play.
 
-export const PASS_BUDGETS = [10, 20, 30] as const;
-export type PassBudget = (typeof PASS_BUDGETS)[number];
+// Passes per side: the host types it in the lobby (default 10, 5–20).
+export const PASS_STACK_DEFAULT = 10;
+export const PASS_STACK_MIN = 5;
+export const PASS_STACK_MAX = 20;
 
-export const PASS_START_LIVES = 3;
-export const CALLOUT_PENALTY = 3;       // passes stripped by a successful cheat callout
+export const clampStack = (n: number): number =>
+    Number.isFinite(n)
+        ? Math.min(PASS_STACK_MAX, Math.max(PASS_STACK_MIN, Math.round(n)))
+        : PASS_STACK_DEFAULT;
+
+// Fewer lives with more sides, so a big group doesn't play forever.
+export const PASS_MAX_LIVES = 2;
+export const livesFor = (sideCount: number): number => (sideCount <= 4 ? PASS_MAX_LIVES : 1);
+
 export const CALLOUT_MIN_VOTERS = 2;    // with 1 possible voter, one vote would be a "majority"
-// After exploding a side would have 0 passes and blow up again the moment the
-// bomb came back. Survivors of an explosion get their pools topped back up to
-// this share of the starting budget. Tune after playtesting.
-export const EXPLODED_REFILL_SHARE = 0.5;
+// Passes stripped by a successful cheat callout — scales with the stack.
+export const calloutPenalty = (gs: PassGameState): number => Math.max(2, Math.ceil(gs.budget / 4));
 const MAX_USED_QUESTIONS = 200;
 
 // Leaderboard points at game end. In team play every member of the side gets
@@ -49,6 +67,9 @@ export const EARN_SECOND_TRY = 1;      // correct after exactly one wrong answer
 export const EARN_STREAK_BONUS = 5;    // every 3rd first-try answer in a row
 export const EARN_STREAK_EVERY = 3;
 export const EARN_SURVIVE_ROUND = 2;   // every side still standing when the bomb goes off elsewhere
+export const EARN_HAZARD = 1;          // every time the bomb is passed to you
+export const EARN_CLUTCH = 3;          // extra for surviving a round on CLUTCH_MAX_LEFT passes or fewer
+export const CLUTCH_MAX_LEFT = 2;
 
 // Store prices. Extra passes get dearer each time a side buys one, so a
 // strong side can't stockpile its way to invincibility.
@@ -91,14 +112,9 @@ export const sideById = (gs: PassGameState, sideId?: string | null): PassSide | 
 export const sideOf = (gs: PassGameState, playerId: string): string | undefined =>
     gs.sides.find((s) => s.memberIds.includes(playerId))?.id;
 
-export const passesTo = (gs: PassGameState, from: string, to: string): number =>
-    gs.pools[from]?.[to] ?? 0;
-
-// Passes left to sides that are still alive — passes to ghosts are useless.
-export const totalPassesLeft = (gs: PassGameState, sideId: string): number =>
-    passAlive(gs)
-        .filter((id) => id !== sideId)
-        .reduce((sum, id) => sum + passesTo(gs, sideId, id), 0);
+// A side's passes left this round.
+export const totalPassesLeft = (gs: PassGameState, sideId?: string | null): number =>
+    sideId ? gs.stacks?.[sideId] ?? 0 : 0;
 
 // Who may vote on a cheating call: every player on an alive side that isn't holding.
 export const calloutVoters = (gs: PassGameState): string[] =>
@@ -110,11 +126,10 @@ export const calloutVotesNeeded = (gs: PassGameState): number =>
     Math.floor(calloutVoters(gs).length / 2) + 1;
 
 // ── Internal helpers ──────────────────────────────────────────────────
-const clonePools = (pools: PassGameState['pools']): PassGameState['pools'] => {
-    const out: PassGameState['pools'] = {};
-    for (const [from, row] of Object.entries(pools)) out[from] = { ...row };
-    return out;
-};
+const withStack = (gs: PassGameState, sideId: string, value: number): PassGameState['stacks'] => ({
+    ...gs.stacks,
+    [sideId]: Math.max(0, value),
+});
 
 const drawQuestion = (used: string[]) => {
     const q = getRandomQuestion(used);
@@ -124,12 +139,9 @@ const drawQuestion = (used: string[]) => {
     };
 };
 
-// If the holder has exactly one side they can still pass to, there's no
-// choice to make — pick it for them. (Always the case with 2 sides left.)
+// With only one other side alive there's no choice to make — pick it.
 const autoTarget = (gs: PassGameState, holderId: string): string | null => {
-    const options = passAlive(gs).filter(
-        (id) => id !== holderId && passesTo(gs, holderId, id) > 0
-    );
+    const options = passAlive(gs).filter((id) => id !== holderId);
     return options.length === 1 ? options[0] : null;
 };
 
@@ -159,6 +171,8 @@ const withFreshTurn = (gs: PassGameState, seq: number, newStint: boolean): PassG
     return {
         ...gs,
         ...(glovesTurns ? { glovesTurns } : {}),
+        // Counts turns holding the bomb — a haunt lasts for exactly one.
+        stint: newStint ? (gs.stint ?? 0) + 1 : gs.stint ?? 0,
         turn,
         usedQuestionIds: used,
         callout: { seq, voterIds: [], againstIds: [] },
@@ -166,7 +180,7 @@ const withFreshTurn = (gs: PassGameState, seq: number, newStint: boolean): PassG
 };
 
 // Appends to a side's public purchase record (Receipts).
-const withReceipt = (gs: PassGameState, side: string, receipt: PassReceipt): PassReceipt[] => [
+export const withReceipt = (gs: PassGameState, side: string, receipt: PassReceipt): PassReceipt[] => [
     ...(gs.receipts?.[side] ?? []),
     receipt,
 ];
@@ -184,42 +198,44 @@ const bumpStat = (
 };
 
 // The bomb goes off on side `victim`. Returns the whole next state.
-const explode = (gs: PassGameState, victim: string): PassGameState => {
+// `news`: pass the transaction's ticket-news array when the caller publishes
+// it itself (so results from earlier in the same tap aren't lost). Without
+// it, explode publishes its own round-end results.
+const explode = (gs: PassGameState, victim: string, news?: TicketNewsItem[]): PassGameState => {
     const lives = Math.max(0, (gs.lives[victim] ?? 0) - 1);
     const eliminated = lives === 0;
-    const pools = clonePools(gs.pools);
     const ghosts = eliminated ? [...gs.ghosts, victim] : gs.ghosts;
-
-    if (!eliminated) {
-        // Top the survivor's passes back up so they're still in the game.
-        const refill = Math.max(1, Math.ceil(gs.budget * EXPLODED_REFILL_SHARE));
-        for (const id of gs.sideIds) {
-            if (id === victim || ghosts.includes(id)) continue;
-            pools[victim] = { ...pools[victim], [id]: Math.max(passesTo(gs, victim, id), refill) };
-        }
-    }
+    // Stacks are topped back up when the next round starts (continuePassGame).
 
     // Everyone else still standing earns a little for surviving the round.
+    // Hanging on by a thread pays extra (clutch).
     const wallet = { ...(gs.wallet ?? {}) };
+    const clutch: string[] = [];
     for (const id of gs.sideIds) {
         if (id === victim || ghosts.includes(id)) continue;
-        wallet[id] = (wallet[id] ?? 0) + EARN_SURVIVE_ROUND;
+        const close = totalPassesLeft(gs, id) <= CLUTCH_MAX_LEFT;
+        if (close) clutch.push(id);
+        wallet[id] = (wallet[id] ?? 0) + EARN_SURVIVE_ROUND + (close ? EARN_CLUTCH : 0);
     }
 
     const seq = gs.turn.seq + 1;
-    return {
+    const after: PassGameState = {
         ...gs,
+        haunt: null,
         wallet,
         streak: { ...(gs.streak ?? {}), [victim]: 0 },
         phase: 'pass-exploded',
-        pools,
         ghosts,
         lives: { ...gs.lives, [victim]: lives },
         eliminationOrder: eliminated ? [...gs.eliminationOrder, victim] : gs.eliminationOrder,
-        lastExplosion: { sideId: victim, eliminated, round: gs.round },
+        lastExplosion: { sideId: victim, eliminated, round: gs.round, clutch },
         turn: { ...gs.turn, seq, targetId: null },
         callout: { seq, voterIds: [], againstIds: [] },
     };
+    // The round is over — settle Lucky Centre tickets that depend on it.
+    const own = news ?? [];
+    const settled = settleTicketsOnRoundEnd(after, victim, own);
+    return news ? settled : publishTicketNews(settled, own);
 };
 
 // Common guard for anything the holding side does.
@@ -245,9 +261,15 @@ const buildTeamSides = (group: Group): PassSide[] => {
         .filter((s) => s.memberIds.length > 0);
 };
 
+// How many sides the game would have — the lobby uses this for the lives count.
+export const passSideCount = (group: Group, asTeams: boolean): number => {
+    const teams = asTeams ? buildTeamSides(group).length : 0;
+    return teams >= 2 ? teams : group.players.length;
+};
+
 export const startPassGame = async (
     group: Group,
-    budget: PassBudget,
+    stackSize: number,
     asTeams: boolean,
     hiddenPasses: boolean
 ): Promise<void> => {
@@ -257,13 +279,14 @@ export const startPassGame = async (
         ? teamSides
         : group.players.map((p) => ({ id: p.id, name: p.name, memberIds: [p.id] }));
     const sideIds = sides.map((s) => s.id);
+    const budget = clampStack(stackSize);
+    const startLives = livesFor(sideIds.length);
 
-    const pools: PassGameState['pools'] = {};
+    const stacks: PassGameState['stacks'] = {};
     const lives: Record<string, number> = {};
-    for (const from of sideIds) {
-        lives[from] = PASS_START_LIVES;
-        pools[from] = {};
-        for (const to of sideIds) if (to !== from) pools[from][to] = budget;
+    for (const id of sideIds) {
+        lives[id] = startLives;
+        stacks[id] = budget;
     }
 
     const base: PassGameState = {
@@ -275,7 +298,7 @@ export const startPassGame = async (
         sides,
         sideIds,
         holderId: sideIds[Math.floor(Math.random() * sideIds.length)],
-        pools,
+        stacks,
         lives,
         ghosts: [],
         eliminationOrder: [],
@@ -297,8 +320,7 @@ export const startPassGame = async (
 };
 
 // ── CHOOSE TARGET ─────────────────────────────────────────────────────
-// Picked before the question is revealed. Locked until the question is
-// answered — unless that pool runs dry, which unlocks a new pick.
+// Picked before the question is revealed, and locked until it's answered.
 export const choosePassTarget = async (
     group: Group,
     playerId: string,
@@ -313,8 +335,7 @@ export const choosePassTarget = async (
             if (!snap.exists()) return;
             const gs = snap.data().gameState as PassGameState | undefined;
             if (!holderGuard(gs, playerId) || gs.turn.targetId) return;
-            if (targetId === gs.holderId || gs.ghosts.includes(targetId)) return;
-            if (passesTo(gs, gs.holderId, targetId) <= 0) return;
+            if (targetId === gs.holderId || !passAlive(gs).includes(targetId)) return;
 
             tx.update(groupRef, { 'gameState.turn.targetId': targetId });
             ok = true;
@@ -342,6 +363,7 @@ export const answerPassQuestion = async (
     try {
         await runTransaction(db, async (tx) => {
             result = 'stale';
+            const news: TicketNewsItem[] = []; // fresh per attempt — transactions can retry
             const snap = await tx.get(groupRef);
             if (!snap.exists()) return;
             const gs = snap.data().gameState as PassGameState | undefined;
@@ -355,8 +377,6 @@ export const answerPassQuestion = async (
 
             const from = gs.holderId;
             const to = t.targetId;
-            const pools = clonePools(gs.pools);
-            pools[from] = { ...pools[from], [to]: Math.max(0, passesTo(gs, from, to) - 1) };
 
             let next: PassGameState;
             if (option.correct) {
@@ -370,44 +390,47 @@ export const answerPassQuestion = async (
                 next = withFreshTurn(
                     {
                         ...gs,
-                        pools,
+                        stacks: withStack(gs, from, totalPassesLeft(gs, from) - 1),
                         holderId: to,
                         stats: bumpStat(gs.stats, playerId, 'passes'),
                         lastPass: { from, to, seq: t.seq, byPlayerId: playerId },
-                        wallet: { ...(gs.wallet ?? {}), [from]: walletOf(gs, from) + earned },
+                        wallet: {
+                            ...(gs.wallet ?? {}),
+                            [from]: walletOf(gs, from) + earned,
+                            [to]: walletOf(gs, to) + EARN_HAZARD, // hazard pay
+                        },
                         streak: { ...(gs.streak ?? {}), [from]: streak },
                         lastEarn: { sideId: from, amount: earned, streak, seq: t.seq },
                     },
                     t.seq + 1,
                     true
                 );
+                // Lucky Centre: this side's ticket, if any.
+                next = settleTicketOnAnswer(next, from, wrongBefore === 0 ? 'first-try' : 'correct', news);
                 result = 'correct';
                 // The receiver may have nothing left to pass with — it goes off in their hands.
-                if (totalPassesLeft(next, to) === 0) next = explode(next, to);
+                if (totalPassesLeft(next, to) === 0) next = explode(next, to, news);
             } else {
+                // Only the first miss on a question costs a pass.
+                const costs = true;
                 next = {
                     ...gs,
-                    pools,
+                    stacks: costs ? withStack(gs, from, totalPassesLeft(gs, from) - 1) : gs.stacks,
                     stats: bumpStat(gs.stats, playerId, 'wrong'),
                     streak: { ...(gs.streak ?? {}), [from]: 0 },
+                    turn: { ...t, wrongPicks: [...t.wrongPicks, optionIndex] },
                 };
-                const poolEmpty = pools[from][to] === 0;
-                next = {
-                    ...next,
-                    turn: {
-                        ...t,
-                        wrongPicks: [...t.wrongPicks, optionIndex],
-                        // Pool ran dry: same question, but a new target (auto if only one left).
-                        targetId: poolEmpty ? autoTarget(next, from) : to,
-                    },
-                };
+                // Lucky Centre ticket busts; a haunting ghost catches the dropped pass.
+                next = settleTicketOnAnswer(next, from, 'wrong', news);
+                if (costs) next = catchFumble(next);
                 result = 'wrong';
                 if (totalPassesLeft(next, from) === 0) {
-                    next = explode(next, from);
+                    next = explode(next, from, news);
                     result = 'exploded';
                 }
             }
 
+            next = publishTicketNews(next, news);
             tx.update(groupRef, { gameState: next });
         });
     } catch (e) {
@@ -419,8 +442,8 @@ export const answerPassQuestion = async (
 // ── CHEAT CALLOUT ─────────────────────────────────────────────────────
 // Every player on a non-holding, alive side can vote "cheating" or "let it
 // go", and can change or take back their vote at any time (choice = null).
-//   • "cheating" reaches a majority → the holder loses CALLOUT_PENALTY passes
-//     (from their biggest pools first) and the question is skipped.
+//   • "cheating" reaches a majority → the holder loses calloutPenalty(gs)
+//     passes and the question is skipped (same target).
 //   • enough "let it go" votes that "cheating" can no longer win → dropped.
 //   • every "cheating" vote taken back → dropped.
 export type CalloutChoice = 'cheating' | 'let-go' | null;
@@ -471,35 +494,28 @@ export const votePassCallout = async (
                 return;
             }
 
-            // Guilty — strip passes one at a time from the biggest pool.
+            // Guilty — strip passes from the holder's stack.
             const holder = gs.holderId;
-            const alive = passAlive(gs);
-            const pools = clonePools(gs.pools);
-            for (let i = 0; i < CALLOUT_PENALTY; i++) {
-                const biggest = alive
-                    .filter((id) => id !== holder && (pools[holder]?.[id] ?? 0) > 0)
-                    .sort((a, b) => pools[holder][b] - pools[holder][a])[0];
-                if (!biggest) break;
-                pools[holder][biggest] -= 1;
-            }
-
             const target = gs.turn.targetId;
-            const targetKept = !!target && (pools[holder]?.[target] ?? 0) > 0;
+            const targetKept = !!target;
             let next = withFreshTurn(
                 {
                     ...gs,
-                    pools,
+                    stacks: withStack(gs, holder, totalPassesLeft(gs, holder) - calloutPenalty(gs)),
                     lastCallout: { sideId: holder, seq, targetKept },
                     streak: { ...(gs.streak ?? {}), [holder]: 0 },
                 },
                 seq + 1,
                 false
             );
-            // Keep the chosen target if they can still pass to it.
-            if (target && targetKept) {
+            // Keep the chosen target.
+            if (target) {
                 next = { ...next, turn: { ...next.turn, targetId: target } };
             }
-            if (totalPassesLeft(next, holder) === 0) next = explode(next, holder);
+            const news: TicketNewsItem[] = [];
+            next = settleTicketOnCallout(next, holder, news);
+            if (totalPassesLeft(next, holder) === 0) next = explode(next, holder, news);
+            next = publishTicketNews(next, news);
 
             tx.update(groupRef, { gameState: next });
         });
@@ -560,9 +576,10 @@ export const isSideGone = (
 
 // ── NEXT ROUND ────────────────────────────────────────────────────────
 // Anyone can tap it — no host needed. The bomb goes to the side with the
-// fewest passes left (the best trivia side's reward), ties broken at
-// random. Sides with 0 passes are skipped here; they only blow up if
-// someone passes to them.
+// fewest passes left as the round ended (the best trivia side's reward),
+// never the side it just blew up on; ties broken at random. Then every side
+// still in is topped back up to the starting stack (passes bought above
+// that are kept).
 export const continuePassGame = async (group: Group): Promise<void> => {
     const groupRef = doc(db, 'groups', group.id);
     try {
@@ -597,24 +614,23 @@ export const continuePassGame = async (group: Group): Promise<void> => {
                 tx.update(groupRef, updates);
                 return;
             }
-            const withPasses = alive.filter((id) => totalPassesLeft(gs, id) > 0);
-            const pool = withPasses.length > 0 ? withPasses : alive;
-            // Visible mode: the side with the fewest passes starts (the best
-            // players' reward). Hidden mode: random — otherwise who starts
-            // would give away who's lowest.
+
+            const victim = gs.lastExplosion?.sideId;
+            const notVictim = alive.filter((id) => id !== victim);
+            const pool = notVictim.length > 0 ? notVictim : alive;
             const fewest = Math.min(...pool.map((id) => totalPassesLeft(gs, id)));
-            const candidates = gs.hiddenPasses
-                ? pool
-                : pool.filter((id) => totalPassesLeft(gs, id) === fewest);
-            const holderId = candidates[Math.floor(Math.random() * candidates.length)];
+            const tied = pool.filter((id) => totalPassesLeft(gs, id) === fewest);
+            const holderId = tied[Math.floor(Math.random() * tied.length)];
+
+            const stacks = { ...gs.stacks };
+            for (const id of alive) stacks[id] = Math.max(stacks[id] ?? 0, gs.budget);
 
             const { lastPass: _drop, ...rest } = gs;
-            let next = withFreshTurn(
-                { ...rest, phase: 'pass-playing', round: gs.round + 1, holderId },
+            const next = withFreshTurn(
+                { ...rest, stacks, phase: 'pass-playing', round: gs.round + 1, holderId },
                 gs.turn.seq + 1,
                 true
             );
-            if (totalPassesLeft(next, holderId) === 0) next = explode(next, holderId);
 
             tx.update(groupRef, { gameState: next });
         });
@@ -626,11 +642,11 @@ export const continuePassGame = async (group: Group): Promise<void> => {
 // ── STORE ─────────────────────────────────────────────────────────────
 // Open to every side that isn't holding the bomb, any time during play —
 // shopping happens in the waiting time, so the game never pauses for it.
-// Purchases only touch the buyer's own wallet, pools and items, so they
+// Purchases only touch the buyer's own wallet, stack and items, so they
 // can't clash with the holder's answer (and the transaction handles races).
 export type StoreResult = 'ok' | 'not-allowed' | 'insufficient' | 'error';
 
-const shopperSide = (gs: PassGameState | undefined, playerId: string): string | null => {
+export const shopperSide = (gs: PassGameState | undefined, playerId: string): string | null => {
     if (gs?.mode !== 'pass' || gs.phase === 'pass-result') return null;
     const side = sideOf(gs, playerId);
     if (!side || gs.ghosts.includes(side)) return null;
@@ -639,12 +655,8 @@ const shopperSide = (gs: PassGameState | undefined, playerId: string): string | 
     return side;
 };
 
-// One extra pass to `targetSideId`.
-export const buyPass = async (
-    group: Group,
-    playerId: string,
-    targetSideId: string
-): Promise<StoreResult> => {
+// One extra pass on the buyer's own stack.
+export const buyPass = async (group: Group, playerId: string): Promise<StoreResult> => {
     const groupRef = doc(db, 'groups', group.id);
     let result: StoreResult = 'error';
     try {
@@ -655,7 +667,6 @@ export const buyPass = async (
             const gs = snap.data().gameState as PassGameState | undefined;
             const side = shopperSide(gs, playerId);
             if (!gs || !side) return;
-            if (targetSideId === side || !passAlive(gs).includes(targetSideId)) return;
 
             const price = passPrice(gs, side);
             const funds = walletOf(gs, side);
@@ -666,10 +677,9 @@ export const buyPass = async (
             tx.update(groupRef, {
                 [`gameState.wallet.${side}`]: funds - price,
                 [`gameState.passesBought.${side}`]: (gs.passesBought?.[side] ?? 0) + 1,
-                [`gameState.pools.${side}.${targetSideId}`]: passesTo(gs, side, targetSideId) + 1,
+                [`gameState.stacks.${side}`]: totalPassesLeft(gs, side) + 1,
                 [`gameState.receipts.${side}`]: withReceipt(gs, side, {
                     item: 'pass',
-                    targetId: targetSideId,
                     byPlayerId: playerId,
                     round: gs.round,
                 }),

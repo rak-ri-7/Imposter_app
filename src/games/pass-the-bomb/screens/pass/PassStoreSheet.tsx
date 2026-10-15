@@ -12,7 +12,7 @@ import {
   buyPass,
   buyPassItem,
   passAlive,
-  passesTo,
+  totalPassesLeft,
   passPrice,
   itemPrice,
   walletOf,
@@ -25,6 +25,9 @@ import {
   EARN_STREAK_BONUS,
   EARN_STREAK_EVERY,
   EARN_SURVIVE_ROUND,
+  EARN_HAZARD,
+  EARN_CLUTCH,
+  CLUTCH_MAX_LEFT,
   PassItem,
   StoreResult,
   STORE,
@@ -35,6 +38,7 @@ import {
   GLOVES_TURNS,
   PRICE_AUDIT,
 } from "../../logic/pass/passGame";
+import PassLuckyCentre from "./PassLuckyCentre";
 
 type Props = {
   visible: boolean;
@@ -134,12 +138,13 @@ export default function PassStoreSheet({
       animationType="slide"
       onRequestClose={onClose}
     >
-      <TouchableOpacity
-        style={styles.backdrop}
-        activeOpacity={1}
-        onPress={onClose}
-      >
-        <TouchableOpacity style={styles.sheet} activeOpacity={1}>
+      <View style={styles.backdrop}>
+        <TouchableOpacity
+          style={StyleSheet.absoluteFill}
+          activeOpacity={1}
+          onPress={onClose}
+        />
+        <View style={styles.sheet}>
           <View style={styles.header}>
             <Text style={styles.title}>
               {STORE.icon} The {STORE.name}
@@ -164,38 +169,35 @@ export default function PassStoreSheet({
             </Text>
           )}
 
-          <ScrollView style={styles.list}>
+          <ScrollView
+            style={styles.list}
+            contentContainerStyle={{ paddingBottom: 12 }}
+            showsVerticalScrollIndicator
+            nestedScrollEnabled
+          >
             <Text style={styles.section}>
               EXTRA PASSES · {pPrice} {CURRENCY.short} each
             </Text>
             <Text style={styles.sectionHint}>
-              Price goes up by a little every time{" "}
-              {team ? "your team buys" : "you buy"} one.
+              Goes on {team ? "your team's" : "your"} pile. Price climbs each
+              time; unspent extras carry over.
             </Text>
-            {others.map((id) => (
-              <View key={id} style={styles.row}>
-                <View style={styles.rowText}>
-                  <Text style={styles.rowName}>
-                    +1 pass to {sideById(gs, id)?.name}
-                  </Text>
-                  <Text style={styles.rowSub}>
-                    You have {mySide ? passesTo(gs, mySide, id) : 0} to them
-                  </Text>
-                </View>
-                <TouchableOpacity
-                  style={[styles.buyBtn, funds < pPrice && styles.buyBtnOff]}
-                  disabled={busy || funds < pPrice}
-                  onPress={() =>
-                    run(
-                      () => buyPass(group, playerId, id),
-                      `+1 pass to ${sideById(gs, id)?.name}`,
-                    )
-                  }
-                >
-                  <Text style={styles.buyText}>{pPrice}</Text>
-                </TouchableOpacity>
+            <View style={styles.row}>
+              <View style={styles.rowText}>
+                <Text style={styles.rowName}>+1 pass</Text>
+                <Text style={styles.rowSub}>
+                  {team ? "Your team has" : "You have"}{" "}
+                  {totalPassesLeft(gs, mySide)} left
+                </Text>
               </View>
-            ))}
+              <TouchableOpacity
+                style={[styles.buyBtn, funds < pPrice && styles.buyBtnOff]}
+                disabled={busy || funds < pPrice}
+                onPress={() => run(() => buyPass(group, playerId), "+1 pass")}
+              >
+                <Text style={styles.buyText}>{pPrice}</Text>
+              </TouchableOpacity>
+            </View>
 
             <Text style={[styles.section, { marginTop: 16 }]}>POWER-UPS</Text>
             {ITEMS.map((it) => {
@@ -239,8 +241,9 @@ export default function PassStoreSheet({
                         : ""}
                     </Text>
                     <Text style={styles.rowSub}>
-                      Your fumbles make no sound or flash for your next{" "}
-                      {GLOVES_TURNS} turns with the bomb
+                      Your fumbles make no sound or flash, and haunting ghosts
+                      can't catch them, for your next {GLOVES_TURNS} turns with
+                      the bomb
                     </Text>
                   </View>
                   <TouchableOpacity
@@ -288,20 +291,21 @@ export default function PassStoreSheet({
                 ))}
               </>
             ) : null}
-
+            <PassLuckyCentre group={group} playerId={playerId} />
             <Text style={styles.earnInfo}>
               Earn {CURRENCY.short}: right first try +{EARN_FIRST_TRY} · right
               second try +{EARN_SECOND_TRY} · {EARN_STREAK_EVERY} first-tries in
               a row +{EARN_STREAK_BONUS} bonus · survive a round +
-              {EARN_SURVIVE_ROUND}
+              {EARN_SURVIVE_ROUND} · bomb passed to you +{EARN_HAZARD} · survive
+              a round on ≤{CLUTCH_MAX_LEFT} passes +{EARN_CLUTCH} more
             </Text>
           </ScrollView>
 
           <TouchableOpacity style={styles.closeBtn} onPress={onClose}>
             <Text style={styles.closeText}>Close</Text>
           </TouchableOpacity>
-        </TouchableOpacity>
-      </TouchableOpacity>
+        </View>
+      </View>
     </Modal>
   );
 }
@@ -318,6 +322,7 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 20,
     padding: 20,
     paddingBottom: 32,
+    maxHeight: "85%",
   },
   header: {
     flexDirection: "row",
@@ -340,7 +345,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     marginVertical: 4,
   },
-  list: { maxHeight: 420, marginTop: 8 },
+  list: { flexShrink: 1, marginTop: 8 },
   section: {
     color: "#FF4500",
     fontSize: 11,
