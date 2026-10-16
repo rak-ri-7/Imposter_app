@@ -8,7 +8,7 @@ export type Player = {
     isReady: boolean;
 };
 
-export type GameType = 'imposter' | 'stop-the-timer' | 'pass-the-bomb';
+export type GameType = 'imposter' | 'stop-the-timer' | 'pass-the-bomb' | 'quiz-board';
 
 export type ImposterSettings = {
     imposterCount: number;
@@ -41,12 +41,15 @@ export type Group = {
     scores: Record<string, number>;
     currentGame: GameType | 'menu';
     status: GameStatus;
-    gameState: ImposterGameState | TimerGameState | BombGameState | PassGameState;
+    gameState: ImposterGameState | TimerGameState | BombGameState | PassGameState | QuizBoardGameState;
     createdAt?: number;
     teams?: Team[];
     teamsEnabled?: boolean;
     benchedPlayers?: Player[];
     hostHeartbeatAt?: number
+    // Quiz Board: question ids this group has already played, newest last,
+    // so later boards prefer fresh questions. Survives between games.
+    quizSeenIds?: string[];
     bombLobby?: { mode: 'timer' | 'pass' | null; passBudget: number; passAsTeams: boolean; hiddenPasses?: boolean; } | null;
 };
 
@@ -69,12 +72,19 @@ export type TimerGameState = {
     question: string;
     answer: number;
     difficulty: 'easy' | 'medium' | 'hard';
-    phase: 'lobby' | 'question' | 'countdown' | 'running' | 'result' | 'penalty';
+    phase: 'lobby' | 'question' | 'running' | 'result' | 'penalty';
     timerStartedAt: Timestamp | number | null
-    stops: Record<string, number>;
+    // Server-written start of the pre-timer countdown, so every device counts
+    // down against the same instant.
+    countdownStartedAt?: Timestamp | number | null
+    // Last round whose points were already added to scores (idempotency guard).
+    pointsAwardedRound?: number;
+    // Values are server Timestamps while the round runs.
+    stops: Record<string, Timestamp | number>;
     roundNumber: number;
     distractionsEnabled: boolean;
-    finalStops: Record<string, number>;
+    finalStops: Record<string, number | null>;
+    recentTemplates?: string[];
 
 
 };
@@ -564,3 +574,73 @@ export type PassGameState = {
 
 export type PassTicketKind = 'double-clean' | 'triple-clean' | 'clean-sheet' | 'survivor';
 export type PassTicket = { kind: PassTicketKind; progress: number; round: number };
+
+// ── QUIZ BOARD ────────────────────────────────────────────────────
+// 'options': everyone taps one of 4 options, scored automatically.
+// 'buzzer':  players buzz in and answer out loud; the host judges.
+export type QuizBoardMode = 'options' | 'buzzer';
+
+export type QuizBoardPhase =
+    | 'board'     // picker chooses a tile
+    | 'question'  // timer running: buzz in / tap an option
+    | 'locking'   // short silent pause before the answer is revealed
+    | 'judging'   // buzzer mode: answer shown, host picks who was right
+    | 'result'    // round scored; Review / correct / void still possible
+    | 'final';    // board finished
+
+export type QuizBoardTile = {
+    category: QuizCategory;
+    level: number;          // 1-6
+    value: number;          // rupees
+    questionId: string;
+    used: boolean;
+};
+
+// The question on screen right now. Its answer is in the document but no
+// screen shows it before the reveal.
+export type QuizBoardCurrent = {
+    tileIndex: number;
+    questionId: string;
+    prompt: string;
+    options: { text: string; correct: boolean }[];
+    answer: string;
+};
+
+export type QuizBoardRound = {
+    tileIndex: number;
+    questionId: string;
+    value: number;
+    answer: string;
+    mode: QuizBoardMode;
+    winnerId: string | null;          // null = nobody right
+    deltas: Record<string, number>;   // what this round did to each player's money
+    buzzOrder: string[];              // buzzer mode
+    picks?: Record<string, number>;   // options mode: player -> option index
+    forceEnded?: boolean;
+    pickerBefore?: string;            // who picked this tile
+    reviewBy?: string[];              // players who tapped Review
+    reviewSeen?: boolean;             // host dismissed / handled the review
+    changed?: boolean;                // host corrected the call
+    voided?: boolean;
+};
+
+export type QuizBoardGameState = {
+    game: 'quiz-board';
+    mode: QuizBoardMode;
+    phase: QuizBoardPhase;
+    categories: QuizCategory[];
+    tiles: QuizBoardTile[];           // row-major: level 1 row first
+    pickerId: string;
+    current?: QuizBoardCurrent | null;
+    windowMs: number;                 // question timer length
+    endsAt?: number | null;           // server-clock ms when the timer runs out
+    isPaused?: boolean;
+    pausedRemainingMs?: number | null;
+    lockEndsAt?: number | null;
+    forceEnded?: boolean;
+    buzzes: Record<string, Timestamp | number | null>;  // player -> server time
+    picks: Record<string, { option: number; at: Timestamp | number | null }>;
+    money: Record<string, number>;    // this game's rupees per player
+    rounds: QuizBoardRound[];
+    pointsAwarded?: boolean;
+};

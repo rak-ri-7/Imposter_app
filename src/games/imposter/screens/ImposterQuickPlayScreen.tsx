@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../../../../App";
-import { words } from "../data/words";
+import { pickRandomWordEntry } from "../data/words";
 import {
   getLocalSession,
   updateLocalScores,
@@ -45,10 +45,8 @@ type Phase =
   | "imposter-guess"
   | "result";
 
-const pickRandomWord = (): string => {
-  const allWords = Object.values(words).flat();
-  return allWords[Math.floor(Math.random() * allWords.length)];
-};
+// Uses the same word bank as online Imposter.
+const pickRandomWord = (): string => pickRandomWordEntry([]).word;
 
 export default function ImposterPassThePhoneScreen({ navigation }: Props) {
   const [phase, setPhase] = useState<Phase>("loading");

@@ -48,9 +48,10 @@ export const QUIZ_CATEGORIES: Record<QuizCategory, { label: string; emoji: strin
     nature: { label: 'Nature', emoji: '🌿' },
 };
 
-// Board value level for Jeopardy-style games (1 = cheapest row, 5 = top).
-// Optional: questions without one get a default from their difficulty.
-export type QuizLevel = 1 | 2 | 3 | 4 | 5;
+// Board row for Jeopardy-style games (1 = cheapest row, 6 = top).
+// Rows 1-2 are easy, 3-4 medium, 5-6 hard. Optional: an untagged question
+// can fill either row of its difficulty; a tagged one fills only its own row.
+export type QuizLevel = 1 | 2 | 3 | 4 | 5 | 6;
 
 export type QuizQuestion = {
     id: string;

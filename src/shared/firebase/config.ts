@@ -1,6 +1,7 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore, setLogLevel } from 'firebase/firestore';
-import { getAuth } from 'firebase/auth';
+import { initializeAuth, getAuth, getReactNativePersistence, Auth } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 setLogLevel('error'); // or 'silent' to suppress entirely
 
 const firebaseConfig = {
@@ -15,4 +16,17 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 
 export const db = getFirestore(app);
-export const auth = getAuth(app);
+// Keep the anonymous sign-in on the phone. Without this, every app restart
+// signs in as a brand-new user, so a player who restarts mid-game can't get
+// back in as themselves.
+const createAuth = (): Auth => {
+    try {
+        return initializeAuth(app, {
+            persistence: getReactNativePersistence(AsyncStorage),
+        });
+    } catch {
+        // Already initialised (e.g. after a Fast Refresh in development).
+        return getAuth(app);
+    }
+};
+export const auth = createAuth();

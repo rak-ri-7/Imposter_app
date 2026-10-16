@@ -149,15 +149,30 @@ export const pickRandomWordEntry = (usedWords: string[]): WordEntry => {
     return pool[Math.floor(Math.random() * pool.length)];
 };
 
-export const getHint = (entry: WordEntry): string => {
-    const hintTypes = ['category', 'firstLetter', 'clue'];
-    const type = hintTypes[Math.floor(Math.random() * hintTypes.length)];
+export const findWordEntry = (word: string): WordEntry | undefined =>
+    wordBank.find((w) => w.word.toLowerCase() === word.toLowerCase());
 
-    if (type === 'category') {
-        return `Category: ${entry.category}`;
-    } else if (type === 'firstLetter') {
-        return `First letter: "${entry.word.charAt(0).toUpperCase()}"`;
-    } else {
-        return entry.hint ?? `Category: ${entry.category}`;
-    }
+// Meaningful pieces of the word ("Gulf Return" -> gulf, return).
+const wordParts = (word: string): string[] =>
+    word
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter((p) => p.length > 2 && !['the', 'and', 'for'].includes(p));
+
+// True if the text would give away the word or any part of it.
+const leaksWord = (text: string, word: string): boolean => {
+    const t = text.toLowerCase();
+    return t.includes(word.toLowerCase()) || wordParts(word).some((p) => t.includes(p));
+};
+
+export const getHint = (entry: WordEntry): string => {
+    const category = `Category: ${entry.category}`;
+    const firstLetter = `First letter: "${entry.word.charAt(0).toUpperCase()}"`;
+
+    // Only offer hints that don't contain the word itself.
+    const options = [firstLetter];
+    if (!leaksWord(entry.category, entry.word)) options.push(category);
+    if (entry.hint && !leaksWord(entry.hint, entry.word)) options.push(entry.hint);
+
+    return options[Math.floor(Math.random() * options.length)];
 };

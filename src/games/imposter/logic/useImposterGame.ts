@@ -113,8 +113,7 @@ export const useImposterGame = (group: Group | null, playerId: string) => {
             const hintText = await useHint(
                 group.id,
                 gameState.word,
-                gameState.category,
-                gameState.word
+                gameState.category
             );
             setHint(hintText);
         } finally {

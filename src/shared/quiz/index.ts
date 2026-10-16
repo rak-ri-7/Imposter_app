@@ -228,33 +228,47 @@ export const validateQuestionBank = (questions: QuizQuestion[] = activeBank): st
 // ── QUESTION BANK ─────────────────────────────────────────────────
 
 // ── PRIZE MONEY (Jeopardy-style boards) ─────────────────────────────
-// Each board row has a rupee value. The second round doubles them.
+// Six board rows, two per difficulty. The second round doubles them.
+export const QUIZ_LEVELS: QuizLevel[] = [1, 2, 3, 4, 5, 6];
+
 export const LEVEL_VALUES: Record<QuizLevel, number> = {
     1: 1000,
     2: 2000,
     3: 3000,
     4: 4000,
     5: 5000,
+    6: 6000,
 };
 export const DOUBLE_ROUND_MULTIPLIER = 2;
 
-// Until questions are tagged with a level, difficulty decides it.
-const DEFAULT_LEVEL: Record<QuizDifficulty, QuizLevel> = { easy: 1, medium: 3, hard: 5 };
-
-export const levelOf = (q: QuizQuestion): QuizLevel => q.level ?? DEFAULT_LEVEL[q.difficulty];
-
-export const prizeFor = (q: QuizQuestion, multiplier = 1): number =>
-    LEVEL_VALUES[levelOf(q)] * multiplier;
-
-// Which levels can fill each board row, best fit first — so a category with
-// no level-2 question can still fill row 2 from its neighbours.
-export const ROW_LEVELS: Record<QuizLevel, QuizLevel[]> = {
-    1: [1, 2],
-    2: [2, 1, 3],
-    3: [3, 2, 4],
-    4: [4, 5, 3],
-    5: [5, 4],
+// Which difficulty fills each row.
+export const LEVEL_DIFFICULTY: Record<QuizLevel, QuizDifficulty> = {
+    1: 'easy',
+    2: 'easy',
+    3: 'medium',
+    4: 'medium',
+    5: 'hard',
+    6: 'hard',
 };
+
+// A tagged question fits only its own row; an untagged one fits either row
+// of its difficulty.
+export const fitsLevel = (q: QuizQuestion, level: QuizLevel): boolean =>
+    q.level ? q.level === level : q.difficulty === LEVEL_DIFFICULTY[level];
+
+// Fallback difficulties for a row, best first — used only if a category has
+// nothing left at the row's own difficulty.
+export const LEVEL_FALLBACK: Record<QuizLevel, QuizDifficulty[]> = {
+    1: ['easy', 'medium'],
+    2: ['easy', 'medium'],
+    3: ['medium', 'easy', 'hard'],
+    4: ['medium', 'hard', 'easy'],
+    5: ['hard', 'medium'],
+    6: ['hard', 'medium'],
+};
+
+export const prizeForLevel = (level: QuizLevel, multiplier = 1): number =>
+    LEVEL_VALUES[level] * multiplier;
 
 // ₹1,00,000 style (Indian digit grouping), without relying on Intl.
 export const formatRupees = (amount: number): string => {

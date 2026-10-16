@@ -11,6 +11,12 @@ import { scienceQuestions } from './science';
 import { natureQuestions } from './nature';
 import { foodQuestions } from './food';
 import { sportQuestions } from './sport';
+import { animalsQuestions } from './animals';
+import { animeQuestions } from './anime';
+import { footballQuestions } from './football';
+import { moviesQuestions } from './movies';
+import { technologyQuestions } from './technology';
+import { womenQuestions } from './women';
 
 // One bank for every game. Add questions to the category file they belong in.
 export const quizQuestions: QuizQuestion[] = [
@@ -26,4 +32,10 @@ export const quizQuestions: QuizQuestion[] = [
     ...natureQuestions,
     ...foodQuestions,
     ...sportQuestions,
+    ...animalsQuestions,
+    ...animeQuestions,
+    ...footballQuestions,
+    ...moviesQuestions,
+    ...technologyQuestions,
+    ...womenQuestions,
 ];

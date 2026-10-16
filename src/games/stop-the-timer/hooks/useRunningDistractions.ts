@@ -1,5 +1,5 @@
 // src/games/timer/hooks/useRunningDistractions.ts
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Vibration } from 'react-native';
 import {
     ActiveDistraction,
@@ -7,8 +7,8 @@ import {
     getRunningDistractionBaseWindow,
     generateRunningDistraction,
 } from '../logic/distractions';
+import { getServerNow } from '../../../shared/firebase/time';
 import { playSound } from '../../../shared/audio/sounds';
-
 
 type Params = {
     enabled: boolean;
@@ -17,7 +17,6 @@ type Params = {
     answer: number;
 };
 
-// Heavier vibration pattern to substitute for sound until audio lib is wired in.
 const JUMPSCARE_VIBRATION_PATTERN = [0, 80, 40, 80, 40, 200];
 
 export const useRunningDistractions = ({
@@ -27,55 +26,52 @@ export const useRunningDistractions = ({
     answer,
 }: Params) => {
     const [current, setCurrent] = useState<ActiveDistraction | null>(null);
-    const scheduledRef = useRef(false);
-    const timeouts = useRef<ReturnType<typeof setTimeout>[]>([]);
 
+    // One effect owns the whole lifecycle for a round. Every timeout it creates
+    // is local to this run, and cleanup always clears them AND hides any
+    // visible distraction — so nothing can get stuck on screen.
     useEffect(() => {
-        scheduledRef.current = false;
-        timeouts.current.forEach(clearTimeout);
-        timeouts.current = [];
-        setCurrent(null);
-    }, [timerStartedAt]);
-
-    useEffect(() => {
-        if (!enabled || !active || scheduledRef.current) return;
+        if (!enabled || !active) return;
 
         const { eligible, startMs, endMs } = getRunningDistractionBaseWindow(answer);
         if (!eligible) return;
-
-        scheduledRef.current = true;
-
         if (Math.random() > RUNNING_PHASE_FIRE_PROBABILITY) return;
 
-        // Pick the distraction first so we know its duration, then shrink the
-        // window so the effect fully finishes before the safe gap begins.
+        // Pick the distraction first so its duration shrinks the window and the
+        // effect fully finishes before the safe gap.
         const distraction = generateRunningDistraction(Date.now());
         const adjustedEnd = endMs - distraction.durationMs;
-        if (adjustedEnd <= startMs) return; // not enough room for this effect to fully play out
 
-        const elapsedSoFar = Date.now() - timerStartedAt;
-        const fireAt = startMs + Math.random() * (adjustedEnd - startMs);
-        const delay = Math.max(0, fireAt - elapsedSoFar);
-        if (delay <= 0 && elapsedSoFar > adjustedEnd) return;
+        // Never schedule into the past: sample only from the part of the
+        // window that hasn't elapsed yet (matters on late mount / remount).
+        const elapsed = Date.now() - timerStartedAt;
+        const earliest = Math.max(startMs, elapsed);
+        if (adjustedEnd <= earliest) return;
 
-        const fireTimeout = setTimeout(() => {
-            setCurrent(distraction);
+        const fireAt = earliest + Math.random() * (adjustedEnd - earliest);
+        const timeouts: ReturnType<typeof setTimeout>[] = [];
 
-            if (distraction.type === 'jumpscare') {
-                Vibration.vibrate(JUMPSCARE_VIBRATION_PATTERN);
-                playSound('jumpscare');
-            }
+        timeouts.push(
+            setTimeout(() => {
+                setCurrent(distraction);
 
-            const clearTimeoutId = setTimeout(() => {
-                setCurrent(null);
-            }, distraction.durationMs);
-            timeouts.current.push(clearTimeoutId);
-        }, delay);
+                if (distraction.type === 'jumpscare') {
+                    Vibration.vibrate(JUMPSCARE_VIBRATION_PATTERN);
+                    try {
+                        Promise.resolve(playSound('jumpscare')).catch(() => { });
+                    } catch {
+                        // audio failure must never break the round
+                    }
+                }
 
-        timeouts.current.push(fireTimeout);
+                timeouts.push(setTimeout(() => setCurrent(null), distraction.durationMs));
+            }, fireAt - elapsed),
+        );
 
         return () => {
-            timeouts.current.forEach(clearTimeout);
+            timeouts.forEach(clearTimeout);
+            Vibration.cancel();
+            setCurrent(null);
         };
     }, [enabled, active, answer, timerStartedAt]);
 

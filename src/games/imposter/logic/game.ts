@@ -2,7 +2,7 @@ import { doc, updateDoc } from "firebase/firestore";
 import { db } from "../../../shared/firebase/config";
 import { Group, ImposterGameState, ImposterSettings } from "../../../shared/types";
 import { addScore, returnToMenu } from "../../../shared/firebase/groups";
-import { pickRandomWordEntry, getHint } from '../data/words';
+import { pickRandomWordEntry, getHint, findWordEntry } from '../data/words';
 
 const pickImposters = (playerIds: string[], count: number): string[] => {
   const shuffled = [...playerIds].sort(() => Math.random() - 0.5);
@@ -69,11 +69,12 @@ export const nextTurn = async (
 export const useHint = async (
   groupId: string,
   word: string,
-  category: string,
-  hint?: string
+  category: string
 ): Promise<string> => {
   const groupRef = doc(db, 'groups', groupId);
-  const hintText = getHint({ word, category, hint });
+  // The game only stores the word and category, so the clue comes from the
+  // word bank. Never pass the word itself in as the hint.
+  const hintText = getHint(findWordEntry(word) ?? { word, category });
   await updateDoc(groupRef, {
     'gameState.hintUsed': true,
     'gameState.currentHint': hintText,

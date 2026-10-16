@@ -19,15 +19,16 @@ type Props = {
 };
 
 export default function TimerRunningScreen({ group, playerId }: Props) {
-  const { hasStopped, handleStop, gameState } = useTimerGame(group, playerId);
+  const { hasStopped, handleStop, gameState, timerStartMs } = useTimerGame(group, playerId);
   const [pulseAnim] = useState(new Animated.Value(1));
   const stoppedCount = Object.keys(gameState?.stops ?? {}).length;
   const totalPlayers = group.players.length;
 
   const { current } = useRunningDistractions({
     enabled: gameState?.distractionsEnabled ?? false,
-    active: gameState?.phase === "running" && !hasStopped,
-    timerStartedAt: gameState?.timerStartedAt ?? 0,
+    active:
+      gameState?.phase === "running" && !hasStopped && timerStartMs !== null,
+    timerStartedAt: timerStartMs ?? 0,
     answer: gameState?.answer ?? 0,
   });
 

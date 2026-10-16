@@ -1,7 +1,9 @@
+import type { GameType } from '../shared/types';
+
 export type GameMode = 'online' | 'pass-the-phone';
 
 export type GameDefinition = {
-    id: 'imposter' | 'stop-the-timer' | 'pass-the-bomb' | 'most-likely-to' | 'two-truths-lie';
+    id: GameType | 'most-likely-to' | 'two-truths-lie';
     name: string;
     emoji: string;
     description: string;
@@ -35,6 +37,15 @@ export const games: GameDefinition[] = [
         name: 'Pass the Bomb',
         emoji: '💣',
         description: 'Social deduction under pressure',
+        minPlayers: 2,
+        available: true,
+        modes: ['online'],
+    },
+    {
+        id: 'quiz-board',
+        name: 'Quiz Board',
+        emoji: '📺',
+        description: 'Pick a tile, win the rupees',
         minPlayers: 2,
         available: true,
         modes: ['online'],

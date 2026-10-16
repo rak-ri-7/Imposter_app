@@ -14,7 +14,7 @@ import {
 } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
 import { db, auth } from './config';
-import { Group, Player, emptyImposterState, Team } from '../types';
+import { GameType, Group, Player, emptyImposterState, Team } from '../types';
 import { getDoc } from 'firebase/firestore';
 
 const generateGroupCode = (): string => {
@@ -22,18 +22,26 @@ const generateGroupCode = (): string => {
 };
 
 export const getCurrentUser = async () => {
+    // Wait for the saved sign-in to load first; otherwise a fresh app start
+    // would sign in as a brand-new player before the old one is restored.
+    await auth.authStateReady();
     if (auth.currentUser) return auth.currentUser;
     const result = await signInAnonymously(auth);
     return result.user;
 };
 
-export const checkGroupExists = async (groupId: string): Promise<boolean> => {
+// 'unknown' = couldn't reach the server (offline, flaky network). Callers
+// must not treat that as "the group is gone".
+export const checkGroupExists = async (
+    groupId: string
+): Promise<'exists' | 'missing' | 'unknown'> => {
     try {
+        await getCurrentUser();
         const groupRef = doc(db, 'groups', groupId);
         const snap = await getDoc(groupRef);
-        return snap.exists();
+        return snap.exists() ? 'exists' : 'missing';
     } catch {
-        return false;
+        return 'unknown';
     }
 };
 
@@ -234,7 +242,7 @@ export const returnToMenu = async (
 };
 export const startSelectedGame = async (
     groupId: string,
-    game: 'imposter' | 'stop-the-timer' | 'pass-the-bomb'
+    game: GameType
 ): Promise<void> => {
     const groupRef = doc(db, 'groups', groupId);
     await updateDoc(groupRef, {

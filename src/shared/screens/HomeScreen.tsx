@@ -61,11 +61,13 @@ export default function HomeScreen({ navigation, route }: Props) {
 
     const session = await getSession();
     if (session) {
-      const stillExists = await checkGroupExists(session.groupId);
-      if (stillExists) {
-        setSavedSession(session);
-      } else {
+      // Only forget the session if the group is really gone. If the server
+      // can't be reached right now, keep it so the player can resume.
+      const status = await checkGroupExists(session.groupId);
+      if (status === "missing") {
         await clearSession();
+      } else {
+        setSavedSession(session);
       }
     }
     setCheckingSession(false);

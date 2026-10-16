@@ -1,13 +1,15 @@
 // src/games/timer/logic/game.ts
-import { doc, updateDoc, getDoc, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { doc, updateDoc, runTransaction, increment, serverTimestamp, Timestamp, Transaction } from 'firebase/firestore';
 import { db } from '../../../shared/firebase/config';
 import { Group, TimerGameState } from '../../../shared/types';
-import { addScore, returnToMenu } from '../../../shared/firebase/groups';
+import { returnToMenu } from '../../../shared/firebase/groups';
 import { generateQuestionForRound } from '../data/questions';
 
-const MAX_TIMER_MS = 34000; // sentinel for "never stopped"
+export const COUNTDOWN_SECONDS = 10;
+export const MAX_TIMER_SECONDS = 34;
+export const MAX_TIMER_MS = MAX_TIMER_SECONDS * 1000; // stops must land strictly before this
 
-const toMillis = (ts: Timestamp | number | null | undefined): number | null => {
+export const toMillis = (ts: Timestamp | number | null | undefined): number | null => {
     if (!ts) return null;
     if (typeof ts === 'number') return ts;
     return ts.toMillis();
@@ -22,11 +24,13 @@ export const startTimerGame = async (group: Group): Promise<void> => {
         answer: question.answer,
         difficulty: question.difficulty,
         phase: 'question',
+        countdownStartedAt: serverTimestamp() as unknown as Timestamp,
         timerStartedAt: null,
         stops: {},
         finalStops: {},
         roundNumber: 1,
-        distractionsEnabled: true
+        distractionsEnabled: true,
+        recentTemplates: [question.templateId],
     };
 
     await updateDoc(groupRef, {
@@ -35,148 +39,172 @@ export const startTimerGame = async (group: Group): Promise<void> => {
     });
 };
 
-export const startCountdown = async (groupId: string): Promise<void> => {
+const readTimerState = async (tx: Transaction, groupId: string) => {
     const groupRef = doc(db, 'groups', groupId);
-    await updateDoc(groupRef, {
-        status: 'countdown',
-        'gameState.phase': 'countdown',
-    });
-};
-
-export const startTimer = async (groupId: string): Promise<void> => {
-    const groupRef = doc(db, 'groups', groupId);
-    await updateDoc(groupRef, {
-        status: 'running',
-        'gameState.phase': 'running',
-        'gameState.timerStartedAt': serverTimestamp(),
-        'gameState.stops': {},
-        'gameState.finalStops': {},
-    });
-};
-
-// Still just marks the moment this player stopped, using the server's
-// clock. No elapsed-time math happens here — that only ever happens once,
-// centrally, in revealResults below.
-export const stopTimer = async (
-    groupId: string,
-    playerId: string
-): Promise<void> => {
-    const groupRef = doc(db, 'groups', groupId);
-    await updateDoc(groupRef, {
-        [`gameState.stops.${playerId}`]: serverTimestamp(),
-    });
-};
-
-// Host-authoritative reveal: does a fresh one-time fetch (not the live
-// listener, which can catch timestamps mid-resolution), converts every
-// player's stop into a plain elapsed-ms number relative to timerStartedAt,
-// and writes that as finalStops. Every device — including the host's own
-// UI — then only ever reads finalStops to render results, so nobody
-// computes ranking from potentially-still-resolving snapshot data again.
-export const revealResults = async (
-    groupId: string,
-    playerIds: string[]
-): Promise<void> => {
-    const groupRef = doc(db, 'groups', groupId);
-    const snap = await getDoc(groupRef);
-    if (!snap.exists()) return;
-
+    const snap = await tx.get(groupRef);
+    if (!snap.exists()) return null;
     const data = snap.data() as Group;
-    const gameState = data.gameState as TimerGameState;
-    const startMs = toMillis(gameState.timerStartedAt) ?? 0;
+    return { groupRef, data, gameState: data.gameState as TimerGameState };
+};
 
-    const finalStops: Record<string, number> = {};
-    for (const pid of playerIds) {
-        const stopMs = toMillis(gameState.stops?.[pid]);
-        finalStops[pid] = stopMs !== null ? stopMs - startMs : MAX_TIMER_MS;
+// Transaction: only the first caller while the round is still in 'question'
+// wins; duplicates from other devices see the phase has moved on.
+export const startTimer = async (groupId: string): Promise<void> => {
+    await runTransaction(db, async (tx) => {
+        const cur = await readTimerState(tx, groupId);
+        if (!cur || cur.gameState.phase !== 'question') return;
+        tx.update(cur.groupRef, {
+            status: 'running',
+            'gameState.phase': 'running',
+            'gameState.timerStartedAt': serverTimestamp(),
+            'gameState.stops': {},
+            'gameState.finalStops': {},
+        });
+    });
+};
+
+// Marks the moment this player stopped, using the server's clock. Ignored
+// once the round is no longer running or the player already stopped.
+export const stopTimer = async (groupId: string, playerId: string): Promise<void> => {
+    await runTransaction(db, async (tx) => {
+        const cur = await readTimerState(tx, groupId);
+        if (!cur || cur.gameState.phase !== 'running') return;
+        if (cur.gameState.stops?.[playerId] !== undefined) return;
+        tx.update(cur.groupRef, {
+            [`gameState.stops.${playerId}`]: serverTimestamp(),
+        });
+    });
+};
+
+// Host-authoritative reveal. Converts every stop into elapsed ms.
+// A player who never stopped, or stopped after the cutoff, gets `null` —
+// an explicit "didn't stop" instead of a magic number.
+export const revealResults = async (groupId: string, playerIds: string[]): Promise<void> => {
+    await runTransaction(db, async (tx) => {
+        const cur = await readTimerState(tx, groupId);
+        if (!cur || cur.gameState.phase !== 'running') return;
+
+        const startMs = toMillis(cur.gameState.timerStartedAt);
+        if (startMs === null) throw new Error('Timer start time not resolved yet');
+
+        const finalStops: Record<string, number | null> = {};
+        for (const pid of playerIds) {
+            const stopMs = toMillis(cur.gameState.stops?.[pid]);
+            if (stopMs === null) {
+                finalStops[pid] = null;
+                continue;
+            }
+            const elapsed = Math.max(stopMs - startMs, 0);
+            finalStops[pid] = elapsed < MAX_TIMER_MS ? elapsed : null;
+        }
+
+        tx.update(cur.groupRef, {
+            status: 'result',
+            'gameState.phase': 'result',
+            'gameState.finalStops': finalStops,
+        });
+    });
+};
+
+// Points for the current round as scores.* increments, or null when the
+// round was already awarded.
+const buildAwardUpdates = (data: Group, gameState: TimerGameState) => {
+    if (gameState.pointsAwardedRound === gameState.roundNumber) return null;
+    const ranking = calculateRanking(gameState.finalStops ?? {}, gameState.answer, data.players);
+    const updates: Record<string, unknown> = {
+        'gameState.pointsAwardedRound': gameState.roundNumber,
+    };
+    for (const r of ranking) {
+        if (r.points > 0) updates[`scores.${r.playerId}`] = increment(r.points);
     }
+    return updates;
+};
 
-    await updateDoc(groupRef, {
-        status: 'result',
-        'gameState.phase': 'result',
-        'gameState.finalStops': finalStops,
+// Awards points and starts the next round in ONE transaction.
+export const nextRound = async (groupId: string): Promise<void> => {
+    await runTransaction(db, async (tx) => {
+        const cur = await readTimerState(tx, groupId);
+        if (!cur || cur.gameState.phase !== 'result') return;
+        const { gameState, data } = cur;
+        const recent = gameState.recentTemplates ?? [];
+        const question = generateQuestionForRound(gameState.roundNumber + 1, recent);
+
+        tx.update(cur.groupRef, {
+            ...(buildAwardUpdates(data, gameState) ?? {}),
+            status: 'question',
+            'gameState.question': question.question,
+            'gameState.answer': question.answer,
+            'gameState.difficulty': question.difficulty,
+            'gameState.phase': 'question',
+            'gameState.countdownStartedAt': serverTimestamp(),
+            'gameState.timerStartedAt': null,
+            'gameState.stops': {},
+            'gameState.finalStops': {},
+            'gameState.roundNumber': gameState.roundNumber + 1,
+            // Last 12 question types, so the generator can avoid repeats.
+            'gameState.recentTemplates': [...recent, question.templateId].slice(-12),
+        });
     });
 };
 
-export const nextRound = async (group: Group): Promise<void> => {
-    const groupRef = doc(db, 'groups', group.id);
-    const gameState = group.gameState as TimerGameState;
-    const question = generateQuestionForRound(gameState.roundNumber + 1);
-
-    await updateDoc(groupRef, {
-        status: 'question',
-        'gameState.question': question.question,
-        'gameState.answer': question.answer,
-        'gameState.difficulty': question.difficulty,
-        'gameState.phase': 'question',
-        'gameState.timerStartedAt': null,
-        'gameState.stops': {},
-        'gameState.finalStops': {},
-        'gameState.roundNumber': gameState.roundNumber + 1,
-    });
+export type RankingEntry = {
+    playerId: string;
+    stoppedAt: number | null; // null = didn't stop in time
+    diff: number;             // ms from the answer; Infinity if didn't stop
+    rank: number;             // ties share a rank (1, 1, 3, …)
+    points: number;
+    didNotStop: boolean;
 };
 
-// Back to simple: ranks plain numbers. By the time anyone calls this,
-// finalStops has already been computed once, correctly, by the host in
-// revealResults — this function never touches Timestamps or clocks.
-// src/games/timer/logic/game.ts — replace calculateRanking with this
 export const calculateRanking = (
-    finalStops: Record<string, number>,
+    finalStops: Record<string, number | null>,
     answer: number,
     players: { id: string; name: string }[]
-): { playerId: string; stoppedAt: number; diff: number; rank: number; points: number; didNotStop: boolean }[] => {
+): RankingEntry[] => {
     const answerMs = answer * 1000;
     const totalPlayers = players.length;
 
-    const withStatus = players.map((player) => {
-        const stoppedAt = finalStops[player.id] ?? MAX_TIMER_MS;
-        const didNotStop = stoppedAt >= MAX_TIMER_MS;
-        const diff = didNotStop ? Infinity : Math.abs(stoppedAt - answerMs);
-        return { playerId: player.id, stoppedAt, diff, didNotStop, rank: 0, points: 0 };
+    const entries: RankingEntry[] = players.map((player) => {
+        const raw = finalStops[player.id];
+        // Treat missing entries and legacy 34000-sentinel values as "didn't stop".
+        const stoppedAt = typeof raw === 'number' && raw < MAX_TIMER_MS ? raw : null;
+        return {
+            playerId: player.id,
+            stoppedAt,
+            didNotStop: stoppedAt === null,
+            diff: stoppedAt === null ? Infinity : Math.abs(stoppedAt - answerMs),
+            rank: 0,
+            points: 0,
+        };
     });
 
-    const stoppedPlayers = withStatus.filter((p) => !p.didNotStop);
-    const notStoppedPlayers = withStatus.filter((p) => p.didNotStop);
+    const stopped = entries.filter((e) => !e.didNotStop).sort((a, b) => a.diff - b.diff);
+    const notStopped = entries.filter((e) => e.didNotStop);
 
-    // Only players who actually stopped are ranked and eligible for points.
-    stoppedPlayers.sort((a, b) => a.diff - b.diff);
-    stoppedPlayers.forEach((r, i) => {
-        r.rank = i + 1;
-        r.points = totalPlayers - 1 - i;
+    // Competition ranking: equal diffs share a rank and the same points.
+    stopped.forEach((e, i) => {
+        const prev = stopped[i - 1];
+        e.rank = prev && prev.diff === e.diff ? prev.rank : i + 1;
+        e.points = Math.max(0, totalPlayers - e.rank);
     });
 
-    // Players who never stopped always get 0 points, ranked after everyone
-    // who did. If nobody stopped at all, stoppedPlayers is empty and every
-    // player ends up here with 0 points — nobody wins.
-    notStoppedPlayers.forEach((r, i) => {
-        r.rank = stoppedPlayers.length + i + 1;
-        r.points = 0;
+    // Everyone who didn't stop shares last place with 0 points.
+    notStopped.forEach((e) => {
+        e.rank = stopped.length + 1;
+        e.points = 0;
     });
 
-    return [...stoppedPlayers, ...notStoppedPlayers];
+    return [...stopped, ...notStopped];
 };
 
-export const awardTimerPointsAndContinue = async (
-    group: Group,
-    onDone: () => void
-): Promise<void> => {
-    const gameState = group.gameState as TimerGameState;
-    const ranking = calculateRanking(
-        gameState.finalStops ?? {},
-        gameState.answer,
-        group.players
-    );
-
-    for (const r of ranking) {
-        if (r.points > 0) {
-            await addScore(group.id, r.playerId, r.points, group.scores);
-        }
-    }
-
-    onDone();
-};
-
+// Awards the final round's points exactly once, then returns to the menu.
 export const endTimerGame = async (group: Group): Promise<void> => {
+    await runTransaction(db, async (tx) => {
+        const cur = await readTimerState(tx, group.id);
+        if (!cur || cur.gameState.phase !== 'result') return;
+        const updates = buildAwardUpdates(cur.data, cur.gameState);
+        if (updates) tx.update(cur.groupRef, updates);
+    });
     await returnToMenu(group.id, {
         currentPlayers: group.players,
         benchedPlayers: group.benchedPlayers ?? [],

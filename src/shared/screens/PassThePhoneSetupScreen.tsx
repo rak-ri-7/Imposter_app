@@ -18,10 +18,9 @@ import {
 } from "../utils/localSession";
 
 type Props = {
-  navigation: NativeStackNavigationProp<
-    RootStackParamList,
-    "PassThePhoneSetup"
-  >;
+  // Older version of QuickPlaySetupScreen (not registered in App.tsx);
+  // kept compiling against the current Quick Play routes.
+  navigation: NativeStackNavigationProp<RootStackParamList, "QuickPlaySetup">;
 };
 
 export default function PassThePhoneSetupScreen({ navigation }: Props) {
@@ -76,11 +75,11 @@ export default function PassThePhoneSetupScreen({ navigation }: Props) {
       players: validNames.map((name) => ({ name, score: 0 })),
     });
 
-    navigation.replace("PassThePhoneMenu");
+    navigation.replace("QuickPlay");
   };
 
   const handleResumeSession = () => {
-    navigation.replace("PassThePhoneMenu");
+    navigation.replace("QuickPlay");
   };
 
   const handleEndSession = async () => {

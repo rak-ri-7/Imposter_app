@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   View,
   Text,
@@ -15,11 +15,42 @@ type Props = {
   playerId: string;
 };
 
+const ordinal = (n: number) => {
+  const suffixes = ["th", "st", "nd", "rd"];
+  const v = n % 100;
+  return n + (suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0]);
+};
+
+const formatSeconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
+
+const getDiffText = (ms: number, answerMs: number) => {
+  const diff = ms - answerMs;
+  const absDiff = Math.abs(diff);
+  if (absDiff < 100) return "exact! 🎯";
+  if (absDiff < 500)
+    return `incredibly close! (${diff > 0 ? "+" : "-"}${formatSeconds(absDiff)})`;
+  if (diff > 0) return `${formatSeconds(diff)} too late`;
+  return `${formatSeconds(absDiff)} too early`;
+};
+
+const getRankLabel = (rank: number, didNotStop: boolean) => {
+  if (didNotStop) return "—";
+  if (rank === 1) return "🥇";
+  if (rank === 2) return "🥈";
+  if (rank === 3) return "🥉";
+  return ordinal(rank);
+};
+
+const joinNames = (names: string[]) =>
+  names.length <= 1
+    ? (names[0] ?? "")
+    : `${names.slice(0, -1).join(", ")} & ${names[names.length - 1]}`;
+
 export default function TimerResultScreen({ group, playerId }: Props) {
   const { isHost, getRanking, handleNextRound, handleEndGame, loading } =
     useTimerGame(group, playerId);
-  const [fadeAnim] = useState(new Animated.Value(0));
-  const [slideAnim] = useState(new Animated.Value(30));
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const slideAnim = useRef(new Animated.Value(30)).current;
   const gameState = group.gameState as TimerGameState;
   const ranking = getRanking();
 
@@ -38,36 +69,13 @@ export default function TimerResultScreen({ group, playerId }: Props) {
     ]).start();
   }, []);
 
-  const getPlayerName = (pid: string) => {
-    return group.players.find((p) => p.id === pid)?.name ?? "Unknown";
-  };
-
-  const formatStopped = (ms: number) => {
-    if (ms >= 34000) return "ran out of time";
-    return `${(ms / 1000).toFixed(1)}s`;
-  };
-
-  const getDiffText = (ms: number, answerMs: number) => {
-    if (ms >= 34000) return "didn't stop in time";
-    const diff = ms - answerMs;
-    const absDiff = Math.abs(diff);
-    if (absDiff < 100) return "exact! 🎯";
-    if (absDiff < 500)
-      return `incredibly close! (${diff > 0 ? "+" : ""}${(diff / 1000).toFixed(1)}s)`;
-    if (diff > 0) return `${(diff / 1000).toFixed(1)}s too late`;
-    return `${(absDiff / 1000).toFixed(1)}s too early`;
-  };
-
-  const getRankEmoji = (rank: number) => {
-    if (rank === 1) return "🥇";
-    if (rank === 2) return "🥈";
-    if (rank === 3) return "🥉";
-    return `${rank}th`;
-  };
+  const getPlayerName = (pid: string) =>
+    group.players.find((p) => p.id === pid)?.name ?? "Unknown";
 
   const answerMs = gameState.answer * 1000;
-  const winner = ranking[0];
-  const winnerName = getPlayerName(winner?.playerId ?? "");
+  // Everyone sharing first place among players who actually stopped.
+  const winners = ranking.filter((r) => r.rank === 1 && !r.didNotStop);
+  const nobodyStopped = ranking.length > 0 && winners.length === 0;
 
   return (
     <View style={styles.container}>
@@ -93,17 +101,31 @@ export default function TimerResultScreen({ group, playerId }: Props) {
         </View>
 
         {/* Winner callout */}
-        {winner && !winner.didNotStop && (
+        {winners.length === 1 && winners[0].stoppedAt !== null && (
           <View style={styles.winnerBox}>
             <Text style={styles.winnerEmoji}>🏆</Text>
             <Text style={styles.winnerText}>
-              <Text style={styles.winnerName}>{winnerName}</Text>
-              {` stopped at ${formatStopped(winner.stoppedAt)} — closest!`}
+              <Text style={styles.winnerName}>
+                {getPlayerName(winners[0].playerId)}
+              </Text>
+              {` stopped at ${formatSeconds(winners[0].stoppedAt)} — closest!`}
             </Text>
           </View>
         )}
 
-        {winner && winner.didNotStop && (
+        {winners.length > 1 && (
+          <View style={styles.winnerBox}>
+            <Text style={styles.winnerEmoji}>🤝</Text>
+            <Text style={styles.winnerText}>
+              <Text style={styles.winnerName}>
+                {joinNames(winners.map((w) => getPlayerName(w.playerId)))}
+              </Text>
+              {` tied for closest — each ${formatSeconds(winners[0].diff)} off!`}
+            </Text>
+          </View>
+        )}
+
+        {nobodyStopped && (
           <View style={styles.winnerBox}>
             <Text style={styles.winnerEmoji}>⏰</Text>
             <Text style={styles.winnerText}>
@@ -118,26 +140,26 @@ export default function TimerResultScreen({ group, playerId }: Props) {
           style={styles.rankingList}
           showsVerticalScrollIndicator={false}
         >
-          {ranking.map((r, index) => {
+          {ranking.map((r) => {
             const isMe = r.playerId === playerId;
-            const name = getPlayerName(r.playerId);
-            const diffText = getDiffText(r.stoppedAt, answerMs);
-            const didntStop = r.stoppedAt >= 34000;
+            const isWinner = r.rank === 1 && !r.didNotStop;
 
             return (
-              <Animated.View
+              <View
                 key={r.playerId}
                 style={[
                   styles.rankRow,
                   isMe && styles.rankRowMe,
-                  r.rank === 1 && styles.rankRowWinner,
+                  isWinner && styles.rankRowWinner,
                 ]}
               >
-                <Text style={styles.rankEmoji}>{getRankEmoji(r.rank)}</Text>
+                <Text style={styles.rankEmoji}>
+                  {getRankLabel(r.rank, r.didNotStop)}
+                </Text>
                 <View style={styles.rankInfo}>
                   <View style={styles.rankNameRow}>
                     <Text style={styles.rankName}>
-                      {name}
+                      {getPlayerName(r.playerId)}
                       {isMe ? " (you)" : ""}
                     </Text>
                     {r.points > 0 && (
@@ -146,47 +168,43 @@ export default function TimerResultScreen({ group, playerId }: Props) {
                       </View>
                     )}
                   </View>
-                  {didntStop ? (
+                  {r.stoppedAt === null ? (
                     <Text style={styles.rankTimeMissed}>
                       Ran out of time ⏰
                     </Text>
                   ) : (
-                    <>
-                      <Text style={styles.rankTime}>
-                        Stopped at{" "}
-                        <Text style={styles.rankTimeValue}>
-                          {formatStopped(r.stoppedAt)}
-                        </Text>{" "}
-                        — {diffText}
-                      </Text>
-                    </>
+                    <Text style={styles.rankTime}>
+                      Stopped at{" "}
+                      <Text style={styles.rankTimeValue}>
+                        {formatSeconds(r.stoppedAt)}
+                      </Text>{" "}
+                      — {getDiffText(r.stoppedAt, answerMs)}
+                    </Text>
                   )}
                 </View>
-              </Animated.View>
+              </View>
             );
           })}
         </ScrollView>
 
-        {isHost && (
+        {isHost ? (
           <View style={styles.hostBtns}>
             <TouchableOpacity
-              style={styles.nextBtn}
+              style={[styles.nextBtn, loading && styles.btnDisabled]}
               onPress={handleNextRound}
               disabled={loading}
             >
               <Text style={styles.nextBtnText}>Next Round →</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={styles.endBtn}
+              style={[styles.endBtn, loading && styles.btnDisabled]}
               onPress={handleEndGame}
               disabled={loading}
             >
               <Text style={styles.endBtnText}>End Game</Text>
             </TouchableOpacity>
           </View>
-        )}
-
-        {!isHost && (
+        ) : (
           <View style={styles.waitingBox}>
             <Text style={styles.waitingText}>
               Waiting for host to continue...
@@ -228,9 +246,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 12,
   },
-  answerReveal: {
-    alignItems: "center",
-  },
+  answerReveal: { alignItems: "center" },
   answerLabel: {
     color: "#888",
     fontSize: 11,
@@ -243,11 +259,7 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     lineHeight: 48,
   },
-  answerSub: {
-    color: "#888",
-    fontSize: 12,
-    marginTop: 4,
-  },
+  answerSub: { color: "#888", fontSize: 12, marginTop: 4 },
   winnerBox: {
     flexDirection: "row",
     alignItems: "center",
@@ -259,30 +271,16 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#FFD700",
   },
-  winnerEmoji: {
-    fontSize: 24,
-  },
-  winnerText: {
-    color: "#888",
-    fontSize: 13,
-    flex: 1,
-    lineHeight: 20,
-  },
-  winnerName: {
-    color: "#FFD700",
-    fontWeight: "bold",
-    fontSize: 15,
-  },
+  winnerEmoji: { fontSize: 24 },
+  winnerText: { color: "#888", fontSize: 13, flex: 1, lineHeight: 20 },
+  winnerName: { color: "#FFD700", fontWeight: "bold", fontSize: 15 },
   sectionLabel: {
     color: "#888",
     fontSize: 11,
     letterSpacing: 2,
     marginBottom: 10,
   },
-  rankingList: {
-    flex: 1,
-    marginBottom: 16,
-  },
+  rankingList: { flex: 1, marginBottom: 16 },
   rankRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -294,33 +292,17 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "transparent",
   },
-  rankRowMe: {
-    borderColor: "#4FC3F7",
-  },
-  rankRowWinner: {
-    borderColor: "#FFD700",
-    backgroundColor: "#1E2D1A",
-  },
-  rankEmoji: {
-    fontSize: 22,
-    width: 36,
-    textAlign: "center",
-  },
-  rankInfo: {
-    flex: 1,
-  },
+  rankRowMe: { borderColor: "#4FC3F7" },
+  rankRowWinner: { borderColor: "#FFD700", backgroundColor: "#1E2D1A" },
+  rankEmoji: { fontSize: 22, width: 44, textAlign: "center", color: "#888" },
+  rankInfo: { flex: 1 },
   rankNameRow: {
     flexDirection: "row",
     alignItems: "center",
     gap: 8,
     marginBottom: 4,
   },
-  rankName: {
-    color: "#fff",
-    fontSize: 15,
-    fontWeight: "600",
-    flex: 1,
-  },
+  rankName: { color: "#fff", fontSize: 15, fontWeight: "600", flex: 1 },
   pointsBadge: {
     backgroundColor: "#0D3349",
     borderRadius: 8,
@@ -329,38 +311,18 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#4FC3F7",
   },
-  pointsText: {
-    color: "#4FC3F7",
-    fontSize: 12,
-    fontWeight: "600",
-  },
-  rankTime: {
-    color: "#888",
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  rankTimeValue: {
-    color: "#fff",
-    fontWeight: "600",
-  },
-  rankTimeMissed: {
-    color: "#E63946",
-    fontSize: 12,
-  },
-  hostBtns: {
-    gap: 10,
-  },
+  pointsText: { color: "#4FC3F7", fontSize: 12, fontWeight: "600" },
+  rankTime: { color: "#888", fontSize: 12, lineHeight: 18 },
+  rankTimeValue: { color: "#fff", fontWeight: "600" },
+  rankTimeMissed: { color: "#E63946", fontSize: 12 },
+  hostBtns: { gap: 10 },
   nextBtn: {
     backgroundColor: "#4FC3F7",
     borderRadius: 14,
     padding: 18,
     alignItems: "center",
   },
-  nextBtnText: {
-    color: "#0D1B2A",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
+  nextBtnText: { color: "#0D1B2A", fontSize: 16, fontWeight: "bold" },
   endBtn: {
     backgroundColor: "transparent",
     borderRadius: 14,
@@ -369,18 +331,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#E63946",
   },
-  endBtnText: {
-    color: "#E63946",
-    fontSize: 15,
-    fontWeight: "600",
-  },
-  waitingBox: {
-    padding: 18,
-    alignItems: "center",
-  },
-  waitingText: {
-    color: "#888",
-    fontSize: 14,
-    textAlign: "center",
-  },
+  endBtnText: { color: "#E63946", fontSize: 15, fontWeight: "600" },
+  btnDisabled: { opacity: 0.5 },
+  waitingBox: { padding: 18, alignItems: "center" },
+  waitingText: { color: "#888", fontSize: 14, textAlign: "center" },
 });

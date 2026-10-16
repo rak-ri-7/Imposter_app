@@ -36,6 +36,8 @@ export default function GroupLobbyScreen({ navigation, route }: Props) {
       navigation.replace("TimerFlow", { groupId, playerId });
     } else if (group?.currentGame === "pass-the-bomb") {
       navigation.replace("BombFlow", { groupId, playerId });
+    } else if (group?.currentGame === "quiz-board") {
+      navigation.replace("QuizBoardFlow", { groupId, playerId });
     }
   }, [group?.currentGame, groupId, playerId, navigation]);
 

@@ -13,7 +13,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RouteProp } from "@react-navigation/native";
 import { RootStackParamList } from "../../../App";
 import { useGroup } from "../hooks/useGroup";
-import { Team } from "../types";
+import { GameType, Team } from "../types";
 import {
   startSelectedGame,
   dissolveTeams,
@@ -36,9 +36,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
   const { group, loading } = useGroup(groupId);
   const [showModeModal, setShowModeModal] = useState(false);
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
-  const [pendingGameId, setPendingGameId] = useState<
-    "imposter" | "stop-the-timer" | "pass-the-bomb" | null
-  >(null);
+  const [pendingGameId, setPendingGameId] = useState<GameType | null>(null);
   const [activeTab, setActiveTab] = useState<"leaderboard" | "players">(
     "leaderboard",
   );
@@ -52,6 +50,8 @@ export default function GameMenuScreen({ navigation, route }: Props) {
       navigation.replace("TimerFlow", { groupId, playerId });
     } else if (group?.currentGame === "pass-the-bomb") {
       navigation.replace("BombFlow", { groupId, playerId });
+    } else if (group?.currentGame === "quiz-board") {
+      navigation.replace("QuizBoardFlow", { groupId, playerId });
     }
   }, [group?.currentGame]);
 
@@ -67,12 +67,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
   }, [navigation, groupId, playerId]);
 
   const onSelectGame = async (
-    gameId:
-      | "imposter"
-      | "stop-the-timer"
-      | "pass-the-bomb"
-      | "most-likely-to"
-      | "two-truths-lie",
+    gameId: GameType | "most-likely-to" | "two-truths-lie",
     available: boolean,
   ) => {
     if (!available) return;
@@ -84,7 +79,11 @@ export default function GameMenuScreen({ navigation, route }: Props) {
     if (gameId === "imposter") {
       // show mode modal for imposter since it supports pass the phone
       setShowModeModal(true);
-    } else if (gameId === "stop-the-timer" || gameId === "pass-the-bomb") {
+    } else if (
+      gameId === "stop-the-timer" ||
+      gameId === "pass-the-bomb" ||
+      gameId === "quiz-board"
+    ) {
       // online only — let host pick who's actually playing, then go straight in
       setPendingGameId(gameId);
       setShowPlayerSelect(true);

@@ -9,7 +9,6 @@ import { TimerGameState } from "../../shared/types";
 import { syncServerTimeOffset } from "../../shared/firebase/time";
 import TimerLobbyScreen from "./screens/TimerLobbyScreen";
 import TimerQuestionScreen from "./screens/TimerQuestionScreen";
-import TimerCountdownScreen from "./screens/TimerCountdownScreen";
 import TimerRunningScreen from "./screens/TimerRunningScreen";
 import TimerResultScreen from "./screens/TimerResultScreen";
 
@@ -49,7 +48,7 @@ export default function TimerFlowScreen({ navigation, route }: Props) {
     return <TimerLobbyScreen group={group} playerId={playerId} />;
   }
 
-  if (phase === "question" || phase === "countdown") {
+  if (phase === "question") {
     return <TimerQuestionScreen group={group} playerId={playerId} />;
   }
 

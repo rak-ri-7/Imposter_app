@@ -46,6 +46,10 @@ export default function TimerQuestionScreen({ group, playerId }: Props) {
     hard: "#E63946",
   }[gameState.difficulty];
 
+  const q = gameState.question;
+  const qSize =
+    q.length <= 20 ? 48 : q.length <= 45 ? 34 : q.length <= 80 ? 26 : 22;
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -60,7 +64,17 @@ export default function TimerQuestionScreen({ group, playerId }: Props) {
       <DistractionWrapper distraction={current}>
         <View style={styles.questionBox}>
           <Text style={styles.questionLabel}>CALCULATE</Text>
-          <Text style={styles.question}>{gameState.question}</Text>
+          <Text
+            style={[
+              styles.question,
+              { fontSize: qSize, lineHeight: Math.round(qSize * 1.25) },
+            ]}
+            adjustsFontSizeToFit
+            minimumFontScale={0.6}
+            numberOfLines={6}
+          >
+            {q}
+          </Text>
         </View>
       </DistractionWrapper>
 
