@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Group, TimerGameState } from '../../../shared/types';
 import {
     COUNTDOWN_SECONDS,
+    countdownSecondsFor,
     MAX_TIMER_MS,
     toMillis,
     startTimer,
@@ -46,6 +47,7 @@ export const useTimerGame = (group: Group | null, playerId: string) => {
             ? (group.gameState as TimerGameState)
             : undefined;
     const phase = gameState?.phase;
+    const countdownSeconds = countdownSecondsFor(gameState?.difficulty);
     const roundNumber = gameState?.roundNumber;
     // Unique per round — safer than roundNumber, which restarts at 1 each game.
     const countdownStartMs = toMillis(gameState?.countdownStartedAt);
@@ -82,7 +84,7 @@ export const useTimerGame = (group: Group | null, playerId: string) => {
 
         const tick = () => {
             const elapsedSeconds = (Date.now() - startedAt) / 1000;
-            const remaining = Math.max(0, Math.ceil(COUNTDOWN_SECONDS - elapsedSeconds));
+            const remaining = Math.max(0, Math.ceil(countdownSeconds - elapsedSeconds));
             setCountdown((prev) => (prev === remaining ? prev : remaining));
             if (remaining <= 0) {
                 clearInterval(interval);
@@ -93,7 +95,7 @@ export const useTimerGame = (group: Group | null, playerId: string) => {
         tick();
 
         return () => clearInterval(interval);
-    }, [phase, countdownStartMs]);
+    }, [phase, countdownStartMs, countdownSeconds]);
 
     // Host starts the timer once THIS round's countdown is done. Keyed by the
     // round's start time, so a leftover 0 from the previous round can't fire it.

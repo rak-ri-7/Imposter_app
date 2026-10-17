@@ -12,7 +12,10 @@ import { RouteProp } from "@react-navigation/native";
 import { RootStackParamList } from "../../../App";
 import { useGroup } from "../../shared/hooks/useGroup";
 import { useImposterGame } from "./logic/useImposterGame";
-import { ImposterSettings } from "../../shared/types";
+import { ImposterGameState, ImposterSettings } from "../../shared/types";
+import { usePresence } from "../../shared/hooks/usePresence";
+import AwayOverlay from "../../shared/components/AwayOverlay";
+import { continueWithoutAwayImposter } from "./logic/game";
 import ImposterSettingsPanel from "./screens/ImposterSettingsPanel";
 import WordRevealScreen from "./screens/WordRevealScreen";
 import DescribeScreen from "./screens/DescribeScreen";
@@ -31,6 +34,27 @@ export default function ImposterFlowScreen({ navigation, route }: Props) {
     imposterCount: 1,
     hintsEnabled: true,
   });
+
+  // ── When a player drops out ───────────────────────────────────────
+  // Everything in Imposter moves on by the host's taps, so on the reveal,
+  // describe and vote screens everyone simply waits for them. The host can
+  // continue without them (then "Next player" skips their turn).
+  const imposterGs = group?.gameState as ImposterGameState | undefined;
+  const waiting =
+    group?.currentGame === "imposter" &&
+    (group.status === "reveal" ||
+      group.status === "describe" ||
+      group.status === "vote");
+  const presence = usePresence(
+    group?.id ?? groupId,
+    playerId,
+    waiting && group
+      ? group.players
+          .map((p) => p.id)
+          .filter((id) => !imposterGs?.eliminatedPlayers?.includes(id))
+      : [],
+    imposterGs?.awayIgnored,
+  );
 
   useEffect(() => {
     if (group?.currentGame === "menu") {
@@ -59,16 +83,41 @@ export default function ImposterFlowScreen({ navigation, route }: Props) {
     );
   }
 
-  if (group.status === "reveal") {
-    return <WordRevealScreen group={group} playerId={playerId} />;
-  }
+  const screen =
+    group.status === "reveal" ? (
+      <WordRevealScreen group={group} playerId={playerId} />
+    ) : group.status === "describe" ? (
+      <DescribeScreen group={group} playerId={playerId} />
+    ) : group.status === "vote" ? (
+      <VoteScreen group={group} playerId={playerId} />
+    ) : null;
 
-  if (group.status === "describe") {
-    return <DescribeScreen group={group} playerId={playerId} />;
-  }
-
-  if (group.status === "vote") {
-    return <VoteScreen group={group} playerId={playerId} />;
+  if (screen) {
+    return (
+      <View style={styles.flex}>
+        {screen}
+        {waiting && (
+          <AwayOverlay
+            awayIds={presence.awayIds}
+            lastSeen={presence.lastSeen}
+            meOffline={presence.meOffline}
+            isHost={group.hostId === playerId}
+            nameOf={(id) =>
+              group.players.find((p) => p.id === id)?.name ?? "a player"
+            }
+            onContinueWithout={(ids) =>
+              continueWithoutAwayImposter(
+                group.id,
+                playerId,
+                Object.fromEntries(
+                  ids.map((id) => [id, presence.lastSeen[id] ?? 0]),
+                ),
+              ).catch(console.error)
+            }
+          />
+        )}
+      </View>
+    );
   }
 
   if (group.status === "result") {
@@ -170,6 +219,7 @@ function ImposterLobby({
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
   container: {
     flex: 1,
     backgroundColor: "#1A1A2E",

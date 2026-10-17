@@ -50,6 +50,13 @@ export type Group = {
     // Quiz Board: question ids this group has already played, newest last,
     // so later boards prefer fresh questions. Survives between games.
     quizSeenIds?: string[];
+    // Quiz Board: code version each phone last opened it with (see
+    // QB_CLIENT_VERSION), so the lobby can flag phones that need a reload.
+    quizClientVersions?: Record<string, number>;
+    // Pass the Bomb: quirk combos this group has ever discovered.
+    bombCollection?: Record<string, { foundAt: number; foundBy: string }>;
+    // Pass the Bomb: achievements this group has ever unlocked.
+    achievementCollection?: Record<string, { foundAt: number; foundBy: string }>;
     bombLobby?: { mode: 'timer' | 'pass' | null; passBudget: number; passAsTeams: boolean; hiddenPasses?: boolean; } | null;
 };
 
@@ -66,6 +73,9 @@ export type ImposterGameState = {
     eliminatedPlayers: string[];
     hintUsed: boolean;
     currentHint?: string;
+    // Players the host chose to continue without while they were offline:
+    // playerId -> their last check-in at that moment (see usePresence).
+    awayIgnored?: Record<string, number>;
 };
 
 export type TimerGameState = {
@@ -79,6 +89,11 @@ export type TimerGameState = {
     countdownStartedAt?: Timestamp | number | null
     // Last round whose points were already added to scores (idempotency guard).
     pointsAwardedRound?: number;
+    // A round the host voided because a player dropped out: no points.
+    voidedRound?: { round: number; awayIds: string[] };
+    // Players the host chose to continue without while they were offline:
+    // playerId -> their last check-in at that moment (see usePresence).
+    awayIgnored?: Record<string, number>;
     // Values are server Timestamps while the round runs.
     stops: Record<string, Timestamp | number>;
     roundNumber: number;
@@ -119,7 +134,7 @@ export const emptyTimerState: TimerGameState = {
 
 //Bomb game
 
-export type BetMarket = 'boom-or-defuse' | 'round-victim' | 'first-ghost' | 'game-winner' | 'next-ghost';
+export type BetMarket = 'boom-or-defuse' | 'round-victim' | 'first-ghost' | 'game-winner' | 'next-ghost' | 'duel-loser';
 
 export type MatchBet = {
     id: string;
@@ -197,7 +212,75 @@ export type PointEvent = {
     timestamp: number;
 };
 
+// ── Bomb quirks (see games/pass-the-bomb/logic/timer/bombQuirks.ts) ──
+export type BombCrush = {
+    playerId: string;
+    variant: string;
+    tapsNeeded?: number;   // crush: taps to let go this hold (secret)
+    taps?: number;         // crush / toxic: taps so far this hold
+    receivedAt?: number;   // toxic: when its crush last caught it
+    lastTapAt?: number;    // toxic: last impatient tap
+    lockUntil?: number;    // cuddler: no passing until then
+    returnArmed?: boolean; // obsessed: next pass goes back to the crush
+    returnsLeft?: number;  // obsessed
+    reboundUsed?: boolean; // rebound
+};
+export type BombQuirkState = {
+    crushes?: Record<string, BombCrush>; // playerId -> its crush on them (several allowed)
+    lazy?: { variant: string };
+    strangersHit?: string[];   // stranger: each player only once a round
+};
+export type PendingPass = {
+    from: string;
+    to: string;
+    arrivesAt: number;
+    kind: 'lazy' | 'sneak';
+    usedFallback?: boolean;
+    speedBoost?: number;       // seething: fuse speed multiplier while it drags
+};
+export type QuirkDetail = {
+    fledTo?: string;
+    bite?: number;
+    panic?: boolean;
+    receipts?: number;
+    heldSec?: number;
+};
+export type QuirkReveal = {
+    id: string;
+    variant: string;
+    kind: 'crush' | 'stranger' | 'lazy';
+    playerId: string;          // who it happened to
+    endsAt: number;
+    isNew: boolean;            // first time this group ever found it
+    found: number;             // collection size after this
+    detail?: QuirkDetail;
+};
+export type AchievementRecord = {
+    earned: Record<string, number>;   // achievement id -> round it was earned
+    p: {                              // progress counters
+        hh?: number; hhRound?: number;  // hot hands this round
+        lastDefuse?: number; defuses?: number;
+        booms?: number;
+        safe?: number;                  // rounds in a row without losing a life
+    };
+};
+export type AchievementUnlock = {
+    id: string;
+    playerId: string;
+    achievement: string;
+    round: number;
+    gotLife?: boolean;                // life achievements: false = converted to FP
+};
+export type RoundQuirk = { variant: string; playerId: string; detail?: QuirkDetail };
+
 export type BombGameState = {
+    // Players the host chose to continue without while they were offline:
+    // playerId -> their last check-in at that moment (see usePresence).
+    awayIgnored?: Record<string, number>;
+    // True while the current round is the 2-player final duel.
+    duelRound?: boolean;
+    // A duel life given back after a connection drop (honour system).
+    lifeRestored?: { playerId: string; byPlayerId: string; round: number };
     phase:
     | 'lobby'
     | 'reveal'
@@ -295,6 +378,19 @@ export type BombGameState = {
     scoresAwarded?: boolean;
     pauseResumeAt?: number;
     roundAdvanceClaimed?: number
+    roundAdvanceClaimedAt?: number;   // when; an old claim is stale (the advance failed)
+    roundEndMissionsRound?: number;   // round whose end-of-round missions were already applied
+    duelStartClaimed?: number;        // round whose quiz duel the host is already starting
+    duelRoundIndex?: number;          // 1 = first round of the final duel, 2 = second…
+    bombQuirks?: BombQuirkState;      // quirks the bomb picked up this round
+    pendingPass?: PendingPass;        // a lazy / sneaky pass still on its way
+    quirkReveal?: QuirkReveal;        // the mid-game card (fuse paused till endsAt)
+    roundQuirks?: RoundQuirk[];       // everything it turned into this round (replay)
+    toxicBoom?: boolean;              // toxic bomb blew on an impatient tap
+    achievements?: Record<string, AchievementRecord>; // per player, this game
+    achFeed?: AchievementUnlock[];    // latest unlocks (toasts on every phone)
+    // Game end: every player's leftover FP turned into leaderboard points.
+    fpCashOut?: Record<string, { fp: number; points: number }>;
     ghostRevealEndsAt?: number;
     revealerItems?: Record<string, number[]>;   // per player: accuracy of each owned revealer, best first
     revealerPurchases?: Record<string, number>; // per player: how many bought (drives the decay)
@@ -530,6 +626,10 @@ export type PassReceipt = {
 export type PassGameState = {
     mode: 'pass';
     teamMode: boolean;
+    // Players the host chose to continue without while they were offline:
+    // playerId -> their last check-in at that moment. Expires on its own
+    // once they check in again, so a later drop-out pauses the game again.
+    awayIgnored?: Record<string, number>;
     phase: 'pass-playing' | 'pass-exploded' | 'pass-result';
     budget: number;                                 // starting passes per side
     sides: PassSide[];
@@ -579,9 +679,13 @@ export type PassTicket = { kind: PassTicketKind; progress: number; round: number
 // 'options': everyone taps one of 4 options, scored automatically.
 // 'buzzer':  players buzz in and answer out loud; the host judges.
 export type QuizBoardMode = 'options' | 'buzzer';
+// 'quick' = 4 categories × 5 rows (₹1,000–₹5,000);
+// 'full'  = 5 categories × 6 rows (₹1,000–₹6,000).
+export type QuizBoardSize = 'quick' | 'full';
 
 export type QuizBoardPhase =
     | 'board'     // picker chooses a tile
+    | 'golden-wager' // a golden tile was picked: the picker places a bet
     | 'question'  // timer running: buzz in / tap an option
     | 'locking'   // short silent pause before the answer is revealed
     | 'judging'   // buzzer mode: answer shown, host picks who was right
@@ -590,10 +694,11 @@ export type QuizBoardPhase =
 
 export type QuizBoardTile = {
     category: QuizCategory;
-    level: number;          // 1-6
+    level: number;          // row on this board, 1 = cheapest
     value: number;          // rupees
     questionId: string;
     used: boolean;
+    golden?: boolean;       // hidden until picked: the picker bets on it
 };
 
 // The question on screen right now. Its answer is in the document but no
@@ -604,6 +709,11 @@ export type QuizBoardCurrent = {
     prompt: string;
     options: { text: string; correct: boolean }[];
     answer: string;
+    value?: number;         // what this question is worth (doubled / the bet)
+    double?: boolean;       // picked during Double Money
+    golden?: { playerId: string; wager?: number }; // only this player answers
+    goldenPassedBy?: string; // picker passed the golden tile: it plays as normal
+    alsoAccepted?: string[]; // other right answers (shown in buzzer mode)
 };
 
 export type QuizBoardRound = {
@@ -618,6 +728,8 @@ export type QuizBoardRound = {
     picks?: Record<string, number>;   // options mode: player -> option index
     forceEnded?: boolean;
     pickerBefore?: string;            // who picked this tile
+    golden?: boolean;                 // value = the picker's bet
+    double?: boolean;                 // played during Double Money
     reviewBy?: string[];              // players who tapped Review
     reviewSeen?: boolean;             // host dismissed / handled the review
     changed?: boolean;                // host corrected the call
@@ -627,6 +739,7 @@ export type QuizBoardRound = {
 export type QuizBoardGameState = {
     game: 'quiz-board';
     mode: QuizBoardMode;
+    boardSize?: QuizBoardSize;        // missing = 'full' (games started before sizes)
     phase: QuizBoardPhase;
     categories: QuizCategory[];
     tiles: QuizBoardTile[];           // row-major: level 1 row first
@@ -635,8 +748,20 @@ export type QuizBoardGameState = {
     windowMs: number;                 // question timer length
     endsAt?: number | null;           // server-clock ms when the timer runs out
     isPaused?: boolean;
+    // 'host' = paused by the host's button; 'away' = paused automatically
+    // because a player dropped out (and resumed automatically when back).
+    pauseReason?: 'host' | 'away' | null;
     pausedRemainingMs?: number | null;
+    // Players the host chose to continue without while they were offline:
+    // playerId -> their last check-in at that moment (see usePresence).
+    awayIgnored?: Record<string, number>;
     lockEndsAt?: number | null;
+    // Firestore's own time at the last timer write, and what the writing
+    // phone believed the time was. The gap is that phone's clock error,
+    // which every phone takes off endsAt / lockEndsAt (see deadlineOf).
+    clockAt?: Timestamp | null;
+    clockWriterNow?: number | null;
+    clockFor?: number | null;         // the endsAt / lockEndsAt that stamp belongs to
     forceEnded?: boolean;
     buzzes: Record<string, Timestamp | number | null>;  // player -> server time
     picks: Record<string, { option: number; at: Timestamp | number | null }>;

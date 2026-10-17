@@ -30,6 +30,13 @@ export const WINNER_FLATTEN = 0.3;      // share of an "even field" blended into
 export const WINNER_BET_SCORE_CAP = 12; // most leaderboard points one winner bet can pay (its own cap)
 
 // Bets that stay open across rounds instead of covering just the next one.
+// LIVE DUEL BET: spectators bet on who loses a life in the next duel round.
+// It's 50/50, so it pays 2x. No ticket needed, stake up to the whole bag,
+// and no leaderboard bonus on wins: the FP itself is cashed into points at
+// the end of the game (FP_PER_POINT), so a bonus would count the win twice.
+export const DUEL_BET_MULTIPLIER = 2;
+export const FP_PER_POINT = 5;
+
 export const isGameLongMarket = (market: BetMarket): boolean =>
     market === 'first-ghost' || market === 'next-ghost' || market === 'game-winner';
 

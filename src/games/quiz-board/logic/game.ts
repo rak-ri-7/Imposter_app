@@ -15,12 +15,16 @@ import type {
     Group,
     QuizBoardGameState,
     QuizBoardMode,
+    QuizBoardSize,
     QuizBoardRound,
 } from '../../../shared/types';
 import type { QuizCategory } from '../../../shared/quiz';
 import {
     appendSeen,
     buildBoard,
+    clampWager,
+    doubleMoneyActive,
+    goldenMaxWager,
     instanceForTile,
     replacementQuestionId,
     DEFAULT_WINDOW_MS,
@@ -44,6 +48,37 @@ export const buzzOrder = (buzzes: QuizBoardGameState['buzzes']): string[] =>
 export const isQuizBoardState = (gs: unknown): gs is QuizBoardGameState =>
     !!gs && (gs as { game?: string }).game === 'quiz-board';
 
+// ── CLOCKS ──────────────────────────────────────────────────────────
+// Deadlines are written using the writing phone's idea of server time. If
+// that phone's clock is off, the deadline is off too (a phone running
+// behind would make every question expire the moment it opens). So each
+// timer write also stores Firestore's own timestamp and what the writer
+// believed the time was; the difference is that phone's error, removed here.
+// `forMs` is the deadline being written: the correction applies to that
+// deadline only, never to one written later by a phone without the stamp.
+const stampClock = (serverNow: number, forMs: number | null) => ({
+    'gameState.clockAt': serverTimestamp(),
+    'gameState.clockWriterNow': serverNow,
+    'gameState.clockFor': forMs,
+});
+
+export const clockSkew = (gs: QuizBoardGameState, forMs: number): number => {
+    const at = toMillis(gs.clockAt);
+    return at !== null && typeof gs.clockWriterNow === 'number' && gs.clockFor === forMs
+        ? at - gs.clockWriterNow
+        : 0;
+};
+
+// Was this deadline written with a clock stamp? (No = an older app version.)
+export const isStamped = (gs: QuizBoardGameState, ms: number | null | undefined): boolean =>
+    typeof ms === 'number' && gs.clockFor === ms;
+
+// endsAt / lockEndsAt corrected for the writer's clock error.
+export const deadlineOf = (
+    gs: QuizBoardGameState,
+    ms: number | null | undefined
+): number | null => (typeof ms === 'number' ? ms + clockSkew(gs, ms) : null);
+
 const read = async (tx: Transaction, groupId: string) => {
     const groupRef = doc(db, 'groups', groupId);
     const snap = await tx.get(groupRef);
@@ -57,15 +92,21 @@ const read = async (tx: Transaction, groupId: string) => {
 
 export const startQuizBoard = async (
     group: Group,
-    settings: { mode: QuizBoardMode; categories: QuizCategory[] }
+    settings: { mode: QuizBoardMode; categories: QuizCategory[]; size: QuizBoardSize }
 ): Promise<void> => {
-    const tiles = buildBoard(settings.categories, group.quizSeenIds ?? []);
+    const tiles = buildBoard(
+        settings.categories,
+        group.quizSeenIds ?? [],
+        settings.size,
+        settings.mode
+    );
     const players = group.players;
     const picker = players[Math.floor(Math.random() * players.length)];
 
     const gameState: QuizBoardGameState = {
         game: 'quiz-board',
         mode: settings.mode,
+        boardSize: settings.size,
         phase: 'board',
         categories: settings.categories,
         tiles,
@@ -111,18 +152,85 @@ export const pickTile = async (
         const tile = gs.tiles[tileIndex];
         if (!tile || tile.used) return;
 
-        const current = instanceForTile(tile, tileIndex);
+        // Double Money: the last few tiles are worth twice their value.
+        const double = doubleMoneyActive(gs.tiles, gs.boardSize);
+        const current = {
+            ...instanceForTile(tile, tileIndex),
+            value: tile.value * (double ? 2 : 1),
+            ...(double ? { double: true } : {}),
+            // Golden tile: the picker bets first, then only they answer.
+            ...(tile.golden ? { golden: { playerId: gs.pickerId } } : {}),
+        };
         tx.update(groupRef, {
-            'gameState.phase': 'question',
+            'gameState.phase': tile.golden ? 'golden-wager' : 'question',
             'gameState.current': current,
-            'gameState.endsAt': serverNow + gs.windowMs,
+            'gameState.endsAt': tile.golden ? null : serverNow + gs.windowMs,
+            ...stampClock(serverNow, tile.golden ? null : serverNow + gs.windowMs),
             'gameState.isPaused': false,
+            'gameState.pauseReason': null,
             'gameState.pausedRemainingMs': null,
             'gameState.lockEndsAt': null,
             'gameState.forceEnded': false,
             'gameState.buzzes': {},
             'gameState.picks': {},
             quizSeenIds: appendSeen(data.quizSeenIds, [tile.questionId]),
+        });
+    });
+};
+
+// ── GOLDEN TILE BET ─────────────────────────────────────────────────
+// Placed before the question is shown. The picker places it (the host can
+// place it for them if needed); then the question starts.
+export const placeGoldenWager = async (
+    groupId: string,
+    playerId: string,
+    wager: number,
+    serverNow: number
+): Promise<void> => {
+    await runTransaction(db, async (tx) => {
+        const cur = await read(tx, groupId);
+        if (!cur) return;
+        const { gs, data, groupRef } = cur;
+        const golden = gs.current?.golden;
+        if (gs.phase !== 'golden-wager' || !golden) return;
+        if (playerId !== golden.playerId && playerId !== data.hostId) return;
+        const max = goldenMaxWager(gs.boardSize, !!gs.current?.double);
+        const bet = clampWager(wager, max);
+        tx.update(groupRef, {
+            'gameState.phase': 'question',
+            'gameState.current.golden.wager': bet,
+            'gameState.current.value': bet,
+            'gameState.endsAt': serverNow + gs.windowMs,
+            ...stampClock(serverNow, serverNow + gs.windowMs),
+            'gameState.buzzes': {},
+            'gameState.picks': {},
+        });
+    });
+};
+
+// The picker passes on the bet: the tile plays as a normal tile at its
+// value, open to everyone.
+export const passGoldenTile = async (
+    groupId: string,
+    playerId: string,
+    serverNow: number
+): Promise<void> => {
+    await runTransaction(db, async (tx) => {
+        const cur = await read(tx, groupId);
+        if (!cur) return;
+        const { gs, data, groupRef } = cur;
+        const current = gs.current;
+        const golden = current?.golden;
+        if (gs.phase !== 'golden-wager' || !current || !golden) return;
+        if (playerId !== golden.playerId && playerId !== data.hostId) return;
+        const { golden: _drop, ...normal } = current;
+        tx.update(groupRef, {
+            'gameState.phase': 'question',
+            'gameState.current': { ...normal, goldenPassedBy: golden.playerId },
+            'gameState.endsAt': serverNow + gs.windowMs,
+            ...stampClock(serverNow, serverNow + gs.windowMs),
+            'gameState.buzzes': {},
+            'gameState.picks': {},
         });
     });
 };
@@ -135,6 +243,7 @@ export const buzzIn = async (groupId: string, playerId: string): Promise<void> =
         if (!cur) return;
         const { gs, groupRef } = cur;
         if (gs.phase !== 'question' || gs.isPaused || gs.mode !== 'buzzer') return;
+        if (gs.current?.golden) return; // golden tile: only the picker answers, aloud
         if (gs.buzzes && playerId in gs.buzzes) return;
         tx.update(groupRef, { [`gameState.buzzes.${playerId}`]: serverTimestamp() });
     });
@@ -150,6 +259,7 @@ export const pickOption = async (
         if (!cur) return;
         const { gs, groupRef } = cur;
         if (gs.phase !== 'question' || gs.isPaused || gs.mode !== 'options') return;
+        if (gs.current?.golden && gs.current.golden.playerId !== playerId) return;
         if (gs.picks && playerId in gs.picks) return;
         tx.update(groupRef, {
             [`gameState.picks.${playerId}`]: { option, at: serverTimestamp() },
@@ -157,45 +267,107 @@ export const pickOption = async (
     });
 };
 
-export const pauseQuestion = async (groupId: string, serverNow: number): Promise<void> => {
+// reason 'host' = the host's Pause button; 'away' = a player dropped out.
+export const pauseQuestion = async (
+    groupId: string,
+    serverNow: number,
+    reason: 'host' | 'away' = 'host'
+): Promise<void> => {
     await runTransaction(db, async (tx) => {
         const cur = await read(tx, groupId);
         if (!cur) return;
         const { gs, groupRef } = cur;
-        if (gs.phase !== 'question' || gs.isPaused || !gs.endsAt) return;
+        const endsAt = deadlineOf(gs, gs.endsAt);
+        if (gs.phase !== 'question' || gs.isPaused || endsAt === null) return;
         tx.update(groupRef, {
             'gameState.isPaused': true,
-            'gameState.pausedRemainingMs': Math.max(0, gs.endsAt - serverNow),
+            'gameState.pauseReason': reason,
+            // clamped: a pausing phone with a bad clock can't zero or inflate it
+            'gameState.pausedRemainingMs': Math.min(gs.windowMs, Math.max(0, endsAt - serverNow)),
         });
     });
 };
 
-export const resumeQuestion = async (groupId: string, serverNow: number): Promise<void> => {
+// The host's Resume button resumes any pause. The automatic resume
+// (reason 'away') only undoes a pause that a drop-out caused, never one
+// the host chose.
+export const resumeQuestion = async (
+    groupId: string,
+    serverNow: number,
+    reason: 'host' | 'away' = 'host'
+): Promise<void> => {
     await runTransaction(db, async (tx) => {
         const cur = await read(tx, groupId);
         if (!cur) return;
         const { gs, groupRef } = cur;
         if (gs.phase !== 'question' || !gs.isPaused) return;
+        if (reason === 'away' && gs.pauseReason !== 'away') return;
         tx.update(groupRef, {
             'gameState.isPaused': false,
+            'gameState.pauseReason': null,
             'gameState.endsAt': serverNow + (gs.pausedRemainingMs ?? 0),
             'gameState.pausedRemainingMs': null,
+            ...stampClock(serverNow, serverNow + (gs.pausedRemainingMs ?? 0)),
         });
     });
 };
 
+// Host carries on without players who dropped out. `lastSeen` is each
+// one's last check-in, so the choice lapses once they check in again.
+export const continueWithoutAwayQuiz = async (
+    groupId: string,
+    requesterId: string,
+    lastSeen: Record<string, number>
+): Promise<void> => {
+    await runTransaction(db, async (tx) => {
+        const cur = await read(tx, groupId);
+        if (!cur || cur.data.hostId !== requesterId) return;
+        const updates: Record<string, unknown> = {};
+        for (const [id, ms] of Object.entries(lastSeen)) {
+            updates[`gameState.awayIgnored.${id}`] = ms;
+        }
+        if (Object.keys(updates).length > 0) tx.update(cur.groupRef, updates);
+    });
+};
+
+// A question timer written without a clock stamp (a phone on an older app
+// version) can't be trusted: its writer's clock may be way off. The host
+// restarts that timer from its own clock, for that exact question only.
+export const restampQuestion = async (
+    groupId: string,
+    serverNow: number,
+    expectedEndsAt: number
+): Promise<void> => {
+    await runTransaction(db, async (tx) => {
+        const cur = await read(tx, groupId);
+        if (!cur) return;
+        const { gs, groupRef } = cur;
+        if (gs.phase !== 'question' || gs.isPaused) return;
+        if (gs.endsAt !== expectedEndsAt || gs.clockFor === gs.endsAt) return;
+        const endsAt = serverNow + gs.windowMs;
+        tx.update(groupRef, { 'gameState.endsAt': endsAt, ...stampClock(serverNow, endsAt) });
+    });
+};
+
 // Timer ran out, everyone answered, or the host ended it early.
+// `expectedEndsAt` (the raw endsAt the caller saw) makes an automatic close
+// apply only to that exact question: a slow phone acting on an old
+// snapshot can't close the next question the moment it opens.
 export const closeQuestion = async (
     groupId: string,
     serverNow: number,
-    forced: boolean
+    forced: boolean,
+    expectedEndsAt?: number | null
 ): Promise<void> => {
     await runTransaction(db, async (tx) => {
         const cur = await read(tx, groupId);
         if (!cur) return;
         const { gs, groupRef } = cur;
         if (gs.phase !== 'question') return;
+        if (expectedEndsAt !== undefined && (gs.endsAt ?? null) !== expectedEndsAt) return;
+        if (!forced && gs.isPaused) return;
         tx.update(groupRef, {
+            ...stampClock(serverNow, serverNow + LOCK_MS),
             'gameState.phase': 'locking',
             'gameState.lockEndsAt': serverNow + LOCK_MS,
             'gameState.isPaused': false,
@@ -234,23 +406,51 @@ const finishRound = (
 
 // After the silent pause: options mode scores itself; buzzer mode goes to
 // the host's judging screen (or straight to the result if nobody buzzed).
-export const revealAnswer = async (groupId: string): Promise<void> => {
+export const revealAnswer = async (
+    groupId: string,
+    expectedLockEndsAt?: number | null // same idea as closeQuestion's guard
+): Promise<void> => {
     await runTransaction(db, async (tx) => {
         const cur = await read(tx, groupId);
         if (!cur) return;
         const { gs, groupRef } = cur;
         if (gs.phase !== 'locking' || !gs.current) return;
+        if (expectedLockEndsAt !== undefined && (gs.lockEndsAt ?? null) !== expectedLockEndsAt) return;
         const tile = gs.tiles[gs.current.tileIndex];
+        const value = gs.current.value ?? tile.value;
+        const golden = gs.current.golden;
 
         const base = {
             tileIndex: gs.current.tileIndex,
             questionId: gs.current.questionId,
-            value: tile.value,
+            value,
             answer: gs.current.answer,
             mode: gs.mode,
             forceEnded: !!gs.forceEnded,
             pickerBefore: gs.pickerId,
+            ...(golden ? { golden: true } : {}),
+            ...(gs.current.double ? { double: true } : {}),
         };
+
+        // Golden tile, buzzer mode: the picker answered aloud; host marks it.
+        if (golden && gs.mode === 'buzzer') {
+            tx.update(groupRef, { 'gameState.phase': 'judging' });
+            return;
+        }
+        // Golden tile, options mode: right wins the bet, wrong or no answer loses it.
+        if (golden) {
+            const correctIndex = gs.current.options.findIndex((o) => o.correct);
+            const pick = gs.picks?.[golden.playerId]?.option;
+            const right = pick === correctIndex;
+            finishRound(tx, cur, {
+                ...base,
+                winnerId: right ? golden.playerId : null,
+                deltas: { [golden.playerId]: right ? value : -value },
+                buzzOrder: [golden.playerId],
+                picks: pick === undefined ? {} : { [golden.playerId]: pick },
+            });
+            return;
+        }
 
         if (gs.mode === 'buzzer') {
             const order = buzzOrder(gs.buzzes);
@@ -276,8 +476,8 @@ export const revealAnswer = async (groupId: string): Promise<void> => {
                 .sort((a, b) => a.ms - b.ms)[0]?.id ?? null;
         const deltas: Record<string, number> = {};
         for (const e of entries) {
-            if (e.option !== correctIndex) deltas[e.id] = -tile.value;
-            else if (e.id === winner) deltas[e.id] = tile.value;
+            if (e.option !== correctIndex) deltas[e.id] = -value;
+            else if (e.id === winner) deltas[e.id] = value;
         }
         finishRound(tx, cur, {
             ...base,
@@ -296,20 +496,25 @@ export const judgeRound = async (groupId: string, winnerId: string | null): Prom
         if (!cur) return;
         const { gs } = cur;
         if (gs.phase !== 'judging' || !gs.current) return;
-        const order = buzzOrder(gs.buzzes);
+        const golden = gs.current.golden;
+        // Golden tile: only the picker answered, so they're the whole "queue".
+        const order = golden ? [golden.playerId] : buzzOrder(gs.buzzes);
         if (winnerId && !order.includes(winnerId)) return;
         const tile = gs.tiles[gs.current.tileIndex];
+        const value = gs.current.value ?? tile.value;
         finishRound(tx, cur, {
             tileIndex: gs.current.tileIndex,
             questionId: gs.current.questionId,
-            value: tile.value,
+            value,
             answer: gs.current.answer,
             mode: 'buzzer',
             winnerId,
-            deltas: buzzerDeltas(order, winnerId, tile.value),
+            deltas: buzzerDeltas(order, winnerId, value),
             buzzOrder: order,
             forceEnded: !!gs.forceEnded,
             pickerBefore: gs.pickerId,
+            ...(golden ? { golden: true } : {}),
+            ...(gs.current.double ? { double: true } : {}),
         });
     });
 };
@@ -402,7 +607,13 @@ export const voidRound = async (groupId: string): Promise<void> => {
         if (!ctx) return;
         const { round, gs, data } = ctx;
 
-        const newId = replacementQuestionId(gs.tiles, round.tileIndex, data.quizSeenIds ?? []);
+        const newId = replacementQuestionId(
+            gs.tiles,
+            round.tileIndex,
+            data.quizSeenIds ?? [],
+            gs.boardSize,
+            gs.mode
+        );
         const tiles = gs.tiles.map((t, i) =>
             i === round.tileIndex
                 ? { ...t, used: false, questionId: newId ?? t.questionId }

@@ -7,10 +7,13 @@ import {
   ScrollView,
   Animated,
   Modal,
+  Alert,
 } from "react-native";
 import { Group, BombGameState, PassDispute } from "../../../../shared/types";
 import { startNextRound, endBombGame, toggleDisputeVote } from "../../logic/timer/game";
 import BombAlleyScreen from "./BombAlleyScreen";
+import { QUIRK_INFO, QuirkVariant } from "../../logic/timer/bombQuirks";
+import { ACHIEVEMENTS, AchievementId, rewardText } from "../../data/achievements";
 import MissionsButton from "./MissionsButton";
 import BombBetSheet, { betPickLabel } from "./BombBetSheet";
 import { settleBets } from "../../logic/timer/betEngine";
@@ -104,6 +107,12 @@ export default function BombReplayScreen({ group, playerId }: Props) {
       } else {
         await startNextRound(group);
       }
+    } catch (e) {
+      console.error(e);
+      Alert.alert(
+        "Couldn't start the next round",
+        "Something went wrong. Tap the button again to retry.",
+      );
     } finally {
       setLoading(false);
     }
@@ -458,6 +467,37 @@ export default function BombReplayScreen({ group, playerId }: Props) {
           </View>
         </ScrollView>
 
+        {(gameState.roundQuirks ?? []).length > 0 && (
+          <>
+            <Text style={styles.sectionLabel}>🧬 WHAT THE BOMB TURNED INTO</Text>
+            <View style={styles.betResults}>
+              {(gameState.roundQuirks ?? []).map((rq, i) => {
+                const info = QUIRK_INFO[rq.variant as QuirkVariant];
+                if (!info) return null;
+                const extra =
+                  rq.detail?.fledTo
+                    ? ` It fled from ${getPlayerName(rq.playerId)} to ${getPlayerName(rq.detail.fledTo)}.`
+                    : rq.detail?.bite !== undefined && info.kind === "stranger"
+                      ? ` It bit ${rq.detail.bite}s off the fuse when it met ${getPlayerName(rq.playerId)}${rq.detail.panic ? " (straight to panic)" : ""}.`
+                      : info.kind === "crush"
+                        ? ` Its crush: ${getPlayerName(rq.playerId)}.`
+                        : ` ${getPlayerName(rq.playerId)} held it ${rq.detail?.heldSec ?? 8}s.`;
+                return (
+                  <View key={i} style={{ marginBottom: 6 }}>
+                    <Text style={[styles.betResultLine, { color: "#FFD700", fontWeight: "800" }]}>
+                      {info.emoji} {info.name}
+                    </Text>
+                    <Text style={styles.betResultLine}>
+                      {info.explain}
+                      {extra}
+                    </Text>
+                  </View>
+                );
+              })}
+            </View>
+          </>
+        )}
+
         {settledThisRound.length > 0 && (
           <>
             <Text style={styles.sectionLabel}>🎲 BET RESULTS</Text>
@@ -498,6 +538,24 @@ export default function BombReplayScreen({ group, playerId }: Props) {
             return (
               <View key={player.id} style={styles.livesCard}>
                 <Text style={styles.livesPlayerName}>{player.name}</Text>
+                {Object.keys(gameState.achievements?.[player.id]?.earned ?? {}).length > 0 && (
+                  <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 2 }}>
+                    {Object.keys(gameState.achievements?.[player.id]?.earned ?? {}).map((id) => {
+                      const a = ACHIEVEMENTS[id as AchievementId];
+                      if (!a) return null;
+                      return (
+                        <TouchableOpacity
+                          key={id}
+                          onPress={() =>
+                            Alert.alert(`${a.emoji} ${a.name}`, `${player.name}: ${a.how}\n${rewardText(a)}`)
+                          }
+                        >
+                          <Text style={{ fontSize: 15 }}>{a.emoji}</Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                )}
                 {isElim ? (
                   <Text style={styles.ghostTag}>👻</Text>
                 ) : (

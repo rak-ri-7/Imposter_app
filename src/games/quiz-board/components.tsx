@@ -44,7 +44,7 @@ export function RetroButton({
         : variant === "blue"
           ? QB.tile
           : "transparent";
-  const fg = variant === "gold" ? "#1A1300" : QB.white;
+  const fg = variant === "gold" ? QB.ink : QB.white;
   return (
     <TouchableOpacity
       onPress={onPress}
@@ -60,10 +60,7 @@ export function RetroButton({
       ]}
     >
       <Text
-        style={[
-          displayText(16, fg),
-          variant === "gold" && { textShadowColor: "transparent" },
-        ]}
+        style={displayText(16, fg, variant !== "gold")}
       >
         {label}
       </Text>
@@ -132,11 +129,16 @@ export function RoundOutcome({
   const iReviewed = reviewBy.includes(playerId);
   const openReview = reviewBy.length > 0 && !round.reviewSeen;
 
+  const goldenName = nameOf(round.pickerBefore);
   const headline = round.voided
     ? "ROUND VOIDED"
-    : round.winnerId
-      ? `${nameOf(round.winnerId)} wins ${formatRupees(round.value)}`
-      : "Nobody got it";
+    : round.golden
+      ? round.winnerId
+        ? `🌟 ${goldenName} won the golden bet: +${formatRupees(round.value)}`
+        : `🌟 ${goldenName} lost the golden bet: −${formatRupees(round.value)}`
+      : round.winnerId
+        ? `${nameOf(round.winnerId)} wins ${formatRupees(round.value)}${round.double ? " (double money)" : ""}`
+        : "Nobody got it";
 
   const deltas = Object.entries(round.deltas ?? {}).filter(([, d]) => d !== 0);
 
@@ -160,7 +162,13 @@ export function RoundOutcome({
       <Text
         style={displayText(
           compact ? 15 : 22,
-          round.voided ? QB.dim : round.winnerId ? QB.green : QB.white,
+          round.voided
+            ? QB.dim
+            : round.winnerId
+              ? QB.green
+              : round.golden
+                ? QB.red
+                : QB.white,
         )}
       >
         {headline}
@@ -251,8 +259,9 @@ export function RoundOutcome({
 
       <WinnerPicker
         visible={changing}
-        title="Who was actually right?"
+        title={round.golden ? `Was ${goldenName} right?` : "Who was actually right?"}
         candidates={round.buzzOrder}
+        nobodyLabel={round.golden ? `${goldenName} was wrong` : undefined}
         current={round.winnerId}
         nameOf={nameOf}
         onCancel={() => setChanging(false)}
@@ -274,6 +283,7 @@ export function WinnerPicker({
   nameOf,
   onPick,
   onCancel,
+  nobodyLabel = "Nobody was right",
 }: {
   visible: boolean;
   title: string;
@@ -282,6 +292,7 @@ export function WinnerPicker({
   nameOf: (id: string) => string;
   onPick: (id: string | null) => void;
   onCancel: () => void;
+  nobodyLabel?: string;
 }) {
   return (
     <Modal visible={visible} transparent animationType="fade">
@@ -298,7 +309,7 @@ export function WinnerPicker({
             />
           ))}
           <RetroButton
-            label={`Nobody was right${current === null ? "  (current)" : ""}`}
+            label={`${nobodyLabel}${current === null ? "  (current)" : ""}`}
             variant="red"
             onPress={() => onPick(null)}
             style={styles.pickRow}

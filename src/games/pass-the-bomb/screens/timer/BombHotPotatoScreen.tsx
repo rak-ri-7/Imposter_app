@@ -239,7 +239,7 @@ export default function BombHotPotatoScreen({
     passMode === "total"
       ? `${gameState.hpTotalPasses ?? 0} used between you`
       : !isPlayer
-        ? `${gameState.hpTotalPasses ?? 0} passes so far`
+        ? players.map((id) => `${nameOf(id)} ${hpPassesUsed(gameState, id)}`).join(" · ")
         : players.length === 2 && nextId
           ? `You've used ${hpPassesUsed(gameState, playerId)} · ${nameOf(
               nextId,
@@ -257,6 +257,9 @@ export default function BombHotPotatoScreen({
           : `${nameOf(holderId)} is holding it`;
 
   const canPass = isHolder && !lingeringWithMe && !outOfPasses;
+  // Everyone else hears about it too when the holder has no passes left.
+  const holderStuck =
+    !isHolder && !!holderId && !lazy && hpOutOfPasses(gameState, holderId);
 
   return (
     <View style={styles.container}>
@@ -351,6 +354,17 @@ export default function BombHotPotatoScreen({
         >
           <Text style={styles.passBtnText}>Pass to {nameOf(nextId)} →</Text>
         </TouchableOpacity>
+      ) : holderStuck ? (
+        <View style={styles.lockedBox}>
+          <Text style={styles.lockedTitle}>
+            🔒 {nameOf(holderId)} is out of passes
+          </Text>
+          <Text style={styles.lockedLine}>
+            {isPlayer
+              ? "It's stuck with them. Now you wait…"
+              : "Holding on… and praying 🙏"}
+          </Text>
+        </View>
       ) : !isHolder ? (
         <View style={styles.watchBox}>
           <Text style={styles.watchEmoji}>👀</Text>

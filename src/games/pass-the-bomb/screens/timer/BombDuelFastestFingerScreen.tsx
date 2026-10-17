@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   Vibration,
+  ScrollView,
 } from "react-native";
 import { Group, BombGameState } from "../../../../shared/types";
 import { submitQuizAnswer } from "../../logic/timer/Fastestfinger";
@@ -18,6 +19,7 @@ import {
   explodeDuelFuse,
 } from "../../logic/timer/duelFastestFinger";
 import { FAILSAFE_GRACE_MS, FAILSAFE_RETRY_MS } from "../../logic/timer/game";
+import DuelSpectatorQuiz from "./DuelSpectatorQuiz";
 type Props = { group: Group; playerId: string };
 
 export default function BombDuelFastestFingerScreen({
@@ -165,7 +167,45 @@ export default function BombDuelFastestFingerScreen({
     }
   };
 
+  // ── What knocked-out players see ─────────────────────────────────
+  const nameOf = (id: string) =>
+    group.players.find((p) => p.id === id)?.name ?? "Someone";
+  const duellistIds = [gameState.currentHolderId, nonHolder?.id].filter(
+    (id): id is string => !!id,
+  );
+  const picksByOption: Record<number, string[]> = {};
+  for (const id of duellistIds) {
+    const ans = activeQuiz?.answers?.[id];
+    if (ans) (picksByOption[ans.optionIndex] ??= []).push(nameOf(id));
+  }
+  const answeredNames = duellistIds
+    .filter((id) => activeQuiz?.answers?.[id])
+    .map(nameOf);
+  const settled = !!lockedUntil || canPass || !!activeQuiz?.resolved;
+  const spectatorView = activeQuiz ? (
+    <>
+      <DuelSpectatorQuiz
+        prompt={activeQuiz.question.prompt}
+        options={activeQuiz.question.options}
+        picksByOption={picksByOption}
+        revealCorrect={settled}
+      />
+      {!settled && (
+        <Text style={styles.spectatorNote}>
+          {answeredNames.length > 0
+            ? `✓ ${answeredNames.join(" & ")} answered`
+            : "⏳ Nobody has answered yet…"}
+        </Text>
+      )}
+    </>
+  ) : null;
+
   const lockMessage = (): string => {
+    if (!isFinalist) {
+      return lockReason === "too-slow"
+        ? `⚡ ${nonHolder?.name ?? "The opponent"} was faster! ${holderName} is stuck with the bomb for ${Math.ceil(lockRemaining)}s`
+        : `❌ ${holderName} got it wrong — stuck with the bomb for ${Math.ceil(lockRemaining)}s`;
+    }
     if (isHolder) {
       return lockReason === "too-slow"
         ? `😬 ${nonHolder?.name ?? "Your opponent"} beat you to it! Bomb's stuck with you for ${Math.ceil(lockRemaining)}s`
@@ -176,7 +216,10 @@ export default function BombDuelFastestFingerScreen({
       : `🔒 ${holderName} guessed wrong — stuck for ${Math.ceil(lockRemaining)}s`;
   };
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.scroll}
+      contentContainerStyle={styles.container}
+    >
       <Text style={styles.duelBanner}>⚡ FASTEST FINGER DUEL</Text>
       <Text style={styles.hint}>{hint}</Text>
 
@@ -187,9 +230,22 @@ export default function BombDuelFastestFingerScreen({
       )}
 
       {lockedUntil ? (
-        <View style={styles.lockedBox}>
-          <Text style={styles.lockedText}>{lockMessage()}</Text>
-        </View>
+        <>
+          <View style={styles.lockedBox}>
+            <Text style={styles.lockedText}>{lockMessage()}</Text>
+          </View>
+          {!isFinalist && spectatorView}
+        </>
+      ) : canPass && !isFinalist ? (
+        <>
+          <View style={styles.canPassBox}>
+            <Text style={styles.canPassText}>
+              ✅ {holderName} got it right — the bomb is about to fly to{" "}
+              {nonHolder?.name ?? "the opponent"}…
+            </Text>
+          </View>
+          {spectatorView}
+        </>
       ) : canPass ? (
         <View style={styles.canPassBox}>
           {isHolder ? (
@@ -215,7 +271,9 @@ export default function BombDuelFastestFingerScreen({
         </View>
       ) : activeQuiz ? (
         <>
-          <Text style={styles.prompt}>{activeQuiz.question.prompt}</Text>
+          {isFinalist && (
+            <Text style={styles.prompt}>{activeQuiz.question.prompt}</Text>
+          )}
           {isFinalist ? (
             <View style={styles.optionsGrid}>
               {activeQuiz.question.options.map((opt, index) => {
@@ -243,9 +301,7 @@ export default function BombDuelFastestFingerScreen({
               })}
             </View>
           ) : (
-            <Text style={styles.spectatorNote}>
-              👀 Watching the finalists battle it out...
-            </Text>
+            spectatorView
           )}
           {isFinalist && myAnswer !== null && (
             <Text style={styles.lockedInText}>✓ Locked in — waiting...</Text>
@@ -254,16 +310,18 @@ export default function BombDuelFastestFingerScreen({
       ) : (
         <Text style={styles.loadingText}>Next question loading...</Text>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  scroll: { flex: 1, backgroundColor: "#0D0D0D" },
   container: {
-    flex: 1,
+    flexGrow: 1,
     backgroundColor: "#0D0D0D",
     padding: 20,
     paddingTop: 60,
+    paddingBottom: 32,
   },
   duelBanner: {
     color: "#FF4500",

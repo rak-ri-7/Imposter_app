@@ -12,6 +12,8 @@ import { returnToMenu } from "../../../../shared/firebase/groups";
 import BombWinnerBetResults from "./BombWinnerBetResults";
 import { standingsOrder } from "../../logic/timer/placings";
 import { RUNNER_UP_SCORE_BONUS } from "../../logic/timer/bombHelpers";
+import { FP_PER_POINT } from "../../data/betOdds";
+import { ACHIEVEMENTS, AchievementId, rewardText } from "../../data/achievements";
 
 type Props = {
   group: Group;
@@ -120,42 +122,60 @@ export default function BombResultScreen({ group, playerId }: Props) {
           </View>
           <BombWinnerBetResults group={group} playerId={playerId} />
 
-          {/* Mission reveals */}
-          <Text style={styles.sectionLabel}>MISSION REVEALS</Text>
+          {/* Leftover FP cashed into leaderboard points */}
+          {Object.keys(gameState.fpCashOut ?? {}).length > 0 && (
+            <View style={styles.cashCard}>
+              <Text style={styles.cashTitle}>
+                💰 FP CASH-OUT · {FP_PER_POINT} FP = 1 PT
+              </Text>
+              {group.players
+                .filter((p) => gameState.fpCashOut?.[p.id])
+                .map((p) => {
+                  const c = gameState.fpCashOut![p.id];
+                  return (
+                    <Text key={p.id} style={styles.cashLine}>
+                      {p.name}
+                      {p.id === playerId ? " (you)" : ""}: {c.fp} FP → +
+                      {c.points} pt{c.points === 1 ? "" : "s"}
+                    </Text>
+                  );
+                })}
+            </View>
+          )}
+
+          {/* Hidden achievements earned this game */}
+          <Text style={styles.sectionLabel}>🏅 ACHIEVEMENTS</Text>
           <View style={styles.missionsCard}>
-            {group.players.map((player) => {
-              const pm = gameState.missions[player.id];
-              if (!pm) return null;
-              return (
-                <View key={player.id} style={styles.playerMissions}>
-                  <Text style={styles.missionPlayerName}>{player.name}</Text>
-                  {[pm.mission1, pm.mission2, pm.lifeMission]
-                    .filter((m): m is BombMission => !!m)
-                    .map((m, i) => (
-                      <View
-                        key={i}
-                        style={[
-                          styles.missionRow,
-                          m.completed && styles.missionRowDone,
-                        ]}
-                      >
-                        <Text style={styles.missionIcon}>
-                          {m.completed ? "✅" : "❌"}
-                        </Text>
-                        <View style={styles.missionContent}>
-                          <Text style={styles.missionText}>{m.text}</Text>
-                          {m.completed && m.rewardText ? (
+            {group.players.every(
+              (p) => Object.keys(gameState.achievements?.[p.id]?.earned ?? {}).length === 0,
+            ) ? (
+              <Text style={styles.missionText}>Nobody unlocked anything this game.</Text>
+            ) : (
+              group.players.map((player) => {
+                const earned = Object.keys(gameState.achievements?.[player.id]?.earned ?? {});
+                if (earned.length === 0) return null;
+                return (
+                  <View key={player.id} style={styles.playerMissions}>
+                    <Text style={styles.missionPlayerName}>{player.name}</Text>
+                    {earned.map((id) => {
+                      const a = ACHIEVEMENTS[id as AchievementId];
+                      if (!a) return null;
+                      return (
+                        <View key={id} style={[styles.missionRow, styles.missionRowDone]}>
+                          <Text style={styles.missionIcon}>{a.emoji}</Text>
+                          <View style={styles.missionContent}>
+                            <Text style={styles.missionText}>{a.name}</Text>
                             <Text style={styles.lifeMissionTag}>
-                              {m.isLifeMission ? "❤️ Life mission — " : "🎯 "}
-                              {m.rewardText}
+                              {a.how} {rewardText(a)}
                             </Text>
-                          ) : null}
+                          </View>
                         </View>
-                      </View>
-                    ))}
-                </View>
-              );
-            })}
+                      );
+                    })}
+                  </View>
+                );
+              })
+            )}
           </View>
         </ScrollView>
       </Animated.View>
@@ -179,6 +199,17 @@ export default function BombResultScreen({ group, playerId }: Props) {
 }
 
 const styles = StyleSheet.create({
+  cashCard: {
+    backgroundColor: "#1A1A1A",
+    borderRadius: 12,
+    padding: 12,
+    marginVertical: 10,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: "#4CAF50",
+  },
+  cashTitle: { color: "#4CAF50", fontSize: 11, letterSpacing: 2, marginBottom: 4 },
+  cashLine: { color: "#ddd", fontSize: 13 },
   container: {
     flex: 1,
     backgroundColor: "#0D0D0D",

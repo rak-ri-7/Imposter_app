@@ -10,6 +10,7 @@ import {
     MAX_LIVES,
 } from '../../data/missions';
 import { applyFusePoints, applyLifeGain } from './bombHelpers';
+import { applyAchievementEvent, AchievementEvent } from './achievementEngine';
 
 type MissionKey = 'mission1' | 'mission2' | 'lifeMission';
 type Roster = { id: string; name: string }[];
@@ -94,8 +95,12 @@ export const applyMissionEvent = (
     gameState: BombGameState,
     players: Roster,
     ownerId: string,
-    event: MissionEvent
+    event: AchievementEvent
 ): void => {
+    // Missions are retired; the same events now feed hidden achievements.
+    applyAchievementEvent(updates, gameState, ownerId, event);
+    if (event.kind === 'vest-saved' || event.kind === 'bomb-fled' || event.kind === 'toxic-boom') return;
+
     if (gameState.ghosts.includes(ownerId)) return;
     const owned = gameState.missions?.[ownerId];
     if (!owned) return;
@@ -150,7 +155,11 @@ const retargetMissions = (
 // Host calls this as a round is closed out (start of startNextRound).
 export const applyRoundEndMissions = async (group: Group): Promise<void> => {
     const gameState = group.gameState as BombGameState;
-    const updates: Record<string, unknown> = {};
+    // Once per round: a retried Next Round mustn't count the round twice.
+    if (gameState.roundEndMissionsRound === gameState.roundNumber) return;
+    const updates: Record<string, unknown> = {
+        'gameState.roundEndMissionsRound': gameState.roundNumber,
+    };
 
     retargetMissions(updates, gameState, group.players);
 

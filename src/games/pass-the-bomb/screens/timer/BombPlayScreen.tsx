@@ -19,6 +19,7 @@ import {
 } from "../../logic/timer/game";
 import { liarOffset, liarDisplayedRemaining } from "../../logic/timer/liarClock";
 import BombAlleyScreen from "./BombAlleyScreen";
+import { QUIRK_INFO, QuirkVariant } from "../../logic/timer/bombQuirks";
 import MissionsButton from "./MissionsButton";
 
 type Props = {
@@ -186,8 +187,35 @@ export default function BombPlayScreen({ group, playerId }: Props) {
     }
   }, [gameState.currentHolderId]);
 
+  // ── Quirk feedback: a short line under the status strip ───────────
+  const [note, setNote] = useState<string | null>(null);
+  const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flash = (msg: string, ms = 2200) => {
+    setNote(msg);
+    if (noteTimer.current) clearTimeout(noteTimer.current);
+    noteTimer.current = setTimeout(() => setNote(null), ms);
+  };
+  useEffect(() => () => {
+    if (noteTimer.current) clearTimeout(noteTimer.current);
+  }, []);
+
+  // Everyone hears about the sneaky moves (the reveal card covers the rest).
+  const lastEvent = gameState.passHistory[gameState.passHistory.length - 1];
+  useEffect(() => {
+    if (!lastEvent || Date.now() - lastEvent.timestamp > 4000) return;
+    const to = group.players.find((p) => p.id === lastEvent.to)?.name ?? "someone";
+    if (lastEvent.instruction === "(snuck back 😈)")
+      flash(`😈 It snuck back to ${lastEvent.to === playerId ? "you" : to}!`, 3000);
+    if (lastEvent.instruction === "(ran back to its crush 🔁)")
+      flash(`🔁 It ran straight back to ${lastEvent.to === playerId ? "you" : to}!`, 3000);
+  }, [lastEvent?.timestamp]);
+
   const handlePass = async (toId: string) => {
     if (!isHolder || passing) return;
+    if (gameState.pendingPass) {
+      flash("😴 It's still on its way…");
+      return;
+    }
     if (isClingyLocked) {
       Alert.alert(
         "Still stuck! 🔒",
@@ -206,12 +234,29 @@ export default function BombPlayScreen({ group, playerId }: Props) {
     }
     setPassing(true);
     try {
-      await passBomb(
+      const res = await passBomb(
         group,
         playerId,
         toId,
         instructionSlide === 1 && myFallback !== "",
       );
+      if (res.success) {
+        if (res.pending) flash("😴 Passed… it's taking its sweet time.", 2500);
+        else if (res.woke) flash("⚡ You woke it up! It's moving again.");
+      } else if (res.reason === "crush") {
+        Vibration.vibrate(60);
+        flash("💔 It won't let go… tap again!", 1500);
+      } else if (res.reason === "toxic") {
+        Vibration.vibrate([0, 80, 40, 80]);
+        flash("☠️ It HATES that. The fuse just sped up!", 2000);
+      } else if (res.reason === "cuddled") {
+        flash(`🧸 It's cuddling you… ${Math.ceil((res.remainingLockMs ?? 0) / 1000)}s`, 1500);
+      } else if (res.reason === "rebound") {
+        Vibration.vibrate([0, 60, 40, 60]);
+        flash("🪃 It bounced straight back into your hands!", 2500);
+      } else if (res.reason === "in-transit") {
+        flash("😴 It's still on its way…");
+      }
     } finally {
       setPassing(false);
     }
@@ -362,6 +407,44 @@ export default function BombPlayScreen({ group, playerId }: Props) {
           )}
         </View>
       </TouchableOpacity>
+
+      {/* What the bomb has turned into this round (names only; the rules are
+          for players to work out) */}
+      {(Object.keys(gameState.bombQuirks?.crushes ?? {}).length > 0 ||
+        gameState.bombQuirks?.lazy) && (
+        <View style={styles.quirkRow}>
+          {Object.values(gameState.bombQuirks?.crushes ?? {}).map((c) => (
+            <Text key={c.playerId} style={styles.quirkChip}>
+              {QUIRK_INFO[c.variant as QuirkVariant]?.emoji}{" "}
+              {QUIRK_INFO[c.variant as QuirkVariant]?.name} ·{" "}
+              {c.playerId === playerId ? "it loves YOU" : `loves ${getPlayerName(c.playerId)}`}
+            </Text>
+          ))}
+          {gameState.bombQuirks?.lazy && (
+            <Text style={styles.quirkChip}>
+              {QUIRK_INFO[gameState.bombQuirks.lazy.variant as QuirkVariant]?.emoji}{" "}
+              {QUIRK_INFO[gameState.bombQuirks.lazy.variant as QuirkVariant]?.name}
+            </Text>
+          )}
+        </View>
+      )}
+
+      {gameState.pendingPass?.kind === "lazy" && (
+        <View style={styles.lazyBox}>
+          <Text style={styles.lazyText}>
+            😴 {gameState.pendingPass.from === playerId ? "You" : getPlayerName(gameState.pendingPass.from)}{" "}
+            passed it to{" "}
+            {gameState.pendingPass.to === playerId ? "you" : getPlayerName(gameState.pendingPass.to)}…
+            it's dragging its feet
+          </Text>
+        </View>
+      )}
+
+      {note && (
+        <View style={styles.noteBox}>
+          <Text style={styles.noteText}>{note}</Text>
+        </View>
+      )}
 
       {isClingyLocked && (
         <View style={styles.clingyBox}>
@@ -539,6 +622,35 @@ export default function BombPlayScreen({ group, playerId }: Props) {
 }
 
 const styles = StyleSheet.create({
+  quirkRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 },
+  quirkChip: {
+    color: "#FFD1E3",
+    backgroundColor: "#2A1220",
+    borderWidth: 1,
+    borderColor: "#FF5C93",
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    fontSize: 12,
+    fontWeight: "800",
+    overflow: "hidden",
+  },
+  lazyBox: {
+    backgroundColor: "#0E1E2A",
+    borderWidth: 1,
+    borderColor: "#4FC3F7",
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 8,
+  },
+  lazyText: { color: "#BDE9FF", fontSize: 14, fontWeight: "700", textAlign: "center" },
+  noteBox: {
+    backgroundColor: "#2A2A2A",
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 8,
+  },
+  noteText: { color: "#fff", fontSize: 15, fontWeight: "800", textAlign: "center" },
   container: {
     flex: 1,
     backgroundColor: "#0D0D0D",

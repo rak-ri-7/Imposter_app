@@ -4,10 +4,10 @@ import { BombGameState } from '../../../../shared/types';
 import { applyFusePoints, applyLifeGain } from './bombHelpers';
 
 // ── TUNING ────────────────────────────────────────────────────────────────
-export const GHOST_STIPEND_FP = 3;          // FP a ghost receives for each round it sits out (placeholder)
+export const GHOST_STIPEND_FP = 5;          // FP a ghost receives for each round it sits out (placeholder)
 export const GHOST_DEBT_FORGIVEN = true;    // a ghost's negative FP is wiped the first time the stipend lands
-export const LIFE_BASE_PRICE = 100;         // price of the first life you buy...
-export const LIFE_PRICE_STEP = 50;          // ...and how much each later purchase adds (100, 150, 200...)
+export const LIFE_BASE_PRICE = 75;          // price of the first life you buy...
+export const LIFE_PRICE_STEP = 25;          // ...and how much each later purchase adds (75, 100, 125...)
 export const LIFE_PURCHASE_GHOSTS_ONLY = false; // false: anyone below 3 lives can buy one
 const MAX_LIVES = 3;
 

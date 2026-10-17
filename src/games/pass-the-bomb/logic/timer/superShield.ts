@@ -16,7 +16,7 @@ import { Group, BombGameState } from '../../../../shared/types';
 import { applyMissionEvent } from './missionEngine';
 
 
-export const SUPER_SHIELD_PRICE = 60;
+export const SUPER_SHIELD_PRICE = 45;
 export const SUPER_SHIELD_MAX_PER_GAME = 2;
 
 // Called inside a duel explosion transaction. If the victim has a

@@ -9,11 +9,12 @@ import {
   Alert,
   useWindowDimensions,
 } from "react-native";
-import { QUIZ_CATEGORIES, QUIZ_LEVELS, formatRupees } from "../../../shared/quiz";
+import { QUIZ_CATEGORIES, formatRupees } from "../../../shared/quiz";
 import type { Group } from "../../../shared/types";
 import { getServerNow } from "../../../shared/firebase/time";
 import type { QuizBoardCtx } from "../logic/useQuizBoard";
 import { endBoardEarly, pickTile } from "../logic/game";
+import { doubleMoneyActive } from "../logic/board";
 import { MoneyStrip, RetroButton, RoundOutcome } from "../components";
 import { QB, bevel, digitText, displayText } from "../theme";
 
@@ -33,6 +34,8 @@ export default function QuizBoardScreen({ group, playerId, ctx }: Props) {
   const valueSize = Math.max(13, Math.min(22, tileW / 4.2));
   const myPick = gs.pickerId === playerId;
   const left = gs.tiles.filter((t) => !t.used).length;
+  // Double Money: the last few tiles show (and pay) twice their value.
+  const double = doubleMoneyActive(gs.tiles, gs.boardSize);
 
   const onTile = async (index: number) => {
     if (!canPick || busy) return;
@@ -69,6 +72,14 @@ export default function QuizBoardScreen({ group, playerId, ctx }: Props) {
 
       <MoneyStrip group={group} ctx={ctx} playerId={playerId} />
 
+      {double && (
+        <View style={styles.doubleBanner}>
+          <Text style={displayText(18, QB.ink, false)}>
+            💰 Double Money · last {left} tile{left === 1 ? "" : "s"}
+          </Text>
+        </View>
+      )}
+
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.board}>
           {/* category headers */}
@@ -88,8 +99,8 @@ export default function QuizBoardScreen({ group, playerId, ctx }: Props) {
           </View>
 
           {/* value rows */}
-          {QUIZ_LEVELS.map((level, r) => (
-            <View key={level} style={styles.row}>
+          {Array.from({ length: Math.ceil(gs.tiles.length / cols) }, (_, r) => (
+            <View key={r} style={styles.row}>
               {gs.categories.map((_, c) => {
                 const index = r * cols + c;
                 const tile = gs.tiles[index];
@@ -112,7 +123,7 @@ export default function QuizBoardScreen({ group, playerId, ctx }: Props) {
                         adjustsFontSizeToFit
                         style={digitText(valueSize)}
                       >
-                        {formatRupees(tile.value)}
+                        {formatRupees(tile.value * (double ? 2 : 1))}
                       </Text>
                     )}
                   </TouchableOpacity>
@@ -141,6 +152,15 @@ export default function QuizBoardScreen({ group, playerId, ctx }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: QB.bg, paddingTop: 48 },
+  doubleBanner: {
+    backgroundColor: QB.gold,
+    alignItems: "center",
+    paddingVertical: 8,
+    marginHorizontal: 10,
+    marginBottom: 6,
+    borderWidth: 3,
+    borderColor: QB.goldDark,
+  },
   header: { alignItems: "center", paddingBottom: 4 },
   hint: { color: QB.dim, fontSize: 11 },
   scroll: { paddingBottom: 30, gap: 12 },

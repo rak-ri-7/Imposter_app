@@ -641,6 +641,17 @@ export default function BombPanicScreen({ group, playerId }: Props) {
       </View>
 
       <View style={styles.body}>
+        {gameState.pendingPass?.kind === "lazy" && (
+          <View style={styles.clingyBox}>
+            <Text style={styles.clingyText}>
+              😴 It's still dragging its feet over to{" "}
+              {gameState.pendingPass.to === playerId
+                ? "YOU"
+                : group.players.find((p) => p.id === gameState.pendingPass?.to)?.name ?? "someone"}
+              …
+            </Text>
+          </View>
+        )}
         {isClingyLocked && (
           <View style={styles.clingyBox}>
             <Text style={styles.clingyText}>

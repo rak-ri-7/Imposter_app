@@ -74,8 +74,15 @@ export default function TimerResultScreen({ group, playerId }: Props) {
 
   const answerMs = gameState.answer * 1000;
   // Everyone sharing first place among players who actually stopped.
-  const winners = ranking.filter((r) => r.rank === 1 && !r.didNotStop);
-  const nobodyStopped = ranking.length > 0 && winners.length === 0;
+  // Voided because a player dropped out: no ranking, no points.
+  const voided =
+    gameState.voidedRound?.round === gameState.roundNumber
+      ? gameState.voidedRound
+      : null;
+  const winners = voided
+    ? []
+    : ranking.filter((r) => r.rank === 1 && !r.didNotStop);
+  const nobodyStopped = !voided && ranking.length > 0 && winners.length === 0;
 
   return (
     <View style={styles.container}>
@@ -134,13 +141,28 @@ export default function TimerResultScreen({ group, playerId }: Props) {
           </View>
         )}
 
+        {voided && (
+          <View style={styles.winnerBox}>
+            <Text style={styles.winnerEmoji}>🚫</Text>
+            <Text style={styles.winnerText}>
+              Round voided
+              {voided.awayIds.length > 0
+                ? ` — ${joinNames(voided.awayIds.map(getPlayerName))} dropped out`
+                : ""}
+              . No points this round.
+            </Text>
+          </View>
+        )}
+
         {/* Player breakdown */}
-        <Text style={styles.sectionLabel}>HOW EVERYONE DID</Text>
+        {!voided && (
+          <Text style={styles.sectionLabel}>HOW EVERYONE DID</Text>
+        )}
         <ScrollView
           style={styles.rankingList}
           showsVerticalScrollIndicator={false}
         >
-          {ranking.map((r) => {
+          {(voided ? [] : ranking).map((r) => {
             const isMe = r.playerId === playerId;
             const isWinner = r.rank === 1 && !r.didNotStop;
 

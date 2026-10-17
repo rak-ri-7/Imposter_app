@@ -45,6 +45,10 @@ const MARKET_INFO: Record<BetMarket, { title: string; blurb: string }> = {
     title: "💥 BOOM OR DEFUSE?",
     blurb: "Next round. Either the bomb goes off, or somebody keeps it quiet.",
   },
+  "duel-loser": {
+    title: "⚔️ DUEL: WHO LOSES A LIFE?",
+    blurb: "This duel round. Placed from the duel screen.",
+  },
   "round-victim": {
     title: "🎯 WHO LOSES A LIFE?",
     blurb: "Next round. Who takes the hit — or does everybody walk?",

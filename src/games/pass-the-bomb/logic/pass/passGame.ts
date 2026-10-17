@@ -641,6 +641,34 @@ export const skipStuckHolder = async (
     }
 };
 
+// ── AWAY PLAYERS ──────────────────────────────────────────────────────
+// The game pauses while a player is offline (see usePresence). The host can
+// choose to carry on without them; `lastSeen` is each player's last
+// check-in, so the choice lapses as soon as they check in again.
+export const continueWithoutAway = async (
+    group: Group,
+    requesterId: string,
+    lastSeen: Record<string, number>
+): Promise<void> => {
+    const groupRef = doc(db, 'groups', group.id);
+    try {
+        await runTransaction(db, async (tx) => {
+            const snap = await tx.get(groupRef);
+            if (!snap.exists()) return;
+            const data = snap.data();
+            const gs = data.gameState as PassGameState | undefined;
+            if (gs?.mode !== 'pass' || data.hostId !== requesterId) return;
+            const updates: Record<string, unknown> = {};
+            for (const [id, ms] of Object.entries(lastSeen)) {
+                updates[`gameState.awayIgnored.${id}`] = ms;
+            }
+            if (Object.keys(updates).length > 0) tx.update(groupRef, updates);
+        });
+    } catch (e) {
+        if (__DEV__) console.warn('[continueWithoutAway] failed', e);
+    }
+};
+
 // True when none of a side's members are still in the group.
 export const isSideGone = (
     gs: PassGameState,

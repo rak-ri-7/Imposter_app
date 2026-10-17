@@ -58,6 +58,11 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
 
   const tile = gs.tiles[current.tileIndex];
   const cat = QUIZ_CATEGORIES[tile.category];
+  // What this question is worth: doubled in Double Money, or the golden bet.
+  const value = current.value ?? tile.value;
+  const golden = current.golden;
+  const goldenName = golden ? nameOf(golden.playerId) : "";
+  const iAmGolden = golden?.playerId === playerId;
   const paused = phase === "question" && !!gs.isPaused;
   const revealed = phase === "judging" || phase === "result";
   const round = phase === "result" ? ctx.lastRound : undefined;
@@ -100,10 +105,14 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
     setJudgeOpen(false);
     const who = id ? nameOf(id) : "Nobody";
     Alert.alert(
-      `${who} was right?`,
-      id
-        ? `${who} wins ${formatRupees(tile.value)}. Everyone else who buzzed loses it.`
-        : `Everyone who buzzed loses ${formatRupees(tile.value)}.`,
+      golden ? (id ? `${goldenName} was right?` : `${goldenName} was wrong?`) : `${who} was right?`,
+      golden
+        ? id
+          ? `${goldenName} wins the ${formatRupees(value)} bet.`
+          : `${goldenName} loses the ${formatRupees(value)} bet.`
+        : id
+          ? `${who} wins ${formatRupees(value)}. Everyone else who buzzed loses it.`
+          : `Everyone who buzzed loses ${formatRupees(value)}.`,
       [
         { text: "Back", style: "cancel", onPress: () => setJudgeOpen(true) },
         { text: "Confirm", onPress: () => judgeRound(group.id, id) },
@@ -118,8 +127,29 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
         <Text numberOfLines={1} style={[displayText(14), styles.flex]}>
           {cat.emoji} {cat.label}
         </Text>
-        <Text style={digitText(20)}>{formatRupees(tile.value)}</Text>
+        <Text style={digitText(20)}>{formatRupees(value)}</Text>
       </View>
+      {(golden || current.double || current.goldenPassedBy) && (
+        <View style={styles.badgeRow}>
+          {current.goldenPassedBy && (
+            <Text style={[displayText(13, QB.ink, false), styles.goldBadge]}>
+              🌟 {current.goldenPassedBy === playerId ? "You" : nameOf(current.goldenPassedBy)}{" "}
+              passed · open to everyone
+            </Text>
+          )}
+          {golden && (
+            <Text style={[displayText(13, QB.ink, false), styles.goldBadge]}>
+              🌟 Golden · {iAmGolden ? "your" : `${goldenName}'s`} bet{" "}
+              {formatRupees(value)}
+            </Text>
+          )}
+          {current.double && !golden && (
+            <Text style={[displayText(13, QB.ink, false), styles.goldBadge]}>
+              💰 Double money
+            </Text>
+          )}
+        </View>
+      )}
 
       {/* timer bar */}
       {phase === "question" && (
@@ -144,7 +174,11 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
           {paused ? (
             <Text style={[displayText(30, QB.gold), styles.center]}>
               ⏸ Paused{"\n"}
-              <Text style={displayText(14, QB.dim)}>question hidden</Text>
+              <Text style={displayText(14, QB.dim)}>
+                {gs.pauseReason === "away"
+                  ? "waiting for a player · question hidden"
+                  : "paused by host · question hidden"}
+              </Text>
             </Text>
           ) : (
             <Text style={[displayText(current.prompt.length > 90 ? 20 : 25), styles.center]}>
@@ -158,6 +192,11 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
           <View style={styles.answerBox}>
             <Text style={displayText(11, QB.dim)}>ANSWER</Text>
             <Text style={[displayText(26, QB.gold), styles.center]}>{current.answer}</Text>
+            {gs.mode === "buzzer" && !!current.alsoAccepted?.length && (
+              <Text style={styles.note}>
+                Also accepted: {current.alsoAccepted.join(", ")}
+              </Text>
+            )}
             {gs.forceEnded && (
               <Text style={styles.warn}>⚠ Host ended this round early</Text>
             )}
@@ -180,7 +219,11 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
               return (
                 <TouchableOpacity
                   key={i}
-                  disabled={phase !== "question" || myPick !== undefined}
+                  disabled={
+                    phase !== "question" ||
+                    myPick !== undefined ||
+                    (!!golden && !iAmGolden)
+                  }
                   onPress={() => onOption(i)}
                   style={[
                     styles.option,
@@ -205,16 +248,36 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
             })}
             {phase === "question" && (
               <Text style={styles.note}>
-                {myPick !== undefined ? "Locked in. " : ""}
-                {ctx.answeredCount}/{ctx.players.length} answered · wrong answers lose{" "}
-                {formatRupees(tile.value)}
+                {golden
+                  ? iAmGolden
+                    ? myPick !== undefined
+                      ? "Locked in."
+                      : `Only you answer · right wins ${formatRupees(value)}, wrong loses it`
+                    : `Only ${goldenName} answers this one`
+                  : `${myPick !== undefined ? "Locked in. " : ""}${ctx.answeredCount}/${ctx.players.length} answered · wrong answers lose ${formatRupees(value)}`}
+              </Text>
+            )}
+          </View>
+        )}
+
+        {/* BUZZER MODE, golden tile: the picker just answers aloud */}
+        {gs.mode === "buzzer" && golden && phase !== "result" && (
+          <View style={styles.buzzArea}>
+            <Text style={[displayText(20, QB.gold), styles.center]}>
+              {iAmGolden
+                ? "Say your answer out loud!"
+                : `${goldenName}, say your answer out loud!`}
+            </Text>
+            {phase === "judging" && !isHost && (
+              <Text style={[styles.note, styles.center]}>
+                Host is marking {goldenName}'s answer…
               </Text>
             )}
           </View>
         )}
 
         {/* BUZZER MODE */}
-        {gs.mode === "buzzer" && phase !== "result" && (
+        {gs.mode === "buzzer" && !golden && phase !== "result" && (
           <View style={styles.buzzArea}>
             {phase === "question" && !paused && (
               <TouchableOpacity
@@ -282,7 +345,10 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
             </View>
           )}
           {phase === "judging" && (
-            <RetroButton label="Mark who was right" onPress={() => setJudgeOpen(true)} />
+            <RetroButton
+              label={golden ? `Mark ${goldenName}'s answer` : "Mark who was right"}
+              onPress={() => setJudgeOpen(true)}
+            />
           )}
           {phase === "result" && (
             <RetroButton label="Back to the board ▶" onPress={() => continueToBoard(group.id)} />
@@ -297,8 +363,9 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
 
       <WinnerPicker
         visible={judgeOpen}
-        title="Who was right?"
-        candidates={queue}
+        title={golden ? `Was ${goldenName} right?` : "Who was right?"}
+        candidates={golden ? [golden.playerId] : queue}
+        nobodyLabel={golden ? `${goldenName} was wrong` : undefined}
         nameOf={nameOf}
         onCancel={() => setJudgeOpen(false)}
         onPick={onJudge}
@@ -309,6 +376,19 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: QB.bg, paddingTop: 48 },
+  badgeRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 6,
+    paddingHorizontal: 16,
+    marginTop: 6,
+  },
+  goldBadge: {
+    backgroundColor: QB.gold,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    overflow: "hidden",
+  },
   topLine: {
     flexDirection: "row",
     alignItems: "center",

@@ -8,13 +8,13 @@ import {
   StyleSheet,
   Alert,
 } from "react-native";
-import { QUIZ_CATEGORIES } from "../../../shared/quiz";
+import { QUIZ_CATEGORIES, formatRupees } from "../../../shared/quiz";
 import type { QuizCategory } from "../../../shared/quiz";
-import type { Group, QuizBoardMode } from "../../../shared/types";
+import type { Group, QuizBoardMode, QuizBoardSize } from "../../../shared/types";
 import {
   BOARD_CATEGORIES,
-  MAX_CATEGORIES,
-  MIN_CATEGORIES,
+  BOARD_SIZES,
+  QB_CLIENT_VERSION,
   randomCategories,
 } from "../logic/board";
 import { startQuizBoard } from "../logic/game";
@@ -30,6 +30,8 @@ const RULES: Record<QuizBoardMode, string[]> = {
     "Fastest correct answer wins the tile's rupees.",
     "Every wrong answer LOSES the tile's rupees. Not sure? Don't answer.",
     "Whoever wins picks the next tile.",
+    "🌟 Golden tiles are hidden on the board: the picker bets (up to the top prize) before seeing the question and answers alone, or passes and it plays as a normal tile.",
+    "💰 Double Money: the last few tiles are worth twice as much.",
   ],
   buzzer: [
     "Pick a tile. Everyone sees the question. No options.",
@@ -37,31 +39,74 @@ const RULES: Record<QuizBoardMode, string[]> = {
     "Answer out loud in buzz order. Everyone who buzzes must answer.",
     "The answer shows on every phone at once, then the host marks who was right.",
     "Right: win the rupees. Every other buzzer LOSES them. Think before you buzz!",
+    "🌟 Golden tiles are hidden on the board: the picker bets (up to the top prize) before seeing the question and answers alone, or passes and it plays as a normal tile.",
+    "💰 Double Money: the last few tiles are worth twice as much.",
   ],
 };
 
 export default function QuizLobbyScreen({ group, playerId }: Props) {
   const isHost = group.hostId === playerId;
   const [mode, setMode] = useState<QuizBoardMode>("options");
-  const [cats, setCats] = useState<QuizCategory[]>(() => randomCategories());
+  const [size, setSize] = useState<QuizBoardSize>("full");
+  const show = BOARD_SIZES[size];
+  const need = show.categories;
+  const [cats, setCats] = useState<QuizCategory[]>(() =>
+    randomCategories(BOARD_SIZES.full.categories),
+  );
   const [starting, setStarting] = useState(false);
 
-  const toggle = (c: QuizCategory) => {
+  // Switching show size keeps the picks, trimming or topping up to fit.
+  const chooseSize = (next: QuizBoardSize) => {
+    setSize(next);
+    const want = BOARD_SIZES[next].categories;
     setCats((cur) => {
-      if (cur.includes(c)) return cur.filter((x) => x !== c);
-      if (cur.length >= MAX_CATEGORIES) return cur;
-      return [...cur, c];
+      if (cur.length >= want) return cur.slice(0, want);
+      const extra = randomCategories(BOARD_CATEGORIES.length).filter(
+        (c) => !cur.includes(c),
+      );
+      return [...cur, ...extra.slice(0, want - cur.length)];
     });
   };
 
+  // Tap a picked category to drop it. Tap a new one to add it; if the show
+  // is already full, it replaces the pick made longest ago. (The board starts
+  // full, so new categories must never be blocked, or only Random works.)
+  const toggle = (c: QuizCategory) => {
+    setCats((cur) => {
+      if (cur.includes(c)) return cur.filter((x) => x !== c);
+      const kept = cur.length >= need ? cur.slice(cur.length - need + 1) : cur;
+      return [...kept, c];
+    });
+  };
+
+  // Phones that haven't opened Quiz Board with the current code. One stale
+  // phone can break the question timer for everybody.
+  const stale = group.players.filter(
+    (p) => (group.quizClientVersions?.[p.id] ?? 0) < QB_CLIENT_VERSION,
+  );
+
   const start = async () => {
     if (group.players.length < 2) return Alert.alert("Need at least 2 players!");
-    if (cats.length < MIN_CATEGORIES) {
-      return Alert.alert(`Pick at least ${MIN_CATEGORIES} categories`);
+    if (cats.length !== need) {
+      return Alert.alert(`Pick ${need} categories for the ${show.label}`);
     }
+    if (stale.length > 0) {
+      return Alert.alert(
+        "Some phones need a reload",
+        `${stale.map((p) => p.name).join(", ")} ${stale.length === 1 ? "is" : "are"} on an old version of the app, which can make questions end instantly. Ask them to reload (shake → Reload).`,
+        [
+          { text: "Wait", style: "cancel" },
+          { text: "Start anyway", style: "destructive", onPress: () => void doStart() },
+        ],
+      );
+    }
+    await doStart();
+  };
+
+  const doStart = async () => {
     setStarting(true);
     try {
-      await startQuizBoard(group, { mode, categories: cats });
+      await startQuizBoard(group, { mode, categories: cats, size });
     } catch (e) {
       console.error(e);
       Alert.alert("Couldn't build the board", String((e as Error)?.message ?? e));
@@ -74,9 +119,14 @@ export default function QuizLobbyScreen({ group, playerId }: Props) {
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.marquee}>
           <Text style={displayText(40, QB.gold)}>Quiz Board</Text>
-          <Text style={displayText(13, QB.white)}>
-            ₹1,000 – ₹6,000 · {cats.length} × 6 tiles
-          </Text>
+          {isHost && (
+            <Text style={displayText(13, QB.white)}>
+              {show.emoji} {show.label} ·{" "}
+              {formatRupees(show.rows[0].value)} –{" "}
+              {formatRupees(show.rows[show.rows.length - 1].value)} · {need} ×{" "}
+              {show.rows.length} tiles
+            </Text>
+          )}
         </View>
 
         {isHost && (
@@ -101,26 +151,48 @@ export default function QuizLobbyScreen({ group, playerId }: Props) {
               ))}
             </View>
 
+            <Text style={styles.label}>SHOW LENGTH</Text>
+            <View style={styles.modeRow}>
+              {(["quick", "full"] as QuizBoardSize[]).map((k) => (
+                <TouchableOpacity
+                  key={k}
+                  onPress={() => chooseSize(k)}
+                  style={[styles.mode, size === k && styles.modeOn]}
+                >
+                  <Text style={displayText(18, size === k ? QB.gold : QB.white)}>
+                    {BOARD_SIZES[k].emoji} {BOARD_SIZES[k].label}
+                  </Text>
+                  <Text style={styles.modeDesc}>{BOARD_SIZES[k].blurb}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
             <View style={styles.catHeader}>
               <Text style={styles.label}>
-                CATEGORIES ({cats.length}/{MAX_CATEGORIES})
+                CATEGORIES ({cats.length}/{need})
+                {cats.length >= need ? " · TAP TO SWAP" : ""}
               </Text>
-              <TouchableOpacity onPress={() => setCats(randomCategories())}>
-                <Text style={displayText(13, QB.gold)}>🎲 Random 5</Text>
+              <TouchableOpacity onPress={() => setCats(randomCategories(need))}>
+                <Text style={displayText(13, QB.gold)}>🎲 Random {need}</Text>
               </TouchableOpacity>
             </View>
             <View style={styles.chips}>
               {BOARD_CATEGORIES.map((c) => {
                 const on = cats.includes(c);
-                const full = !on && cats.length >= MAX_CATEGORIES;
                 return (
                   <TouchableOpacity
                     key={c}
                     onPress={() => toggle(c)}
-                    disabled={full}
-                    style={[styles.chip, on && styles.chipOn, full && styles.chipFull]}
+                    style={[styles.chip, on && styles.chipOn]}
                   >
-                    <Text style={displayText(12, on ? "#1A1300" : QB.white)}>
+                    <Text
+                      style={
+                        on
+                          ? displayText(12, QB.ink, false) // dark on gold: no shadow
+                          : displayText(12, QB.white)
+                      }
+                    >
+                      {on ? "✓ " : ""}
                       {QUIZ_CATEGORIES[c].emoji} {QUIZ_CATEGORIES[c].label}
                     </Text>
                   </TouchableOpacity>
@@ -134,7 +206,7 @@ export default function QuizLobbyScreen({ group, playerId }: Props) {
           HOW TO PLAY{isHost ? "" : " — host is setting up the board"}
         </Text>
         <View style={styles.rules}>
-          {(isHost ? RULES[mode] : [...RULES.options.slice(0, 1), "The host picks the mode: Options (4 choices) or Buzzer (answer out loud).", "Wrong answers cost money in both modes, so be careful!"]).map(
+          {(isHost ? RULES[mode] : [...RULES.options.slice(0, 1), "The host picks the mode: Options (4 choices) or Buzzer (answer out loud).", "Wrong answers cost money in both modes, so be careful!", RULES.options[5], RULES.options[6]]).map(
             (r, i) => (
               <Text key={i} style={styles.rule}>
                 {i + 1}. {r}
@@ -142,6 +214,18 @@ export default function QuizLobbyScreen({ group, playerId }: Props) {
             ),
           )}
         </View>
+
+        {stale.length > 0 && (
+          <View style={styles.staleBox}>
+            <Text style={styles.staleTitle}>⚠️ Old app version</Text>
+            <Text style={styles.staleText}>
+              {stale.map((p) => p.name).join(", ")}{" "}
+              {stale.length === 1 ? "needs" : "need"} to reload the app (shake
+              the phone → Reload). Old versions can make questions end the
+              moment they appear.
+            </Text>
+          </View>
+        )}
 
         <Text style={styles.label}>CONTESTANTS ({group.players.length})</Text>
         <View style={styles.chips}>
@@ -151,6 +235,7 @@ export default function QuizLobbyScreen({ group, playerId }: Props) {
                 {p.name}
                 {p.id === playerId ? " (you)" : ""}
                 {p.id === group.hostId ? " ★" : ""}
+                {stale.some((x) => x.id === p.id) ? " ⚠️" : " ✓"}
               </Text>
             </View>
           ))}
@@ -162,7 +247,7 @@ export default function QuizLobbyScreen({ group, playerId }: Props) {
           <RetroButton
             label={starting ? "Building board…" : "Start the show ▶"}
             onPress={start}
-            disabled={starting || cats.length < MIN_CATEGORIES}
+            disabled={starting || cats.length !== need}
           />
         ) : (
           <Text style={[displayText(15, QB.dim), styles.center]}>
@@ -211,10 +296,19 @@ const styles = StyleSheet.create({
     borderWidth: 2,
   },
   chipOn: { backgroundColor: QB.gold, borderColor: QB.goldDark },
-  chipFull: { opacity: 0.4 },
   rules: { backgroundColor: QB.panel, padding: 12, gap: 6 },
   rule: { color: QB.white, fontSize: 14, lineHeight: 20 },
   player: { backgroundColor: QB.panel, paddingHorizontal: 10, paddingVertical: 6 },
+  staleBox: {
+    backgroundColor: "#3A1010",
+    borderWidth: 2,
+    borderColor: "#FF6B3D",
+    padding: 12,
+    marginTop: 8,
+    gap: 4,
+  },
+  staleTitle: { color: "#FFB199", fontSize: 14, fontWeight: "800" },
+  staleText: { color: QB.white, fontSize: 13, lineHeight: 19 },
   footer: { padding: 16, paddingBottom: 28, borderTopWidth: 2, borderTopColor: QB.tileDark },
   center: { textAlign: "center" },
 });

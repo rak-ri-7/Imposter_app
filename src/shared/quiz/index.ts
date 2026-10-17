@@ -279,3 +279,19 @@ export const formatRupees = (amount: number): string => {
     const rest = digits.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',');
     return `${sign}₹${rest},${last3}`;
 };
+
+// ── OPTIONS-ONLY QUESTIONS ──────────────────────────────────────────
+// Questions that only make sense with the choices shown: polarity tokens
+// ("[NOT_A] mammal?") or wording like "Which of these…". Games that ask
+// without options (Quiz Board's buzzer mode) leave them out.
+const CHOICE_TOKENS = /\[(NOT_A|NOT_AN|IS_OR_IS_NOT|NOT_BLANK|CAN_CANNOT|HAVE_DO_NOT)\]/;
+const CHOICE_WORDING =
+    /\b(which|what|who)\s+(one\s+)?(of|among)\s+(these|the following|them)\b|\bthe following\b|\bof these\b|\bamong these\b|\bthese\b/i;
+
+export const needsOptions = (q: QuizQuestion): boolean =>
+    !!q.optionsOnly || CHOICE_TOKENS.test(q.prompt) || CHOICE_WORDING.test(q.prompt);
+
+// Every right answer to a question asked without options (e.g. "Which
+// mammal lays eggs?" → Platypus, Echidna). Empty for options-only ones.
+export const acceptedAnswers = (q: QuizQuestion): string[] =>
+    needsOptions(q) ? [] : [...q.correctPool];

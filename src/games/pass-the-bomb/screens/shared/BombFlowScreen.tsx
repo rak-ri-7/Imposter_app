@@ -32,10 +32,14 @@ import {
   triggerPanic,
   endPersonalityReveal,
   resumeTimer,
+  completePendingPass,
+  resolvePanicOutcome,
   PANIC_THRESHOLD,
   FAILSAFE_GRACE_MS,
   FAILSAFE_RETRY_MS,
 } from "../../logic/timer/game";
+import QuirkRevealCard, { ToxicBoomScreen } from "../timer/QuirkRevealCard";
+import AchievementToast from "../timer/AchievementToast";
 import BombTbcDuelScreen from "../timer/BombTbcDuelScreen";
 import BombHotSeatDuelScreen from "../timer/BombHotSeatDuelScreen";
 import BombPersonalityRevealScreen from "../timer/BombPersonalityRevealScreen";
@@ -48,6 +52,19 @@ import BombMissionsModal from "../timer/BombMissionsModal";
 import BombMissionClaimBar from "../timer/BombMissionClaimBar";
 import { MissionsContext } from "../timer/MissionsButton";
 import { useHostFailover } from "../../../../shared/hooks/useHostFailover";
+import {
+  usePresence,
+  seemsDropped,
+} from "../../../../shared/hooks/usePresence";
+import { getServerNow } from "../../../../shared/firebase/time";
+import AwayOverlay from "../../../../shared/components/AwayOverlay";
+import { continueWithoutAway } from "../../logic/pass/passGame";
+import {
+  continueWithoutAwayTimer,
+  duelistsOf,
+  forceEndRound,
+} from "../../logic/timer/game";
+import DuelRestoreBar from "../timer/DuelRestoreBar";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "BombFlow">;
@@ -82,6 +99,90 @@ export default function BombFlowScreen({ navigation, route }: Props) {
   const prevPhaseRef = useRef(phase);
   const isHost = group?.hostId === playerId;
   useHostFailover(group, playerId);
+
+  // ── When a player drops out ───────────────────────────────────────────
+  // Everyone checks in (usePresence). What happens when a player still in
+  // the game goes quiet depends on where we are:
+  //   • pass mode, or a timer-mode screen with no clock → "pause": cover
+  //     every screen until they're back (or the host continues without them)
+  //   • a live timer-mode round → "end-round": ask the host to end it
+  //   • the live duel → "track": nothing pauses, but note the drop so a
+  //     life lost to it can be restored afterwards (DuelRestoreBar)
+  const passGs = isPassMode
+    ? (group?.gameState as unknown as PassGameState)
+    : null;
+  const inGroup = (id: string) => !!group?.players.some((p) => p.id === id);
+  let awayMode: "pause" | "end-round" | "track" | null = null;
+  let watchIds: string[] = [];
+  if (passGs) {
+    if (passGs.phase === "pass-playing" || passGs.phase === "pass-exploded") {
+      awayMode = "pause";
+      // Defensive: a game saved by an older version may lack these fields.
+      const ghosts = passGs.ghosts ?? [];
+      watchIds = (passGs.sides ?? [])
+        .filter((s) => !ghosts.includes(s.id))
+        .flatMap((s) => s.memberIds ?? [])
+        .filter(inGroup);
+    }
+  } else if (gameState && group) {
+    const alive = group.players
+      .map((p) => p.id)
+      .filter((id) => !gameState.ghosts?.includes(id));
+    if (phase === "reveal" || phase === "playing" || phase === "panic") {
+      awayMode = "end-round";
+      watchIds = alive;
+    } else if (
+      phase === "exploded" ||
+      phase === "replay" ||
+      phase === "duel-intro" ||
+      (phase === "penalty" && !gameState.tbcChallenge)
+    ) {
+      awayMode = "pause";
+      watchIds = alive;
+    } else if (phase === "duel") {
+      awayMode = "track";
+      watchIds = duelistsOf(gameState).filter(inGroup);
+    }
+  }
+  const presence = usePresence(
+    group?.id ?? groupId,
+    playerId,
+    // the duel is tracked separately below, with a tighter limit
+    awayMode === "track" ? [] : watchIds,
+    passGs?.awayIgnored ?? gameState?.awayIgnored,
+  );
+
+  // Duelists this phone saw drop out during the current round's duel.
+  const [duelDrops, setDuelDrops] = useState<{ round: number; ids: string[] }>(
+    { round: -1, ids: [] },
+  );
+  const duelWatch = awayMode === "track" ? watchIds.join(",") : "";
+  const roundNumber = gameState?.roundNumber ?? 0;
+  const noteDuelDrops = (ids: string[]) => {
+    const entries = presence.getEntries();
+    const now = getServerNow();
+    const dropped = ids.filter(
+      (id) => id !== playerId && seemsDropped(entries[id], now),
+    );
+    if (dropped.length === 0) return;
+    setDuelDrops((prev) => {
+      const base = prev.round === roundNumber ? prev.ids : [];
+      const merged = Array.from(new Set([...base, ...dropped]));
+      return merged.length === base.length && prev.round === roundNumber
+        ? prev
+        : { round: roundNumber, ids: merged };
+    });
+  };
+  useEffect(() => {
+    if (!duelWatch) return;
+    const ids = duelWatch.split(",");
+    const t = setInterval(() => noteDuelDrops(ids), 1000);
+    // one last look as the duel ends, so a drop just before the explosion counts
+    return () => {
+      clearInterval(t);
+      noteDuelDrops(ids);
+    };
+  }, [duelWatch, roundNumber]);
 
   // ── Missions: one global button, one modal, one change-detector ──────
   const [showMissions, setShowMissions] = useState(false);
@@ -256,6 +357,45 @@ export default function BombFlowScreen({ navigation, route }: Props) {
     return () => clearInterval(interval);
   }, [isHost, group?.id, phase, gameState?.isPaused, gameState?.pauseResumeAt]);
 
+  // ── Quirks: land a lazy / sneaky pass when its time is up ─────────
+  // Host on time, every other phone as backup; the transaction lands it once.
+  useEffect(() => {
+    if (!group || (phase !== "playing" && phase !== "panic")) return;
+    const pending = gameState?.pendingPass;
+    if (!pending) return;
+    const fireAt = pending.arrivesAt + (isHost ? 0 : FAILSAFE_GRACE_MS);
+    let lastAttempt = 0;
+    const check = () => {
+      const now = Date.now();
+      if (now < fireAt || now - lastAttempt < FAILSAFE_RETRY_MS) return;
+      lastAttempt = now;
+      const g = groupRef.current;
+      if (g) completePendingPass(g);
+    };
+    check();
+    const interval = setInterval(check, 150);
+    return () => clearInterval(interval);
+  }, [isHost, group?.id, phase, gameState?.pendingPass?.arrivesAt, gameState?.pendingPass?.from]);
+
+  // ── Quirks: the Toxic Bomb snapped — give it a beat, then resolve ──
+  useEffect(() => {
+    if (!group || phase !== "panic" || !gameState?.toxicBoom) return;
+    const delay = 2500 + (isHost ? 0 : FAILSAFE_GRACE_MS);
+    let retry: ReturnType<typeof setInterval> | undefined;
+    const t = setTimeout(() => {
+      const run = () => {
+        const g = groupRef.current;
+        if (g) resolvePanicOutcome(g);
+      };
+      run();
+      retry = setInterval(run, FAILSAFE_RETRY_MS * 2);
+    }, delay);
+    return () => {
+      clearTimeout(t);
+      if (retry) clearInterval(retry);
+    };
+  }, [isHost, group?.id, phase, gameState?.toxicBoom]);
+
   useEffect(() => {
     preloadSounds();
     return () => unloadSounds();
@@ -295,7 +435,11 @@ export default function BombFlowScreen({ navigation, route }: Props) {
         <BombPlayScreen group={group} playerId={playerId} />
       );
   } else if (phase === "panic") {
-    content = <BombPanicScreen group={group} playerId={playerId} />;
+    content = gameState!.toxicBoom ? (
+      <ToxicBoomScreen group={group} />
+    ) : (
+      <BombPanicScreen group={group} playerId={playerId} />
+    );
   } else if (phase === "exploded") {
     content = <BombExplodedScreen group={group} playerId={playerId} />;
   } else if (phase === "replay") {
@@ -344,6 +488,9 @@ export default function BombFlowScreen({ navigation, route }: Props) {
 
         <View style={styles.gameContent}>{content}</View>
 
+        {!isPassMode && phase === "playing" && <QuirkRevealCard group={group} />}
+        {!isPassMode && <AchievementToast group={group} playerId={playerId} />}
+
         {myMissions && phase !== "panic" && (
           <BombMissionClaimBar group={group} playerId={playerId} />
         )}
@@ -364,6 +511,37 @@ export default function BombFlowScreen({ navigation, route }: Props) {
                 : `${group.players.find((p) => p.id === verdictFor)?.name ?? "Someone"} has been found guilty.`}
             </Text>
           </View>
+        )}
+
+        {!isPassMode && (phase === "exploded" || phase === "replay") && (
+          <DuelRestoreBar
+            group={group}
+            playerId={playerId}
+            droppedDuringDuel={
+              duelDrops.round === roundNumber ? duelDrops.ids : []
+            }
+          />
+        )}
+
+        {(awayMode === "pause" || awayMode === "end-round") && (
+          <AwayOverlay
+            mode={awayMode}
+            onEndRound={() => forceEndRound(group)}
+            awayIds={presence.awayIds}
+            lastSeen={presence.lastSeen}
+            meOffline={presence.meOffline}
+            isHost={isHost}
+            nameOf={(id) =>
+              group.players.find((p) => p.id === id)?.name ?? "a player"
+            }
+            onContinueWithout={(ids) => {
+              const seen = Object.fromEntries(
+                ids.map((id) => [id, presence.lastSeen[id] ?? 0]),
+              );
+              if (isPassMode) continueWithoutAway(group, playerId, seen);
+              else continueWithoutAwayTimer(group, playerId, seen);
+            }}
+          />
         )}
 
         {myMissions && (

@@ -526,12 +526,18 @@ export const dynamicOptions: Record<string, string[]> = {
     ],
 
     '[OTHER_PLAYERS]': [
-        'from other players',
-        'among the good people waiting for bomb',
+        'among everyone else',
         'without counting yourself',
         'excluding yourself'
     ],
-    '[LETTER_COUNT]': ['no vowels', 'exactly 1 vowel', 'exactly 2 vowels', 'no consonants', 'exactly 1 consonant', 'exactly 2 consonants']
+    '[LETTER_COUNT]': ['no vowels', 'exactly 1 vowel', 'exactly 2 vowels', 'no consonants', 'exactly 1 consonant', 'exactly 2 consonants'],
+
+    '[TASKS]':
+        ['fold their hands',
+            'tell their names',
+            'cough',
+            'form '
+        ]
 };
 
 
@@ -1144,7 +1150,7 @@ export const instructions: Instruction[] = [
 
     {
         id: 'c2',
-        text: 'Pass to whoever you make eye contact with first',
+        text: 'Pass to whoever makes eye contact with you first',
         category: 'chaos',
     },
 
@@ -1455,6 +1461,14 @@ export const instructions: Instruction[] = [
         category: 'chaos',
         fallback: 'confidentGuess',
     },
+
+    {
+        id: 'c49',
+        text: 'Tell everyone to [TASKS]. [SPEED] to do it, gets the bomb ',
+        category: 'chaos',
+        fallback: 'confidentGuess',
+    },
+
 
 ];
 

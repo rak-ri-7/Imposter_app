@@ -1,4 +1,4 @@
-import { doc, updateDoc } from "firebase/firestore";
+import { doc, updateDoc, runTransaction } from "firebase/firestore";
 import { db } from "../../../shared/firebase/config";
 import { Group, ImposterGameState, ImposterSettings } from "../../../shared/types";
 import { addScore, returnToMenu } from "../../../shared/firebase/groups";
@@ -80,6 +80,27 @@ export const useHint = async (
     'gameState.currentHint': hintText,
   });
   return hintText;
+};
+
+// ── PLAYER DROPPED OUT ───────────────────────────────────────────
+// While a player is offline every phone waits (see ImposterFlowScreen).
+// The host can carry on without them; `lastSeen` is each one's last
+// check-in, so the choice lapses as soon as they check in again.
+export const continueWithoutAwayImposter = async (
+  groupId: string,
+  requesterId: string,
+  lastSeen: Record<string, number>
+): Promise<void> => {
+  const groupRef = doc(db, 'groups', groupId);
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(groupRef);
+    if (!snap.exists() || (snap.data() as Group).hostId !== requesterId) return;
+    const updates: Record<string, unknown> = {};
+    for (const [id, ms] of Object.entries(lastSeen)) {
+      updates[`gameState.awayIgnored.${id}`] = ms;
+    }
+    if (Object.keys(updates).length > 0) tx.update(groupRef, updates);
+  });
 };
 
 export const startVoting = async (groupId: string): Promise<void> => {

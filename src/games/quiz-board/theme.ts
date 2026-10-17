@@ -20,6 +20,7 @@ export const QB = {
     redDark: '#8E1B24',
     green: '#2BD576',
     shadow: '#000000',
+    ink: '#1A1300',         // dark text on gold
 };
 
 export const FONTS = {
@@ -44,14 +45,16 @@ export const tvShadow: TextStyle = {
     textShadowRadius: 0.1,
 };
 
-export const displayText = (size: number, color = QB.white): TextStyle => ({
+// `shadow` false for dark text on light (gold) backgrounds: a black drop
+// shadow behind dark letters reads as doubled, blurry text.
+export const displayText = (size: number, color = QB.white, shadow = true): TextStyle => ({
     fontFamily: FONTS.display,
     fontWeight: 'bold',
     fontSize: size,
     color,
     textTransform: 'uppercase',
     letterSpacing: 0.5,
-    ...tvShadow,
+    ...(shadow ? tvShadow : {}),
 });
 
 export const digitText = (size: number, color = QB.gold): TextStyle => ({

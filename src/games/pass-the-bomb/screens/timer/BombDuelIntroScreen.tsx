@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -6,18 +6,24 @@ import {
   StyleSheet,
   Animated,
   Vibration,
+  ScrollView,
+  Alert,
 } from "react-native";
 import { Group, BombGameState } from "../../../../shared/types";
-import { markDuelReady, setDuelMode } from "../../logic/timer/game";
-import { startDuelFastestFinger } from "../../logic/timer/duelFastestFinger";
-import { startHotSeatDuel } from "../../logic/timer/hotSeatDuel";
+import { markDuelReady, setDuelMode, startDuel } from "../../logic/timer/game";
+import DuelBetCard from "./DuelBetCard";
+import { DuelAnnounceToast, HotPotatoMoodsToast } from "./DuelToasts";
 
 type Props = {
   group: Group;
   playerId: string;
 };
 
-const DUEL_RULES: Record<string, { title: string; lines: string[] }> = {
+type DuelMode = "hot-potato" | "fastest-finger" | "hot-seat";
+const DUEL_MODES: DuelMode[] = ["hot-potato", "fastest-finger", "hot-seat"];
+
+// Shown on every phone: duellists and spectators read the same rules.
+const DUEL_RULES: Record<DuelMode, { title: string; lines: string[] }> = {
   "hot-potato": {
     title: "🔥 HOT POTATO",
     lines: [
@@ -29,12 +35,22 @@ const DUEL_RULES: Record<string, { title: string; lines: string[] }> = {
   "fastest-finger": {
     title: "⚡ FASTEST FINGER",
     lines: [
-      "Answer first and answer right to get rid of the bomb. The fuse is hidden.",
+      "A question pops up on both phones. Both of you can answer.",
+      "Holding the bomb? Answer right, then tap Pass to send it over with a new question.",
+      "Not holding it? Answer right before the holder does and they're stuck with it for 3s.",
+      "Holder answers wrong: locked with the bomb for 3s.",
+      "Nobody gets it in 8s? A new question appears.",
+      "The fuse is hidden (25–45s). Holding it when it blows costs you a life.",
     ],
   },
   "hot-seat": {
     title: "🪑 HOT SEAT",
-    lines: ["Answer under pressure while a hidden fuse burns."],
+    lines: [
+      "Only the player holding the bomb answers. The other one watches and sweats.",
+      "Answer right, then tap Pass: the bomb and a fresh question go to your opponent.",
+      "Wrong answer: that option is crossed out and you're locked out for 3s, then 5s, then 8s for each mistake on the same question.",
+      "The fuse is hidden (25–45s). Holding it when it blows costs you a life.",
+    ],
   },
 };
 
@@ -46,46 +62,36 @@ export default function BombDuelIntroScreen({ group, playerId }: Props) {
   const isFinalist = activePlayers.some((p) => p.id === playerId);
   const readyPlayers = gameState.duelReadyPlayers ?? [];
   const amReady = readyPlayers.includes(playerId);
+  const allReady =
+    activePlayers.length > 0 &&
+    activePlayers.every((p) => readyPlayers.includes(p.id));
+  const notReady = activePlayers.filter((p) => !readyPlayers.includes(p.id));
   const [submitting, setSubmitting] = useState(false);
+  const [starting, setStarting] = useState(false);
 
   const isHost = group.hostId === playerId;
-  const duelMode = gameState.duelMode ?? "hot-potato";
+  const duelMode: DuelMode = gameState.duelMode ?? "hot-potato";
+  const hostName =
+    group.players.find((p) => p.id === group.hostId)?.name ?? "The host";
+
+  // ── Full-screen cards: the announcement first, then (Hot Potato only)
+  // the moods. The moods card comes back whenever the host switches to
+  // Hot Potato, once per switch.
+  const [toast, setToast] = useState<"announce" | "moods" | null>("announce");
+  const moodsShownFor = useRef<string | null>(null);
+  const roundKey = `${gameState.roundNumber}`;
+  useEffect(() => {
+    if (toast !== null) return; // the announcement (or another card) is up
+    if (duelMode === "hot-potato" && moodsShownFor.current !== roundKey) {
+      moodsShownFor.current = roundKey;
+      setToast("moods");
+    }
+    if (duelMode !== "hot-potato") moodsShownFor.current = null;
+  }, [toast, duelMode, roundKey]);
 
   const [scaleAnim] = useState(new Animated.Value(0.7));
   const [fadeAnim] = useState(new Animated.Value(0));
   const [pulseAnim] = useState(new Animated.Value(1));
-
-  useEffect(() => {
-    const readyPlayers = gameState.duelReadyPlayers ?? [];
-    const activePlayers = group.players.filter(
-      (p) => !gameState.ghosts.includes(p.id),
-    );
-    const bothReady = activePlayers.every((p) => readyPlayers.includes(p.id));
-    if (
-      isHost &&
-      bothReady &&
-      duelMode === "fastest-finger" &&
-      gameState.phase !== "duel"
-    ) {
-      startDuelFastestFinger(group);
-    }
-  }, [gameState.duelReadyPlayers, duelMode, gameState.phase]);
-
-  useEffect(() => {
-    const readyPlayers = gameState.duelReadyPlayers ?? [];
-    const activePlayers = group.players.filter(
-      (p) => !gameState.ghosts.includes(p.id),
-    );
-    const bothReady = activePlayers.every((p) => readyPlayers.includes(p.id));
-    if (
-      isHost &&
-      bothReady &&
-      duelMode === "hot-seat" &&
-      gameState.phase !== "duel"
-    ) {
-      startHotSeatDuel(group);
-    }
-  }, [gameState.duelReadyPlayers, duelMode, gameState.phase]);
 
   useEffect(() => {
     Vibration.vibrate([100, 80, 100]);
@@ -129,8 +135,38 @@ export default function BombDuelIntroScreen({ group, playerId }: Props) {
     }
   };
 
+  const handleStart = async () => {
+    if (!allReady || starting) return;
+    setStarting(true);
+    try {
+      await startDuel(group);
+    } catch (e) {
+      console.error(e);
+      Alert.alert("Couldn't start the duel", "Tap Start Duel again to retry.");
+    } finally {
+      setStarting(false);
+    }
+  };
+
   return (
-    <View style={styles.container}>
+    <>
+    {toast === "announce" && (
+      <DuelAnnounceToast
+        round={gameState.duelRoundIndex ?? 1}
+        duellists={activePlayers.map((p) => ({
+          id: p.id,
+          name: p.name,
+          lives: gameState.lives[p.id] ?? 0,
+        }))}
+        viewerId={playerId}
+        onClose={() => setToast(null)}
+      />
+    )}
+    {toast === "moods" && <HotPotatoMoodsToast onClose={() => setToast(null)} />}
+    <ScrollView
+      style={styles.scroll}
+      contentContainerStyle={styles.container}
+    >
       <Animated.View
         style={[
           styles.content,
@@ -145,67 +181,60 @@ export default function BombDuelIntroScreen({ group, playerId }: Props) {
         <Text style={styles.duelSubtitle}>Only one walks away</Text>
 
         <View style={styles.finalistsBox}>
-          {activePlayers.map((p, i) => (
+          {activePlayers.map((p) => (
             <View key={p.id} style={styles.finalistRow}>
               <Text style={styles.finalistName}>
                 {p.name}
                 {p.id === playerId ? " (you)" : ""}
               </Text>
               <Text style={styles.finalistStatus}>
-                {readyPlayers.includes(p.id) ? "✅ Ready" : "⏳ Waiting..."}
+                {readyPlayers.includes(p.id) ? "✅ Ready" : "⏳ Reading rules..."}
               </Text>
             </View>
           ))}
         </View>
 
-        <View style={styles.rulesBox}>
-          <Text style={styles.rulesTitle}>{DUEL_RULES[duelMode]?.title}</Text>
-          {(DUEL_RULES[duelMode]?.lines ?? []).map((line, i) => (
-            <Text
-              key={i}
-              style={[styles.rulesText, i === 0 && styles.rulesTextLead]}
+        <Text style={styles.modeSelectLabel}>
+          {isHost
+            ? "DUEL MODE · TAP TO PICK"
+            : `DUEL MODES · ${hostName.toUpperCase()} PICKS`}
+        </Text>
+        {DUEL_MODES.map((m) => {
+          const picked = m === duelMode;
+          const rules = DUEL_RULES[m];
+          return (
+            <TouchableOpacity
+              key={m}
+              activeOpacity={isHost ? 0.7 : 1}
+              disabled={!isHost}
+              onPress={() => setDuelMode(group.id, m).catch(console.error)}
+              style={[styles.rulesBox, picked && styles.rulesBoxPicked]}
             >
-              {line}
-            </Text>
-          ))}
-        </View>
+              <View style={styles.rulesHeader}>
+                <Text style={[styles.rulesTitle, !picked && styles.dimTitle]}>
+                  {rules.title}
+                </Text>
+                {picked && <Text style={styles.pickedTag}>HOST'S PICK</Text>}
+              </View>
+              {rules.lines.map((line, i) => (
+                <Text
+                  key={i}
+                  style={[
+                    styles.rulesText,
+                    picked && styles.rulesTextPicked,
+                    picked && i === 0 && styles.rulesTextLead,
+                  ]}
+                >
+                  • {line}
+                </Text>
+              ))}
+            </TouchableOpacity>
+          );
+        })}
 
-        {isHost && (
-          <View style={styles.modeSelectBox}>
-            <Text style={styles.modeSelectLabel}>DUEL MODE</Text>
-            <View style={styles.modeSelectRow}>
-              <TouchableOpacity
-                style={[
-                  styles.modeBtn,
-                  duelMode === "hot-potato" && styles.modeBtnActive,
-                ]}
-                onPress={() => setDuelMode(group.id, "hot-potato")}
-              >
-                <Text style={styles.modeBtnText}>🔥 Hot Potato</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.modeBtn,
-                  duelMode === "fastest-finger" && styles.modeBtnActive,
-                ]}
-                onPress={() => setDuelMode(group.id, "fastest-finger")}
-              >
-                <Text style={styles.modeBtnText}>⚡ Fastest Finger</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[
-                  styles.modeBtn,
-                  duelMode === "hot-seat" && styles.modeBtnActive,
-                ]}
-                onPress={() => setDuelMode(group.id, "hot-seat")}
-              >
-                <Text style={styles.modeBtnText}>🪑 Hot Seat</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
+        <DuelBetCard group={group} playerId={playerId} />
 
-        {isFinalist ? (
+        {isFinalist && (
           <TouchableOpacity
             style={[styles.readyBtn, amReady && styles.readyBtnDone]}
             onPress={handleReady}
@@ -215,23 +244,48 @@ export default function BombDuelIntroScreen({ group, playerId }: Props) {
               {amReady ? "✅ You're Ready" : "I'M READY 💪"}
             </Text>
           </TouchableOpacity>
+        )}
+
+        {isHost ? (
+          <TouchableOpacity
+            style={[
+              styles.startBtn,
+              (!allReady || starting) && styles.startBtnOff,
+            ]}
+            onPress={handleStart}
+            disabled={!allReady || starting}
+          >
+            <Text style={styles.readyBtnText}>
+              {starting
+                ? "Starting..."
+                : allReady
+                  ? "START DUEL ▶"
+                  : `Waiting for ${notReady.map((p) => p.name).join(" & ")}...`}
+            </Text>
+          </TouchableOpacity>
         ) : (
           <Text style={styles.spectatorText}>
-            👀 Watching from the sidelines...
+            {allReady
+              ? `Both ready. Waiting for ${hostName} to start the duel...`
+              : isFinalist
+                ? "Read the rules, then tap I'M READY."
+                : "👀 Watching from the sidelines..."}
           </Text>
         )}
       </Animated.View>
-    </View>
+    </ScrollView>
+    </>
   );
 }
 
 const styles = StyleSheet.create({
+  scroll: { flex: 1, backgroundColor: "#0D0D0D" },
   container: {
-    flex: 1,
-    backgroundColor: "#0D0D0D",
+    flexGrow: 1,
     alignItems: "center",
     justifyContent: "center",
     padding: 24,
+    paddingBottom: 40,
   },
   content: { alignItems: "center", width: "100%" },
   duelTitle: {
@@ -266,11 +320,40 @@ const styles = StyleSheet.create({
   finalistName: { color: "#fff", fontSize: 16, fontWeight: "600" },
   finalistStatus: { color: "#888", fontSize: 13 },
   rulesText: {
-    color: "#999",
+    color: "#777",
     fontSize: 12,
-    textAlign: "center",
     lineHeight: 18,
   },
+  rulesTextPicked: { color: "#ddd", fontSize: 13, lineHeight: 19 },
+  rulesBoxPicked: { borderColor: "#FF4500", backgroundColor: "#211410" },
+  rulesHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 2,
+  },
+  dimTitle: { color: "#aaa" },
+  pickedTag: {
+    color: "#0D0D0D",
+    backgroundColor: "#FF4500",
+    fontSize: 10,
+    fontWeight: "900",
+    letterSpacing: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    overflow: "hidden",
+  },
+  startBtn: {
+    backgroundColor: "#4CAF50",
+    borderRadius: 16,
+    paddingVertical: 18,
+    paddingHorizontal: 20,
+    width: "100%",
+    alignItems: "center",
+    marginTop: 12,
+  },
+  startBtnOff: { backgroundColor: "#2A2A2A" },
   readyBtn: {
     backgroundColor: "#FF4500",
     borderRadius: 16,
@@ -285,7 +368,12 @@ const styles = StyleSheet.create({
     borderColor: "#4CAF50",
   },
   readyBtnText: { color: "#fff", fontSize: 18, fontWeight: "bold" },
-  spectatorText: { color: "#555", fontSize: 14 },
+  spectatorText: {
+    color: "#888",
+    fontSize: 14,
+    textAlign: "center",
+    marginTop: 14,
+  },
 
   modeSelectBox: { width: "100%", marginBottom: 20 },
   modeSelectLabel: {
@@ -314,7 +402,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#333",
     padding: 14,
-    marginBottom: 24,
+    marginBottom: 12,
     gap: 6,
   },
   rulesTitle: {
@@ -322,8 +410,6 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: "900",
     letterSpacing: 2,
-    textAlign: "center",
-    marginBottom: 2,
   },
 
   rulesTextLead: { color: "#fff", fontSize: 13, fontWeight: "700" },

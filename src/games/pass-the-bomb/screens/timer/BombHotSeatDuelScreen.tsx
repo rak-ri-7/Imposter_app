@@ -5,6 +5,7 @@ import {
   TouchableOpacity,
   StyleSheet,
   Vibration,
+  ScrollView,
 } from "react-native";
 import { Group, BombGameState } from "../../../../shared/types";
 import {
@@ -14,6 +15,7 @@ import {
 } from "../../logic/timer/hotSeatDuel";
 import { getDuelFffHint, explodeDuelFuse } from "../../logic/timer/duelFastestFinger";
 import { FAILSAFE_GRACE_MS, FAILSAFE_RETRY_MS } from "../../logic/timer/game";
+import DuelSpectatorQuiz from "./DuelSpectatorQuiz";
 type Props = { group: Group; playerId: string };
 
 export default function BombHotSeatDuelScreen({ group, playerId }: Props) {
@@ -115,8 +117,32 @@ export default function BombHotSeatDuelScreen({ group, playerId }: Props) {
   const optionsRemaining =
     (activeQuiz?.question.options.length ?? 4) - eliminated.length;
 
+  // Everyone but the holder (the opponent and knocked-out players) watches
+  // the same question: wrong picks crossed out, the right one shown once
+  // the holder gets it.
+  const lastWrong = eliminated.length
+    ? activeQuiz?.question.options[eliminated[eliminated.length - 1]]?.text
+    : undefined;
+  const correctIndex =
+    activeQuiz?.question.options.findIndex((o) => o.correct) ?? -1;
+  const watcherView =
+    !isHolder && activeQuiz ? (
+      <DuelSpectatorQuiz
+        prompt={activeQuiz.question.prompt}
+        options={activeQuiz.question.options}
+        eliminated={eliminated}
+        picksByOption={
+          canPass && correctIndex >= 0 ? { [correctIndex]: [holderName] } : {}
+        }
+        revealCorrect={canPass}
+      />
+    ) : null;
+
   return (
-    <View style={styles.container}>
+    <ScrollView
+      style={styles.scroll}
+      contentContainerStyle={styles.container}
+    >
       <Text style={styles.duelBanner}>🪑 THE HOT SEAT</Text>
       <Text style={styles.hint}>{hint}</Text>
 
@@ -131,13 +157,17 @@ export default function BombHotSeatDuelScreen({ group, playerId }: Props) {
           <Text style={styles.lockedText}>
             {isHolder
               ? `❌ Wrong! Locked for ${Math.ceil(lockRemaining)}s`
-              : `🔒 ${holderName} guessed wrong — locked for ${Math.ceil(lockRemaining)}s`}
+              : `🔒 ${holderName} picked ${lastWrong ? `"${lastWrong}"` : "wrong"} ❌ — locked for ${Math.ceil(lockRemaining)}s`}
           </Text>
           <Text style={styles.lockedSub}>
             {optionsRemaining} option{optionsRemaining === 1 ? "" : "s"} left
           </Text>
         </View>
+      ) : null}
+      {lockedUntil ? (
+        watcherView
       ) : canPass ? (
+        <>
         <View style={styles.canPassBox}>
           {isHolder ? (
             <>
@@ -160,9 +190,13 @@ export default function BombHotSeatDuelScreen({ group, playerId }: Props) {
             </Text>
           )}
         </View>
+        {watcherView}
+        </>
       ) : activeQuiz ? (
         <>
-          <Text style={styles.prompt}>{activeQuiz.question.prompt}</Text>
+          {isHolder && (
+            <Text style={styles.prompt}>{activeQuiz.question.prompt}</Text>
+          )}
           {isHolder ? (
             <View style={styles.optionsGrid}>
               {activeQuiz.question.options.map((opt, index) => {
@@ -190,9 +224,7 @@ export default function BombHotSeatDuelScreen({ group, playerId }: Props) {
               })}
             </View>
           ) : (
-            <Text style={styles.spectatorNote}>
-              👀 Watching {holderName} work through the options...
-            </Text>
+            watcherView
           )}
           {wrongCount > 0 && (
             <Text style={styles.wrongCountNote}>
@@ -204,16 +236,18 @@ export default function BombHotSeatDuelScreen({ group, playerId }: Props) {
       ) : (
         <Text style={styles.loadingText}>Loading question...</Text>
       )}
-    </View>
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
+  scroll: { flex: 1, backgroundColor: "#0D0D0D" },
   container: {
-    flex: 1,
+    flexGrow: 1,
     backgroundColor: "#0D0D0D",
     padding: 20,
     paddingTop: 60,
+    paddingBottom: 32,
   },
   duelBanner: {
     color: "#FFD700",

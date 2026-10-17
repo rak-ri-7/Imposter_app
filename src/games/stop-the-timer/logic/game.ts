@@ -6,6 +6,11 @@ import { returnToMenu } from '../../../shared/firebase/groups';
 import { generateQuestionForRound } from '../data/questions';
 
 export const COUNTDOWN_SECONDS = 10;
+export const HARD_COUNTDOWN_SECONDS = 15; // hard questions need longer to work out
+
+// Seconds to work out the answer before the hidden timer starts.
+export const countdownSecondsFor = (difficulty?: string): number =>
+    difficulty === 'hard' ? HARD_COUNTDOWN_SECONDS : COUNTDOWN_SECONDS;
 export const MAX_TIMER_SECONDS = 34;
 export const MAX_TIMER_MS = MAX_TIMER_SECONDS * 1000; // stops must land strictly before this
 
@@ -144,6 +149,49 @@ export const nextRound = async (groupId: string): Promise<void> => {
             // Last 12 question types, so the generator can avoid repeats.
             'gameState.recentTemplates': [...recent, question.templateId].slice(-12),
         });
+    });
+};
+
+// ── PLAYER DROPPED OUT ───────────────────────────────────────────
+// The host can void the round in progress: it jumps to the result screen
+// with no points for anyone (marked as already awarded, so ending the game
+// can't score it later). Everyone then waits there until the player is
+// back, or the host carries on without them.
+export const voidTimerRound = async (
+    groupId: string,
+    requesterId: string,
+    awayIds: string[]
+): Promise<void> => {
+    await runTransaction(db, async (tx) => {
+        const cur = await readTimerState(tx, groupId);
+        if (!cur || cur.data.hostId !== requesterId) return;
+        const { gameState } = cur;
+        if (gameState.phase !== 'question' && gameState.phase !== 'running') return;
+        tx.update(cur.groupRef, {
+            status: 'result',
+            'gameState.phase': 'result',
+            'gameState.finalStops': {},
+            'gameState.pointsAwardedRound': gameState.roundNumber,
+            'gameState.voidedRound': { round: gameState.roundNumber, awayIds },
+        });
+    });
+};
+
+// `lastSeen` is each player's last check-in, so the choice lapses as soon
+// as they check in again.
+export const continueWithoutAwayTimerGame = async (
+    groupId: string,
+    requesterId: string,
+    lastSeen: Record<string, number>
+): Promise<void> => {
+    await runTransaction(db, async (tx) => {
+        const cur = await readTimerState(tx, groupId);
+        if (!cur || cur.data.hostId !== requesterId) return;
+        const updates: Record<string, unknown> = {};
+        for (const [id, ms] of Object.entries(lastSeen)) {
+            updates[`gameState.awayIgnored.${id}`] = ms;
+        }
+        if (Object.keys(updates).length > 0) tx.update(cur.groupRef, updates);
     });
 };
 

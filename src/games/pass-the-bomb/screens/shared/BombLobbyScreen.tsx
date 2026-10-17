@@ -12,6 +12,8 @@ import {
 } from "react-native";
 import { Group, BombTimerMode } from "../../../../shared/types";
 import { startBombGame } from "../../logic/timer/game";
+import BombCollectionModal, { collectionCount } from "../timer/BombCollectionModal";
+import { ALL_QUIRK_VARIANTS } from "../../logic/timer/bombQuirks";
 import { setBombLobby } from "../../../../shared/firebase/groups";
 import {
   startPassGame,
@@ -221,6 +223,8 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
     </View>
   );
 
+  const [showCollection, setShowCollection] = useState(false);
+
   const timerRules = (
     <View style={styles.rulesBox}>
       <Text style={styles.rulesTitle}>HOW TO PLAY — TIMER MODE</Text>
@@ -232,11 +236,24 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
       <Text style={styles.rule}>⚠️ At panic time — cut red or blue wire</Text>
       <Text style={styles.rule}>💥 Wrong wire or no time = lose a life</Text>
       <Text style={styles.rule}>❤️ 3 lives each — last one standing wins!</Text>
+      <TouchableOpacity
+        style={styles.collectionBtn}
+        onPress={() => setShowCollection(true)}
+      >
+        <Text style={styles.collectionBtnText}>
+          📖 Bomb Collection · {collectionCount(group)}/{ALL_QUIRK_VARIANTS.length} found
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 
   return (
     <View style={styles.container}>
+      <BombCollectionModal
+        group={group}
+        visible={showCollection}
+        onClose={() => setShowCollection(false)}
+      />
       <Text style={styles.title}>💣 Pass the Bomb</Text>
       <Text style={styles.subtitle}>Social deduction under pressure</Text>
 
@@ -564,6 +581,16 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
 }
 
 const styles = StyleSheet.create({
+  collectionBtn: {
+    marginTop: 10,
+    backgroundColor: "#1E1A0A",
+    borderWidth: 1,
+    borderColor: "#FFD700",
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: "center",
+  },
+  collectionBtnText: { color: "#FFD700", fontSize: 14, fontWeight: "800" },
   container: {
     flex: 1,
     backgroundColor: "#0D0D0D",

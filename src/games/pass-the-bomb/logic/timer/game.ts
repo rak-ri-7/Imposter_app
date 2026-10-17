@@ -1,6 +1,45 @@
 import { doc, updateDoc, deleteField, getDoc, runTransaction } from 'firebase/firestore';
 import { db } from '../../../../shared/firebase/config';
-import { Group, BombGameState, PassDispute, WireBet } from '../../../../shared/types';
+import {
+    Group,
+    BombGameState,
+    PassDispute,
+    WireBet,
+    BombQuirkState,
+    BombCrush,
+    PendingPass,
+    QuirkDetail,
+    RoundQuirk,
+    PassEvent,
+} from '../../../../shared/types';
+import {
+    QuirkVariant,
+    QUIRK_INFO,
+    QUIRK_REVEAL_MS,
+    CRUSH_RECEIPTS,
+    STRANGER_PASSES,
+    LAZY_HOLD_MS,
+    LAZY_DELAY_MS,
+    LAZY_WAKE_MS,
+    CRUSH_TAPS_MIN,
+    CRUSH_TAPS_MAX,
+    TOXIC_CALM_MS,
+    TOXIC_MAX_TAPS,
+    TOXIC_SPEEDUP,
+    TOXIC_BURN_S,
+    CUDDLE_MIN_MS,
+    CUDDLE_MAX_MS,
+    TWOFACED_CHANCE,
+    SNEAK_MS,
+    OBSESSED_MAX_RETURNS,
+    STRANGER_BITE_S,
+    STRANGER_PANIC_BELOW_S,
+    GASLIGHT_MAX_BITE_S,
+    SEETHING_SPEED,
+    randInt,
+    variantFor,
+    strangerFleeChance,
+} from './bombQuirks';
 import {
     getRandomInstruction,
     getRandomPersonality,
@@ -12,12 +51,15 @@ import { assignMissions } from '../../data/missions';
 import { applyMissionEvent, applyRoundEndMissions } from './missionEngine';
 import { buildActiveQuiz } from './Fastestfinger';
 import { FUSE_POINTS, applyFusePoints, ROUND_WIN_SCORE, GAME_WIN_SCORE_BONUS, RUNNER_UP_SCORE_BONUS, markDisputeOutcome } from './bombHelpers';
-import { settleWinnerBets } from './betEngine';
+import { settleBets, settleWinnerBets } from './betEngine';
+import { FP_PER_POINT } from '../../data/betOdds';
 import { payGhostStipends } from './ghostEconomy';
 import { isBoomerangPass } from './boomerang';
 import { getRunnerUp } from './placings';
 import { addScore } from '../../../../shared/firebase/groups';
 import { buildHotPotatoStart, hotPotatoResetFields } from './hotPotatoDuel';
+import { startDuelFastestFinger } from './duelFastestFinger';
+import { startHotSeatDuel } from './hotSeatDuel';
 
 
 
@@ -57,8 +99,8 @@ const MAX_ROUND_SUMMARIES = 10;
 const REVEAL_DURATION_MS = 3000;
 
 export const ITEM_PRICES = {
-    WIRE_REVEALER: 25,
-    BOMB_SHIELD: 40,
+    WIRE_REVEALER: 20,
+    BOMB_SHIELD: 30,
 } as const;
 
 const REVEALER_ACCURACY_START = 85;
@@ -130,18 +172,41 @@ const claimRoundAdvance = async (groupId: string, roundNumber: number): Promise<
         if (!snap.exists()) return;
         const gameState = snap.data().gameState as BombGameState;
         if (gameState.phase !== 'replay') return;
-        if (gameState.roundAdvanceClaimed === roundNumber) return;
-        transaction.update(groupRef, { 'gameState.roundAdvanceClaimed': roundNumber });
+        // Someone is already advancing this round, unless that claim is old:
+        // still on the replay long after claiming means that advance failed.
+        const claimAge = Date.now() - (gameState.roundAdvanceClaimedAt ?? 0);
+        if (gameState.roundAdvanceClaimed === roundNumber && claimAge < STALE_CLAIM_MS) return;
+        transaction.update(groupRef, {
+            'gameState.roundAdvanceClaimed': roundNumber,
+            'gameState.roundAdvanceClaimedAt': Date.now(),
+        });
         claimed = true;
     });
     return claimed;
 };
 
+const STALE_CLAIM_MS = 15_000;
+
+// The advance failed: let the host's Next Round button work again.
+const releaseRoundAdvance = async (groupId: string, roundNumber: number): Promise<void> => {
+    const groupRef = doc(db, 'groups', groupId);
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(groupRef);
+        if (!snap.exists()) return;
+        const gameState = snap.data().gameState as BombGameState;
+        if (gameState.phase !== 'replay' || gameState.roundAdvanceClaimed !== roundNumber) return;
+        transaction.update(groupRef, {
+            'gameState.roundAdvanceClaimed': deleteField(),
+            'gameState.roundAdvanceClaimedAt': deleteField(),
+        });
+    });
+};
+
 
 
 export const SHOP_PRICES = {
-    BETTING_TICKET: 30,
-    TBC_TICKET: 40, // your call on pricing — placeholder
+    BETTING_TICKET: 20,
+    TBC_TICKET: 30,
 } as const;
 
 export const purchaseBettingTicket = async (
@@ -451,7 +516,8 @@ export const startBombGame = async (
         used.push(instruction.id);
     }
 
-    const missionMap = assignMissions(group.players);
+    // Missions are retired (hidden achievements replaced them).
+    const missionMap = {};
 
     const lives: Record<string, number> = {};
     playerIds.forEach((id) => (lives[id] = 3));
@@ -536,13 +602,458 @@ export const startBombGame = async (
 
 // ── PASS BOMB ────────────────────────────────────────────────────
 export type PassResult =
-    | { success: true }
+    | { success: true; pending?: boolean; woke?: boolean }
     | {
         success: false;
-        reason: 'wrong-answer' | 'clingy-locked' | 'stale';
+        reason:
+        | 'wrong-answer' | 'clingy-locked' | 'stale'
+        | 'quirk-reveal'   // the mid-game quirk card is up (fuse paused)
+        | 'in-transit'     // a lazy / sneaky pass is still on its way
+        | 'crush'          // crush: it won't let go yet, tap again
+        | 'toxic'          // toxic: impatient tap, the fuse sped up
+        | 'toxic-boom'     // toxic: the 3rd impatient tap blew it
+        | 'cuddled'        // cuddler: stuck in a hug for a few seconds
+        | 'rebound';       // rebound: the pass bounced straight back
         penaltySeconds?: number;
         remainingLockMs?: number;
     };
+
+// ── QUIRK PLUMBING (rules and words live in bombQuirks.ts) ──────────
+
+// Quirks only exist in normal, live timer rounds.
+const quirksLive = (gs: BombGameState): boolean =>
+    gs.phase === 'playing' && !gs.duelRound && gs.personalityEffect !== 'quiz';
+
+const cloneQuirks = (gs: BombGameState): BombQuirkState =>
+    JSON.parse(JSON.stringify(gs.bombQuirks ?? {}));
+
+// Firestore rejects undefined: JSON drops it.
+const cleanQuirks = (q: BombQuirkState): BombQuirkState => JSON.parse(JSON.stringify(q));
+
+// The timer as it will be once `updates` land — for follow-up maths.
+const timerView = (gs: BombGameState, updates: Record<string, unknown>): BombGameState => ({
+    ...gs,
+    timerDuration: (updates['gameState.timerDuration'] as number | undefined) ?? gs.timerDuration,
+    timerStartedAt: (updates['gameState.timerStartedAt'] as number | undefined) ?? gs.timerStartedAt,
+    speedMultiplier: (updates['gameState.speedMultiplier'] as number | undefined) ?? gs.speedMultiplier,
+    isPaused: (updates['gameState.isPaused'] as boolean | undefined) ?? gs.isPaused,
+    pausedAt: (updates['gameState.pausedAt'] as number | undefined) ?? gs.pausedAt,
+});
+
+// Restart the clock at `now` with `remainingSec` left (optionally a new speed).
+const reanchorTimer = (
+    updates: Record<string, unknown>,
+    gs: BombGameState,
+    now: number,
+    remainingSec: number,
+    speed?: number
+) => {
+    const view = timerView(gs, updates);
+    updates['gameState.timerDuration'] = Math.max(0, remainingSec);
+    updates['gameState.timerStartedAt'] = now;
+    updates['gameState.speedMultiplier'] = speed ?? view.speedMultiplier;
+    // a paused clock is frozen at pausedAt, which must match the new anchor
+    if (view.isPaused) updates['gameState.pausedAt'] = now;
+};
+
+// Freeze the fuse until `until`. An existing pause keeps its start, and its
+// end only ever moves later. resumeTimer (every phone's watcher) unfreezes it.
+const pauseFuseUntil = (
+    updates: Record<string, unknown>,
+    gs: BombGameState,
+    now: number,
+    until: number
+) => {
+    const view = timerView(gs, updates);
+    const pausedAt = view.isPaused && view.pausedAt ? view.pausedAt : now;
+    const existingEnd = Math.max(
+        gs.isPaused ? gs.pauseResumeAt ?? 0 : 0,
+        (updates['gameState.pauseResumeAt'] as number | undefined) ?? 0
+    );
+    updates['gameState.isPaused'] = true;
+    updates['gameState.pausedAt'] = pausedAt;
+    updates['gameState.pauseResumeAt'] = Math.max(existingEnd, until);
+};
+
+// The full-screen mid-game card on every phone, with the fuse paused.
+// Also records the find in the round log and the group's Bomb Collection.
+// Returns when the card (and the pause) ends.
+const revealQuirk = (
+    updates: Record<string, unknown>,
+    gs: BombGameState,
+    data: Group,
+    variant: QuirkVariant,
+    playerId: string,
+    now: number,
+    detail?: QuirkDetail
+): number => {
+    const collection = data.bombCollection ?? {};
+    const isNew = !collection[variant];
+    if (isNew) updates[`bombCollection.${variant}`] = { foundAt: now, foundBy: playerId };
+    const found = Object.keys(collection).length + (isNew ? 1 : 0);
+    const clean = detail
+        ? (JSON.parse(JSON.stringify(detail)) as QuirkDetail)
+        : undefined;
+    const hasDetail = !!clean && Object.keys(clean).length > 0;
+    const endsAt = now + QUIRK_REVEAL_MS;
+
+    updates['gameState.quirkReveal'] = {
+        id: `${now}-${variant}`,
+        variant,
+        kind: QUIRK_INFO[variant].kind,
+        playerId,
+        endsAt,
+        isNew,
+        found,
+        ...(hasDetail ? { detail: clean } : {}),
+    };
+    const list = (updates['gameState.roundQuirks'] as RoundQuirk[] | undefined) ?? gs.roundQuirks ?? [];
+    updates['gameState.roundQuirks'] = [
+        ...list,
+        { variant, playerId, ...(hasDetail ? { detail: clean } : {}) },
+    ];
+    pauseFuseUntil(updates, gs, now, endsAt);
+    return endsAt;
+};
+
+// The crush catches its bomb (again): set up this hold's twist.
+// `startAt` is when play really resumes (after a reveal card, if any).
+const onCrushCatch = (
+    updates: Record<string, unknown>,
+    gs: BombGameState,
+    crush: BombCrush,
+    now: number,
+    startAt: number
+) => {
+    crush.taps = 0;
+    delete crush.lastTapAt;
+    if (crush.variant === 'crush') {
+        crush.tapsNeeded = randInt(CRUSH_TAPS_MIN, CRUSH_TAPS_MAX);
+    } else if (crush.variant === 'toxic') {
+        crush.receivedAt = startAt;
+    } else if (crush.variant === 'cuddler') {
+        crush.lockUntil = startAt + randInt(CUDDLE_MIN_MS, CUDDLE_MAX_MS);
+        pauseFuseUntil(updates, gs, now, crush.lockUntil);
+    }
+};
+
+// The stranger bomb runs off: hand it to someone else, with a fresh instruction.
+const fleeBombTo = (
+    updates: Record<string, unknown>,
+    gs: BombGameState,
+    activePlayerIds: string[],
+    strangerId: string,
+    fleeId: string,
+    now: number
+) => {
+    const history = (updates['gameState.passHistory'] as PassEvent[] | undefined) ?? gs.passHistory;
+    const chain = (updates['gameState.chainPassed'] as string[] | undefined) ?? gs.chainPassed;
+    const holds = (updates['gameState.holdCounts'] as Record<string, number> | undefined) ?? gs.holdCounts ?? {};
+    const used = (updates['gameState.usedInstructions'] as string[] | undefined) ?? gs.usedInstructions;
+    const newHistory = [
+        ...history,
+        { from: strangerId, to: fleeId, timestamp: now, instruction: '(fled 🙅)' },
+    ].slice(-MAX_PASS_HISTORY);
+    const newChain = [...chain, fleeId];
+    const newHolds = { ...holds, [fleeId]: (holds[fleeId] ?? 0) + 1 };
+
+    const ctx = buildEligibilityContext(
+        { ...gs, passHistory: newHistory, chainPassed: newChain, holdCounts: newHolds },
+        fleeId,
+        activePlayerIds
+    );
+    const instruction = getRandomInstruction(used, ctx);
+    const texts = (updates['gameState.instructions'] as Record<string, string> | undefined) ?? gs.instructions;
+    const ids = (updates['gameState.instructionIds'] as Record<string, string> | undefined) ?? gs.instructionIds;
+    const fallbacks = (updates['gameState.instructionFallbacks'] as Record<string, string> | undefined) ?? gs.instructionFallbacks;
+
+    updates['gameState.currentHolderId'] = fleeId;
+    updates['gameState.passHistory'] = newHistory;
+    updates['gameState.chainPassed'] = newChain;
+    updates['gameState.holdCounts'] = newHolds;
+    updates['gameState.usedInstructions'] = [...used, instruction.id];
+    updates['gameState.instructions'] = { ...texts, [fleeId]: instruction.text };
+    updates['gameState.instructionIds'] = { ...ids, [fleeId]: instruction.id };
+    updates['gameState.instructionFallbacks'] = { ...fallbacks, [fleeId]: instruction.fallbackText ?? '' };
+};
+
+// After a real pass from → to lands: what does the bomb make of it?
+const applyArrivalQuirks = (
+    updates: Record<string, unknown>,
+    gs: BombGameState,
+    data: Group,
+    activePlayerIds: string[],
+    fromId: string,
+    toId: string,
+    now: number,
+    q: BombQuirkState
+) => {
+    if (!quirksLive(gs)) return;
+    const personality = gs.personalityEffect;
+
+    // One of its crushes just let go of it.
+    const crush = q.crushes?.[fromId];
+    if (crush && toId !== fromId) {
+        crush.taps = 0;
+        if (crush.variant === 'twofaced' && Math.random() < TWOFACED_CHANCE) {
+            updates['gameState.pendingPass'] = {
+                from: toId,
+                to: fromId,
+                arrivesAt: now + SNEAK_MS,
+                kind: 'sneak',
+            };
+        }
+        if (crush.variant === 'obsessed' && (crush.returnsLeft ?? OBSESSED_MAX_RETURNS) > 0) {
+            crush.returnArmed = true;
+        }
+    }
+
+    // 💘 A crush is born: the same player catches it for the 3rd time.
+    // Each player can become a crush of their own.
+    const receipts = gs.passHistory.filter((e) => e.to === toId).length + 1;
+    const existing = q.crushes?.[toId];
+    if (!existing && receipts >= CRUSH_RECEIPTS) {
+        const fresh: BombCrush = { playerId: toId, variant: variantFor('crush', personality) };
+        q.crushes = { ...(q.crushes ?? {}), [toId]: fresh };
+        const resumeAt = revealQuirk(updates, gs, data, fresh.variant as QuirkVariant, toId, now, { receipts });
+        onCrushCatch(updates, gs, fresh, now, resumeAt);
+        return;
+    }
+    if (existing) onCrushCatch(updates, gs, existing, now, now);
+
+    // 🙅 A stranger: someone who hadn't had it, after 4+ passes.
+    const isStranger =
+        gs.passHistory.length >= STRANGER_PASSES &&
+        !gs.chainPassed.includes(toId) &&
+        !(q.strangersHit ?? []).includes(toId);
+    if (!isStranger) return;
+
+    const variant = variantFor('stranger', personality);
+    q.strangersHit = [...(q.strangersHit ?? []), toId];
+    const others = activePlayerIds.filter((id) => id !== toId);
+    if (others.length > 0 && Math.random() < strangerFleeChance(variant)) {
+        const fleeId = others[Math.floor(Math.random() * others.length)];
+        fleeBombTo(updates, gs, activePlayerIds, toId, fleeId, now);
+        applyMissionEvent(updates, gs, data.players, toId, { kind: 'bomb-fled', playerId: toId });
+        revealQuirk(updates, gs, data, variant, toId, now, { fledTo: fleeId });
+        return;
+    }
+    const remaining = computeRoundRemaining(timerView(gs, updates), now);
+    const bite = variant === 'gaslighter' ? randInt(0, GASLIGHT_MAX_BITE_S) : STRANGER_BITE_S;
+    const panic = remaining < STRANGER_PANIC_BELOW_S;
+    const after = panic ? PANIC_THRESHOLD : Math.max(PANIC_THRESHOLD, remaining - bite);
+    revealQuirk(updates, gs, data, variant, toId, now, { bite, ...(panic ? { panic: true } : {}) });
+    reanchorTimer(updates, gs, now, after);
+};
+
+// Everything a successful pass from → to changes. Shared by a normal tap and
+// by a delayed (lazy / sneaky) pass landing later.
+const applyPassSuccess = (
+    updates: Record<string, unknown>,
+    gameState: BombGameState,
+    group: Group,
+    fromId: string,
+    toId: string,
+    now: number,
+    opts: { usedFallback?: boolean; boomerang?: boolean; label?: string; rewards?: boolean }
+) => {
+    const isDuel = gameState.phase === 'duel' || gameState.phase === 'duel-intro';
+    const personality = isDuel ? null : gameState.personalityEffect;
+    const activePlayerIds = group.players
+        .filter((p) => !gameState.ghosts.includes(p.id))
+        .map((p) => p.id);
+    const rewards = opts.rewards !== false;
+
+    const fallbackText = gameState.instructionFallbacks?.[fromId] ?? '';
+    const passEvent = {
+        from: fromId,
+        to: toId,
+        timestamp: now,
+        instruction: opts.label ?? gameState.instructions[fromId] ?? '',
+        ...(opts.boomerang
+            ? { boomerang: true }
+            : opts.usedFallback && fallbackText
+                ? { usedFallback: true, fallback: fallbackText }
+                : {}),
+    };
+
+    const newCtx = buildEligibilityContext(gameState, toId, activePlayerIds);
+    const newInstruction = getRandomInstruction(gameState.usedInstructions, newCtx);
+    const newInstructions = {
+        ...gameState.instructions,
+        [toId]: newInstruction.text,
+    };
+    const newInstructionIds = {
+        ...gameState.instructionIds,
+        [toId]: newInstruction.id,
+    };
+    const newInstructionFallbacks = {
+        ...gameState.instructionFallbacks,
+        [toId]: newInstruction.fallbackText ?? '',
+    };
+
+    let newDuration = gameState.timerDuration;
+    let newSpeedMultiplier = gameState.speedMultiplier;
+    let newTimerStartedAt = gameState.timerStartedAt;
+
+    // Angry bomb — speeds up each pass. We must carry forward the ACTUAL
+    // remaining time (already inflated by the current multiplier) before
+    // resetting the clock, not the original full duration — otherwise every
+    // pass resets `timerStartedAt` to now while `timerDuration` stays
+    // unchanged, which makes `elapsed` snap to ~0 and the countdown appears
+    // to refill to nearly full every time someone passes, no matter how
+    // high the multiplier has climbed.
+    if (personality === 'angry') {
+        const elapsedSoFar =
+            ((now - gameState.timerStartedAt) / 1000) * gameState.speedMultiplier;
+        const trueRemaining = Math.max(0, gameState.timerDuration - elapsedSoFar);
+        newSpeedMultiplier = Math.min(gameState.speedMultiplier * 1.3, 4);
+        newDuration = trueRemaining;
+        newTimerStartedAt = now;
+    }
+
+    // Cursed bomb — passing to someone who passed to you costs 5 seconds
+    const lastPasser = gameState.passHistory.length > 0
+        ? gameState.passHistory[gameState.passHistory.length - 1].from
+        : null;
+    if (personality === 'cursed' && lastPasser === toId) {
+        const elapsed = (now - gameState.timerStartedAt) / 1000;
+        const remaining = newDuration - elapsed;
+        newDuration = Math.max(0, remaining - 5);
+        newTimerStartedAt = now; // reset so downstream calc doesn't double-subtract
+    }
+
+    // In the critical stage, every successful pass gives the new holder a
+    // fresh five seconds to either pass again or cut a wire.
+    if (gameState.phase === 'panic') {
+        newDuration = PANIC_THRESHOLD;
+        newTimerStartedAt = now;
+    }
+
+    const newChainPassed = [...gameState.chainPassed, toId];
+
+    // Lifetime hold-count tracking (used for the m5 "fewest overall" check;
+    // also generally useful data to have around).
+    const newHoldCounts = {
+        ...gameState.holdCounts,
+        [toId]: (gameState.holdCounts?.[toId] ?? 0) + 1,
+    };
+
+    const newFirstPasserOf = gameState.firstPasserOf?.[toId]
+        ? gameState.firstPasserOf
+        : { ...gameState.firstPasserOf, [toId]: fromId };
+
+    Object.assign(updates, {
+        'gameState.currentHolderId': toId,
+        // Capped — passHistory only needs recent entries for the replay
+        // screen and any active memory-instruction lookups (which only
+        // ever look at the CURRENT round anyway, and this round's data
+        // is always well within the last 50 events).
+        'gameState.passHistory': [...gameState.passHistory, passEvent].slice(-MAX_PASS_HISTORY),
+        'gameState.instructions': newInstructions,
+        'gameState.instructionIds': newInstructionIds,
+        'gameState.instructionFallbacks': newInstructionFallbacks,
+
+        'gameState.usedInstructions': [
+            ...gameState.usedInstructions,
+            newInstruction.id,
+        ],
+        'gameState.chainPassed': newChainPassed,
+        'gameState.timerDuration': newDuration,
+
+        'gameState.speedMultiplier': newSpeedMultiplier,
+        'gameState.timerStartedAt': newTimerStartedAt,
+        'gameState.boomerangUsed': personality === 'boomerang'
+            ? { ...gameState.boomerangUsed, [fromId]: true }
+            : gameState.boomerangUsed,
+        [`gameState.wrongPassCounts.${fromId}`]: 0,
+        'gameState.clingy': deleteField(),
+        'gameState.holdCounts': newHoldCounts,
+        'gameState.firstPasserOf': newFirstPasserOf,
+        'gameState.lastPassedTo': { ...gameState.lastPassedTo, [fromId]: toId },
+        'gameState.passCounts': {
+            ...gameState.passCounts,
+            [fromId]: (gameState.passCounts?.[fromId] ?? 0) + 1,
+
+        },
+        'gameState.wireChoice': deleteField(),
+    });
+    // a paused clock re-anchored here must stay frozen where it is
+    if (gameState.isPaused && newTimerStartedAt === now && gameState.timerStartedAt !== now) {
+        updates['gameState.pausedAt'] = now;
+    }
+
+    if (gameState.phase === 'panic') {
+        updates['gameState.panicStartedAt'] = now;
+        updates['gameState.panicSeq'] = (gameState.panicSeq ?? 0) + 1; // a fresh countdown
+
+        // Any bets placed for THIS holder's cut never got their target
+        // event — refund the tickets rather than silently losing them.
+        const bets = Object.values(gameState.activeBets ?? {});
+        if (bets.length > 0) {
+            const refundUpdates: Record<string, unknown> = {};
+            for (const bet of bets) {
+                const current = gameState.bettingTickets?.[bet.ghostId] ?? 0;
+                refundUpdates[`gameState.bettingTickets.${bet.ghostId}`] = current + 1;
+            }
+            Object.assign(updates, refundUpdates);
+            updates['gameState.activeBets'] = {};
+        }
+    }
+
+    // Quiz Bomb: a completed manual pass is what kicks off the NEXT
+    // Fastest Finger interlude for the new holder — the quiz resolution
+    // itself no longer triggers this (see fastestFinger.ts's
+    // resolveFastestFingerQuestion, 'quiz-round' branch). Folded into
+    // this same write rather than a separate round-trip, for the same
+    // no-gap reason as the round-start case above.
+    if (personality === 'quiz' && gameState.phase === 'playing') {
+        const { activeQuiz, usedQuestionId } = buildActiveQuiz(
+            gameState.usedQuizQuestions ?? [],
+            'quiz-round',
+            false
+        );
+        updates['gameState.activeQuiz'] = activeQuiz;
+        updates['gameState.usedQuizQuestions'] = [
+            ...(gameState.usedQuizQuestions ?? []),
+            usedQuestionId,
+        ].slice(-MAX_USED_QUIZ_QUESTIONS);
+    }
+
+    if (!rewards) return;
+
+    // When did the passer catch it? The last pass this round, or the round start.
+    const lastIn = gameState.passHistory[gameState.passHistory.length - 1];
+    const caughtAt = lastIn && lastIn.to === fromId ? lastIn.timestamp : gameState.timerStartedAt;
+    const heldMs = Math.max(0, now - caughtAt);
+
+    applyMissionEvent(updates, gameState, group.players, fromId, {
+        kind: 'pass',
+        fromId,
+        toId,
+        activePlayerIds,
+        duringPanic: gameState.phase === 'panic',
+        heldMs,
+    });
+    applyMissionEvent(updates, gameState, group.players, fromId, {
+        kind: 'survived-hold',
+        playerId: fromId,
+    });
+
+    applyFusePoints(
+        updates,
+        gameState,
+        fromId,
+        FUSE_POINTS.SURVIVED_HOLD_AND_PASSED,
+        'Survived your hold'
+    );
+};
+
+// How long the holder has had it (since the last pass to them, or the round start).
+const heldSince = (gs: BombGameState, holderId: string): number => {
+    const lastIn = gs.passHistory[gs.passHistory.length - 1];
+    return lastIn && lastIn.to === holderId ? lastIn.timestamp : gs.timerStartedAt;
+};
 
 export const passBomb = async (
     group: Group,
@@ -560,19 +1071,31 @@ export const passBomb = async (
 
             const snap = await transaction.get(groupRef);
             if (!snap.exists()) return;
-            const gameState = snap.data().gameState as BombGameState;
+            const data = snap.data() as Group;
+            const gameState = data.gameState as BombGameState;
             const now = Date.now();
 
             // Stale tap: the bomb already moved on, or the round already ended.
             if (gameState.currentHolderId !== fromId) return;
             if (['exploded', 'replay', 'result', 'penalty'].includes(gameState.phase)) return;
+            if (gameState.toxicBoom) return;
             // During panic, passing only opens once the real countdown is running
             // (not during the ghost window or the ghost reveal).
             if (gameState.phase === 'panic' && (!gameState.panicStartedAt || gameState.ghostWindowEndsAt)) return;
 
+            // The quirk card is up: everyone is reading, the fuse is paused.
+            if (gameState.quirkReveal && now < gameState.quirkReveal.endsAt) {
+                result = { success: false, reason: 'quirk-reveal' };
+                return;
+            }
+            // A lazy / sneaky pass is still on its way: nobody can pass it.
+            if (gameState.pendingPass) {
+                result = { success: false, reason: 'in-transit' };
+                return;
+            }
+
             // Personalities never apply in 2-player duels — plain timer only.
             const isDuel = gameState.phase === 'duel' || gameState.phase === 'duel-intro';
-            const personality = isDuel ? null : gameState.personalityEffect;
 
             // Guard: holder currently clingy-locked — cannot pass at all
             if (
@@ -628,190 +1151,149 @@ export const passBomb = async (
                 return;
             }
 
-            // CORRECT / unenforced pass — proceed as normal.
-            const fallbackText = gameState.instructionFallbacks?.[fromId] ?? '';
-            const passEvent = {
-                from: fromId,
-                to: toId,
-                timestamp: now,
-                instruction: gameState.instructions[fromId] ?? '',
-                ...(boomerang
-                    ? { boomerang: true }
-                    : usedFallback && fallbackText
-                        ? { usedFallback: true, fallback: fallbackText }
-                        : {}),
+            // ── A correct pass. The bomb's quirks get a say first. ──────────
+            const live = quirksLive(gameState);
+            const q = live ? cloneQuirks(gameState) : {};
+            const updates: Record<string, unknown> = {};
+            const finish = (r: PassResult) => {
+                if (live) updates['gameState.bombQuirks'] = cleanQuirks(q);
+                transaction.update(groupRef, updates);
+                result = r;
             };
 
-            const newCtx = buildEligibilityContext(gameState, toId, activePlayerIds);
-            const newInstruction = getRandomInstruction(gameState.usedInstructions, newCtx);
-            const newInstructions = {
-                ...gameState.instructions,
-                [toId]: newInstruction.text,
-            };
-            const newInstructionIds = {
-                ...gameState.instructionIds,
-                [toId]: newInstruction.id,
-            };
-            const newInstructionFallbacks = {
-                ...gameState.instructionFallbacks,
-                [toId]: newInstruction.fallbackText ?? '',
-            };
-
-            let newDuration = gameState.timerDuration;
-            let newSpeedMultiplier = gameState.speedMultiplier;
-            let newTimerStartedAt = gameState.timerStartedAt;
-
-            // Angry bomb — speeds up each pass. We must carry forward the ACTUAL
-            // remaining time (already inflated by the current multiplier) before
-            // resetting the clock, not the original full duration — otherwise every
-            // pass resets `timerStartedAt` to now while `timerDuration` stays
-            // unchanged, which makes `elapsed` snap to ~0 and the countdown appears
-            // to refill to nearly full every time someone passes, no matter how
-            // high the multiplier has climbed.
-            if (personality === 'angry') {
-                const elapsedSoFar =
-                    ((now - gameState.timerStartedAt) / 1000) * gameState.speedMultiplier;
-                const trueRemaining = Math.max(0, gameState.timerDuration - elapsedSoFar);
-                newSpeedMultiplier = Math.min(gameState.speedMultiplier * 1.3, 4);
-                newDuration = trueRemaining;
-                newTimerStartedAt = now;
-            }
-
-            // Cursed bomb — passing to someone who passed to you costs 5 seconds
-            const lastPasser = gameState.passHistory.length > 0
-                ? gameState.passHistory[gameState.passHistory.length - 1].from
-                : null;
-            if (personality === 'cursed' && lastPasser === toId) {
-                const elapsed = (now - gameState.timerStartedAt) / 1000;
-                const remaining = newDuration - elapsed;
-                newDuration = Math.max(0, remaining - 5);
-                newTimerStartedAt = now; // reset so downstream calc doesn't double-subtract
-            }
-
-            // In the critical stage, every successful pass gives the new holder a
-            // fresh five seconds to either pass again or cut a wire.
-            if (gameState.phase === 'panic') {
-                newDuration = PANIC_THRESHOLD;
-                newTimerStartedAt = now;
-            }
-
-            const newChainPassed = [...gameState.chainPassed, toId];
-
-            // Lifetime hold-count tracking (used for the m5 "fewest overall" check;
-            // also generally useful data to have around).
-            const newHoldCounts = {
-                ...gameState.holdCounts,
-                [toId]: (gameState.holdCounts?.[toId] ?? 0) + 1,
-            };
-
-            const newFirstPasserOf = gameState.firstPasserOf?.[toId]
-                ? gameState.firstPasserOf
-                : { ...gameState.firstPasserOf, [toId]: fromId };
-
-
-
-            const updates: Record<string, unknown> = {
-                'gameState.currentHolderId': toId,
-                // Capped — passHistory only needs recent entries for the replay
-                // screen and any active memory-instruction lookups (which only
-                // ever look at the CURRENT round anyway, and this round's data
-                // is always well within the last 50 events).
-                'gameState.passHistory': [...gameState.passHistory, passEvent].slice(-MAX_PASS_HISTORY),
-                'gameState.instructions': newInstructions,
-                'gameState.instructionIds': newInstructionIds,
-                'gameState.instructionFallbacks': newInstructionFallbacks,
-
-                'gameState.usedInstructions': [
-                    ...gameState.usedInstructions,
-                    newInstruction.id,
-                ],
-                'gameState.chainPassed': newChainPassed,
-                'gameState.timerDuration': newDuration,
-
-                'gameState.speedMultiplier': newSpeedMultiplier,
-                'gameState.timerStartedAt': newTimerStartedAt,
-                'gameState.boomerangUsed': personality === 'boomerang'
-                    ? { ...gameState.boomerangUsed, [fromId]: true }
-                    : gameState.boomerangUsed,
-                [`gameState.wrongPassCounts.${fromId}`]: 0,
-                'gameState.clingy': deleteField(),
-                'gameState.holdCounts': newHoldCounts,
-                'gameState.firstPasserOf': newFirstPasserOf,
-                'gameState.lastPassedTo': { ...gameState.lastPassedTo, [fromId]: toId },
-                'gameState.passCounts': {
-                    ...gameState.passCounts,
-                    [fromId]: (gameState.passCounts?.[fromId] ?? 0) + 1,
-
-                },
-                'gameState.wireChoice': deleteField(),
-            };
-
-            if (gameState.phase === 'panic') {
-                updates['gameState.panicStartedAt'] = now;
-                updates['gameState.panicSeq'] = (gameState.panicSeq ?? 0) + 1; // a fresh countdown
-
-                // Any bets placed for THIS holder's cut never got their target
-                // event — refund the tickets rather than silently losing them.
-                const bets = Object.values(gameState.activeBets ?? {});
-                if (bets.length > 0) {
-                    const refundUpdates: Record<string, unknown> = {};
-                    for (const bet of bets) {
-                        const current = gameState.bettingTickets?.[bet.ghostId] ?? 0;
-                        refundUpdates[`gameState.bettingTickets.${bet.ghostId}`] = current + 1;
+            let targetId = toId;
+            let label: string | undefined;
+            const crush = q.crushes?.[fromId];
+            if (live && crush) {
+                if (crush.variant === 'crush') {
+                    // 💘 2–5 taps (secret) before it lets go.
+                    const taps = (crush.taps ?? 0) + 1;
+                    if (taps < (crush.tapsNeeded ?? CRUSH_TAPS_MIN)) {
+                        crush.taps = taps;
+                        return finish({ success: false, reason: 'crush' });
                     }
-                    Object.assign(updates, refundUpdates);
-                    updates['gameState.activeBets'] = {};
+                } else if (crush.variant === 'toxic') {
+                    // ☠️ Leave it alone for 3s, or every tap makes it worse.
+                    const calmSince = Math.max(crush.receivedAt ?? 0, crush.lastTapAt ?? 0);
+                    if (now - calmSince < TOXIC_CALM_MS) {
+                        const taps = (crush.taps ?? 0) + 1;
+                        crush.taps = taps;
+                        crush.lastTapAt = now;
+                        if (taps >= TOXIC_MAX_TAPS) {
+                            // Boom, right here — resolvePanicOutcome finishes it.
+                            Object.assign(updates, {
+                                'gameState.phase': 'panic',
+                                'gameState.toxicBoom': true,
+                                'gameState.panicStartedAt': now,
+                                'gameState.panicSeq': (gameState.panicSeq ?? 0) + 1,
+                                'gameState.timerStartedAt': now,
+                                'gameState.timerDuration': PANIC_THRESHOLD,
+                                'gameState.isPaused': false,
+                                'gameState.pausedAt': deleteField(),
+                                'gameState.pauseResumeAt': deleteField(),
+                                'gameState.ghostWindowEndsAt': deleteField(),
+                                'gameState.ghostRevealEndsAt': deleteField(),
+                                'gameState.activeBets': {},
+                                'gameState.ghostResponded': [],
+                            });
+                            applyMissionEvent(updates, gameState, group.players, fromId, {
+                                kind: 'toxic-boom',
+                                playerId: fromId,
+                            });
+                            return finish({ success: false, reason: 'toxic-boom' });
+                        }
+                        // Faster, and a few seconds burnt (so it bites even
+                        // when an angry bomb is already at top speed).
+                        const view = timerView(gameState, updates);
+                        reanchorTimer(
+                            updates,
+                            gameState,
+                            now,
+                            Math.max(0, computeRoundRemaining(view, now) - TOXIC_BURN_S),
+                            Math.min(view.speedMultiplier * TOXIC_SPEEDUP, 4)
+                        );
+                        return finish({ success: false, reason: 'toxic' });
+                    }
+                } else if (crush.variant === 'cuddler') {
+                    // 🧸 Stuck in a hug.
+                    if (now < (crush.lockUntil ?? 0)) {
+                        result = {
+                            success: false,
+                            reason: 'cuddled',
+                            remainingLockMs: (crush.lockUntil ?? 0) - now,
+                        };
+                        return;
+                    }
+                } else if (crush.variant === 'rebound' && !crush.reboundUsed) {
+                    // 🪃 The crush's first pass bounces straight back.
+                    crush.reboundUsed = true;
+                    return finish({ success: false, reason: 'rebound' });
+                }
+            }
+            // 🔁 Obsessed: the pass after a crush let go runs back to that crush.
+            const armed = live
+                ? Object.values(q.crushes ?? {}).find(
+                    (c) =>
+                        c.variant === 'obsessed' &&
+                        c.returnArmed &&
+                        c.playerId !== fromId &&
+                        activePlayerIds.includes(c.playerId)
+                )
+                : undefined;
+            if (armed) {
+                targetId = armed.playerId;
+                armed.returnArmed = false;
+                armed.returnsLeft = (armed.returnsLeft ?? OBSESSED_MAX_RETURNS) - 1;
+                label = '(ran back to its crush 🔁)';
+            }
+
+            // 😴 Lazy: an 8s+ hold makes it lazy; a lazy bomb leaves 2s after the tap.
+            let woke = false;
+            if (live) {
+                const heldMs = Math.max(0, now - heldSince(gameState, fromId));
+                if (q.lazy && heldMs < LAZY_WAKE_MS) {
+                    delete q.lazy; // a quick pass wakes it up
+                    woke = true;
+                } else if (q.lazy || heldMs >= LAZY_HOLD_MS) {
+                    const fresh = !q.lazy;
+                    const variant = (q.lazy?.variant ?? variantFor('lazy', gameState.personalityEffect)) as QuirkVariant;
+                    if (fresh) q.lazy = { variant };
+                    const startAt = fresh
+                        ? revealQuirk(updates, gameState, data, variant, fromId, now, {
+                            heldSec: Math.round(heldMs / 1000),
+                        })
+                        : now;
+                    const pending: PendingPass = {
+                        from: fromId,
+                        to: targetId,
+                        arrivesAt: startAt + LAZY_DELAY_MS,
+                        kind: 'lazy',
+                        ...(usedFallback ? { usedFallback: true } : {}),
+                    };
+                    if (variant === 'seething') {
+                        const view = timerView(gameState, updates);
+                        reanchorTimer(
+                            updates,
+                            gameState,
+                            now,
+                            computeRoundRemaining(view, now),
+                            view.speedMultiplier * SEETHING_SPEED
+                        );
+                        pending.speedBoost = SEETHING_SPEED;
+                    }
+                    if (variant === 'sleepy') pauseFuseUntil(updates, gameState, now, pending.arrivesAt);
+                    updates['gameState.pendingPass'] = pending;
+                    return finish({ success: true, pending: true });
                 }
             }
 
-            // Quiz Bomb: a completed manual pass is what kicks off the NEXT
-            // Fastest Finger interlude for the new holder — the quiz resolution
-            // itself no longer triggers this (see fastestFinger.ts's
-            // resolveFastestFingerQuestion, 'quiz-round' branch). Folded into
-            // this same write rather than a separate round-trip, for the same
-            // no-gap reason as the round-start case above.
-            if (personality === 'quiz' && gameState.phase === 'playing') {
-                const { activeQuiz, usedQuestionId } = buildActiveQuiz(
-                    gameState.usedQuizQuestions ?? [],
-                    'quiz-round',
-                    false
-                );
-                updates['gameState.activeQuiz'] = activeQuiz;
-                updates['gameState.usedQuizQuestions'] = [
-                    ...(gameState.usedQuizQuestions ?? []),
-                    usedQuestionId,
-                ].slice(-MAX_USED_QUIZ_QUESTIONS);
-            }
-
-            // When did the passer catch it? The last pass this round, or the round start.
-            const lastIn = gameState.passHistory[gameState.passHistory.length - 1];
-            const caughtAt = lastIn && lastIn.to === fromId ? lastIn.timestamp : gameState.timerStartedAt;
-            const heldMs = Math.max(0, now - caughtAt);
-
-            applyMissionEvent(updates, gameState, group.players, fromId, {
-                kind: 'pass',
-                fromId,
-                toId,
-                activePlayerIds,
-                duringPanic: gameState.phase === 'panic',
-                heldMs,
+            applyPassSuccess(updates, gameState, group, fromId, targetId, now, {
+                usedFallback,
+                boomerang,
+                label,
             });
-            applyMissionEvent(updates, gameState, group.players, fromId, {
-                kind: 'survived-hold',
-                playerId: fromId,
-            });
-
-            applyFusePoints(
-                updates,
-                gameState,
-                fromId,
-                FUSE_POINTS.SURVIVED_HOLD_AND_PASSED,
-                'Survived your hold'
-            );
-
-
-            transaction.update(groupRef, updates);
-            result = { success: true };
+            applyArrivalQuirks(updates, gameState, data, activePlayerIds, fromId, targetId, now, q);
+            finish({ success: true, ...(woke ? { woke: true } : {}) });
         });
     } catch (e) {
         if (__DEV__) console.warn('[passBomb] transaction failed', e);
@@ -819,7 +1301,77 @@ export const passBomb = async (
     return result;
 };
 
+// A lazy pass (or a two-faced sneak back) lands once its time is up. Every
+// phone's watcher calls this (host on time, others as backup); the
+// transaction makes sure it lands exactly once.
+export const completePendingPass = async (group: Group): Promise<void> => {
+    const groupRef = doc(db, 'groups', group.id);
+    try {
+        await runTransaction(db, async (transaction) => {
+            const snap = await transaction.get(groupRef);
+            if (!snap.exists()) return;
+            const data = snap.data() as Group;
+            const gameState = data.gameState as BombGameState;
+            const pending = gameState.pendingPass;
+            if (!pending) return;
+            if (!['playing', 'panic'].includes(gameState.phase)) return; // cleared next round
+            const now = Date.now();
+            if (now < pending.arrivesAt - CLOCK_TOLERANCE_MS) return;
 
+            const updates: Record<string, unknown> = { 'gameState.pendingPass': deleteField() };
+            const activePlayerIds = data.players
+                .filter((p) => !gameState.ghosts.includes(p.id))
+                .map((p) => p.id);
+            if (
+                gameState.currentHolderId !== pending.from ||
+                !activePlayerIds.includes(pending.to) ||
+                gameState.toxicBoom
+            ) {
+                transaction.update(groupRef, updates); // overtaken by events
+                return;
+            }
+
+            // Seething: the fuse ran faster only while the pass dragged.
+            let base = gameState;
+            if (pending.speedBoost && gameState.phase === 'playing') {
+                base = {
+                    ...gameState,
+                    timerDuration: computeRoundRemaining(gameState, now),
+                    timerStartedAt: now,
+                    speedMultiplier: gameState.speedMultiplier / pending.speedBoost,
+                    ...(gameState.isPaused ? { pausedAt: now } : {}),
+                };
+                if (gameState.isPaused) updates['gameState.pausedAt'] = now;
+                updates['gameState.timerDuration'] = base.timerDuration;
+                updates['gameState.timerStartedAt'] = now;
+                updates['gameState.speedMultiplier'] = base.speedMultiplier;
+            }
+
+            const sneak = pending.kind === 'sneak';
+            applyPassSuccess(updates, base, { ...group, players: data.players }, pending.from, pending.to, now, {
+                usedFallback: pending.usedFallback,
+                label: sneak ? '(snuck back 😈)' : undefined,
+                rewards: !sneak,
+            });
+            if (!sneak && quirksLive(base)) {
+                const q = cloneQuirks(base);
+                applyArrivalQuirks(updates, base, data, activePlayerIds, pending.from, pending.to, now, q);
+                updates['gameState.bombQuirks'] = cleanQuirks(q);
+            }
+            transaction.update(groupRef, updates);
+        });
+    } catch (e) {
+        if (__DEV__) console.warn('[completePendingPass] transaction failed', e);
+    }
+};
+
+// Fields every new round (and a force-end) wipes clean.
+const quirkRoundResets = (): Record<string, unknown> => ({
+    'gameState.bombQuirks': deleteField(),
+    'gameState.pendingPass': deleteField(),
+    'gameState.quirkReveal': deleteField(),
+    'gameState.toxicBoom': deleteField(),
+});
 
 
 
@@ -971,6 +1523,7 @@ export const lockInWire = async (
 
             // Only the current holder, only while the real countdown is running.
             if (gameState.phase !== 'panic') return;
+            if (gameState.toxicBoom) return; // too late for wires
             if (gameState.currentHolderId !== playerId) return;
             if (!gameState.panicStartedAt || gameState.ghostWindowEndsAt) return;
             if (gameState.wireChoice) return; // already locked — no take-backs
@@ -1018,7 +1571,10 @@ export const resolvePanicOutcome = async (group: Group, seenSeq?: number): Promi
         // stops a stale call landing just after a pass restarted the 5 seconds.
         if (!gameState.panicStartedAt || gameState.ghostWindowEndsAt) return;
         if (!gameState.panicStartedAt || gameState.ghostWindowEndsAt) return;
-        if (seenSeq !== undefined) {
+        // ☠️ A toxic bomb blew on an impatient tap: no countdown, no wire.
+        if (gameState.toxicBoom) {
+            // resolve straight away
+        } else if (seenSeq !== undefined) {
             // The caller timed the 5s on its own clock. If the bomb has been
             // passed since, that countdown is gone — do nothing.
             if ((gameState.panicSeq ?? 0) !== seenSeq) return;
@@ -1044,6 +1600,8 @@ export const resolvePanicOutcome = async (group: Group, seenSeq?: number): Promi
                 'gameState.lastWireCutPlayerId': playerId,
                 'gameState.clingy': deleteField(),
                 'gameState.wireCutters': newWireCutters,
+                'gameState.pendingPass': deleteField(),
+                'gameState.quirkReveal': deleteField(),
                 ...refundActiveBets(gameState),
             };
             if (wire != null) {
@@ -1066,6 +1624,8 @@ export const resolvePanicOutcome = async (group: Group, seenSeq?: number): Promi
                 'gameState.lastWireCutPlayerId': playerId,
                 'gameState.clingy': deleteField(),
                 'gameState.wireCutters': newWireCutters,
+                'gameState.pendingPass': deleteField(),
+                'gameState.quirkReveal': deleteField(),
                 'gameState.activeBets': {}, // defused — every bet loses
             };
 
@@ -1096,11 +1656,14 @@ export const resolvePanicOutcome = async (group: Group, seenSeq?: number): Promi
             'gameState.lastWireCutPlayerId': playerId,
             'gameState.clingy': deleteField(),
             'gameState.wireCutters': newWireCutters,
+            'gameState.pendingPass': deleteField(),
+            'gameState.quirkReveal': deleteField(),
         };
 
         if (shielded) {
             // Vest took the hit: no life loss and no ghosting.
             updates['gameState.shieldAbsorbedPlayerId'] = playerId;
+            applyMissionEvent(updates, gameState, group.players, playerId, { kind: 'vest-saved', playerId });
             updates['gameState.roundShields'] = (gameState.roundShields ?? []).filter(
                 (id) => id !== playerId
             );
@@ -1320,9 +1883,11 @@ const buildRoundSummary = (gameState: BombGameState) => ({
     explodedPlayerId: gameState.explodedPlayerId ?? '',
     defused: gameState.defused ?? false,
     wireChoice: gameState.wireChoice ?? '',
-    correctWire: gameState.correctWire,
-    passCount: gameState.passHistory.length,
-    personality: gameState.personality,
+    correctWire: gameState.correctWire ?? '',
+    passCount: gameState.passHistory?.length ?? 0,
+    // Duel rounds have no personality (the field is deleted), and Firestore
+    // rejects undefined, which used to crash the start of the next duel round.
+    personality: gameState.personality ?? (gameState.duelRound ? 'duel' : 'normal'),
 });
 
 // ── DUEL START (2 players remaining) ─────────────────────────────
@@ -1416,9 +1981,17 @@ const startDuelRound = async (
         'gameState.duelShieldArmed': [],
         'gameState.duelShieldAbsorbedPlayerId': deleteField(),
         'gameState.roundStartLives': gameState.lives,
+        ...quirkRoundResets(),
+        'gameState.roundQuirks': [],
+        'gameState.duelRound': true,
+        // previous round was a duel round too → this is the next one
+        'gameState.duelRoundIndex': gameState.duelRound ? (gameState.duelRoundIndex ?? 1) + 1 : 1,
+        'gameState.lifeRestored': deleteField(),
     });
 };
 
+// A duellist says they've read the rules. Nothing starts here: once every
+// duellist is ready, the host starts the duel with startDuel.
 export const markDuelReady = async (
     group: Group,
     playerId: string
@@ -1429,52 +2002,107 @@ export const markDuelReady = async (
         const snap = await transaction.get(groupRef);
         if (!snap.exists()) return;
         const gameState = snap.data().gameState as BombGameState;
-
+        if (gameState.phase !== 'duel-intro') return;
         if ((gameState.duelReadyPlayers ?? []).includes(playerId)) return;
 
-        const newReady = [...(gameState.duelReadyPlayers ?? []), playerId];
-        const activePlayerIds = group.players
-            .filter((p) => !gameState.ghosts.includes(p.id))
-            .map((p) => p.id);
-
-        const bothReady = activePlayerIds.every((id) => newReady.includes(id));
-
-
-        // Not everyone is ready yet, or the mode's own starter (host effect in
-        // BombDuelIntroScreen) takes over once the ready list is complete.
-        if (!bothReady || gameState.duelMode === 'fastest-finger' || gameState.duelMode === 'hot-seat') {
-            transaction.update(groupRef, {
-                'gameState.duelReadyPlayers': newReady,
-            });
-        } else {
-            transaction.update(groupRef, {
-                'gameState.duelReadyPlayers': newReady,
-                'gameState.phase': 'duel',
-                ...buildHotPotatoStart({
-                    now: Date.now(),
-                    players: activePlayerIds,
-                    holderId: gameState.currentHolderId,
-                    context: 'duel',
-                }),
-            });
-        }
+        transaction.update(groupRef, {
+            'gameState.duelReadyPlayers': [...(gameState.duelReadyPlayers ?? []), playerId],
+        });
     });
 };
 
+// Host only. Changing the mode clears everyone's "ready": they agreed to
+// the old mode's rules, not these.
 export const setDuelMode = async (
     groupId: string,
     mode: 'hot-potato' | 'fastest-finger' | 'hot-seat'
 ): Promise<void> => {
     const groupRef = doc(db, 'groups', groupId);
-    await updateDoc(groupRef, { 'gameState.duelMode': mode });
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(groupRef);
+        if (!snap.exists()) return;
+        const gameState = snap.data().gameState as BombGameState;
+        if (gameState.phase !== 'duel-intro') return;
+        if ((gameState.duelMode ?? 'hot-potato') === mode) return;
+        transaction.update(groupRef, {
+            'gameState.duelMode': mode,
+            'gameState.duelReadyPlayers': [],
+        });
+    });
+};
+
+// Host only: starts the duel once every duellist is ready. Hot Potato
+// starts inside the transaction; the quiz duels first claim the start for
+// this round (duelStartClaimed), so a double tap can't start them twice.
+export const startDuel = async (group: Group): Promise<void> => {
+    const groupRef = doc(db, 'groups', group.id);
+    let mode: 'hot-potato' | 'fastest-finger' | 'hot-seat' | null = null;
+
+    await runTransaction(db, async (transaction) => {
+        mode = null; // a retried attempt must not inherit the last one's result
+        const snap = await transaction.get(groupRef);
+        if (!snap.exists()) return;
+        const gameState = snap.data().gameState as BombGameState;
+        if (gameState.phase !== 'duel-intro') return;
+        const players = (snap.data().players ?? []) as { id: string }[];
+        const duellists = players
+            .map((p) => p.id)
+            .filter((id) => !gameState.ghosts.includes(id));
+        const ready = gameState.duelReadyPlayers ?? [];
+        if (!duellists.every((id) => ready.includes(id))) return;
+
+        const chosen = gameState.duelMode ?? 'hot-potato';
+        if (chosen !== 'hot-potato') {
+            if (gameState.duelStartClaimed === gameState.roundNumber) return;
+            transaction.update(groupRef, { 'gameState.duelStartClaimed': gameState.roundNumber });
+        } else {
+            transaction.update(groupRef, {
+                'gameState.phase': 'duel',
+                ...buildHotPotatoStart({
+                    now: Date.now(),
+                    players: duellists,
+                    holderId: gameState.currentHolderId,
+                    context: 'duel',
+                }),
+            });
+        }
+        mode = chosen;
+    });
+
+    // The quiz duels build their first question in their own start functions.
+    // Re-read so they get the latest state (e.g. the used-question list).
+    if (mode === 'fastest-finger' || mode === 'hot-seat') {
+        const fresh = await getDoc(groupRef);
+        if (!fresh.exists()) return;
+        const latest = { ...group, ...(fresh.data() as Group), id: group.id };
+        if ((latest.gameState as BombGameState).phase !== 'duel-intro') return;
+        try {
+            if (mode === 'fastest-finger') await startDuelFastestFinger(latest);
+            else await startHotSeatDuel(latest);
+        } catch (e) {
+            // let the host tap Start again
+            await updateDoc(groupRef, { 'gameState.duelStartClaimed': deleteField() }).catch(() => {});
+            throw e;
+        }
+    }
 };
 
 // ── NEXT ROUND ───────────────────────────────────────────────────
 export const startNextRound = async (group: Group): Promise<void> => {
+    const gameState = group.gameState as BombGameState;
+    if (!(await claimRoundAdvance(group.id, gameState.roundNumber))) return;
+    try {
+        await advanceRound(group);
+    } catch (e) {
+        // Without this the claim stays and Next Round silently does nothing.
+        await releaseRoundAdvance(group.id, gameState.roundNumber).catch(() => {});
+        throw e;
+    }
+};
+
+const advanceRound = async (group: Group): Promise<void> => {
     const groupRef = doc(db, 'groups', group.id);
     const gameState = group.gameState as BombGameState;
-
-    if (!(await claimRoundAdvance(group.id, gameState.roundNumber))) return;
 
     const activePlayers = group.players.filter(
         (p) => !gameState.ghosts.includes(p.id)
@@ -1621,6 +2249,10 @@ export const startNextRound = async (group: Group): Promise<void> => {
         'gameState.roundDuelShields': [],
         'gameState.duelShieldAbsorbedPlayerId': deleteField(),
         'gameState.roundStartLives': gameState.lives,
+        ...quirkRoundResets(),
+        'gameState.roundQuirks': [],
+        'gameState.duelRound': false,
+        'gameState.lifeRestored': deleteField(),
 
     };
 
@@ -1651,6 +2283,10 @@ export const endBombGame = async (group: Group): Promise<void> => {
     let claimed = false;
     let winnerId: string | undefined;
     let runnerUpId: string | undefined;
+    let cashOut: Record<string, { fp: number; points: number }> = {};
+
+    // Settle the last duel round's bets first, so their FP counts in the cash-out.
+    await settleBets(group).catch(() => {});
 
     // Claim the end of the game atomically: only the first call gets through,
     // so a second call can't award the bonuses again.
@@ -1659,6 +2295,7 @@ export const endBombGame = async (group: Group): Promise<void> => {
         claimed = false;
         winnerId = undefined;
         runnerUpId = undefined;
+        cashOut = {};
 
         const snap = await transaction.get(groupRef);
         if (!snap.exists()) return;
@@ -1675,6 +2312,15 @@ export const endBombGame = async (group: Group): Promise<void> => {
         };
         // Firestore rejects undefined, so the runner-up is only written when there is one.
         if (runnerUpId) endUpdates['gameState.runnerUpId'] = runnerUpId;
+
+        // Leftover FP is worth nothing once the game is over, so it's cashed
+        // into leaderboard points: FP_PER_POINT FP = 1 point, rounded down.
+        for (const p of group.players) {
+            const fp = Math.max(0, Math.floor(gameState.fusePoints?.[p.id] ?? 0));
+            const points = Math.floor(fp / FP_PER_POINT);
+            if (points > 0) cashOut[p.id] = { fp, points };
+        }
+        endUpdates['gameState.fpCashOut'] = cashOut;
         if (winnerId) {
             applyFusePoints(endUpdates, gameState, winnerId, FUSE_POINTS.GAME_WIN, 'Last one standing!');
         }
@@ -1693,6 +2339,7 @@ export const endBombGame = async (group: Group): Promise<void> => {
     };
     if (winnerId) await award(winnerId, GAME_WIN_SCORE_BONUS);
     if (runnerUpId) await award(runnerUpId, RUNNER_UP_SCORE_BONUS);
+    for (const [id, c] of Object.entries(cashOut)) await award(id, c.points);
     await settleWinnerBets(group, winnerId, scores);
 };
 
@@ -1942,6 +2589,7 @@ export const forceEndRound = async (group: Group): Promise<void> => {
             transaction.update(groupRef, {
                 'gameState.phase': 'replay',
                 'gameState.forceEnded': true,
+                ...quirkRoundResets(),
                 'gameState.wireChoice': deleteField(),
                 'gameState.defused': deleteField(),
                 'gameState.explodedPlayerId': deleteField(),
@@ -1982,3 +2630,104 @@ export const computePanicRemaining = (gs: BombGameState, now = Date.now()): numb
         ? Math.max(0, PANIC_THRESHOLD - (now - gs.panicStartedAt) / 1000)
         : PANIC_THRESHOLD;
 
+// ── AWAY PLAYERS ─────────────────────────────────────────────────
+// When a player drops out the host can end the live round (forceEndRound)
+// and everyone waits on the replay screen. The host can also choose to
+// carry on without them; `lastSeen` is each player's last check-in, so the
+// choice lapses as soon as they check in again.
+export const continueWithoutAwayTimer = async (
+    group: Group,
+    requesterId: string,
+    lastSeen: Record<string, number>
+): Promise<void> => {
+    const groupRef = doc(db, 'groups', group.id);
+    try {
+        await runTransaction(db, async (tx) => {
+            const snap = await tx.get(groupRef);
+            if (!snap.exists()) return;
+            const data = snap.data();
+            if (data.hostId !== requesterId) return;
+            if ((data.gameState as { mode?: string })?.mode === 'pass') return;
+            const updates: Record<string, unknown> = {};
+            for (const [id, ms] of Object.entries(lastSeen)) {
+                updates[`gameState.awayIgnored.${id}`] = ms;
+            }
+            if (Object.keys(updates).length > 0) tx.update(groupRef, updates);
+        });
+    } catch (e) {
+        if (__DEV__) console.warn('[continueWithoutAwayTimer] failed', e);
+    }
+};
+
+// ── RESTORE A DUEL LIFE (honour system) ──────────────────────────
+// A duelist whose connection dropped can't answer, so the duel clock may
+// blow them up. After talking it over, one trusted player can give the
+// life back: the host, or a spectator if the host is duelling, or the
+// other duelist when nobody else is playing.
+
+// The two players who started this duel (they had lives when it began).
+export const duelistsOf = (gs: BombGameState): string[] =>
+    Object.entries(gs.roundStartLives ?? {})
+        .filter(([, lives]) => (lives ?? 0) > 0)
+        .map(([id]) => id);
+
+// The duel life the exploded player lost, if any (null = nothing to restore).
+export const restorableDuelLife = (gs: BombGameState): string | null => {
+    if (!gs.duelRound) return null;
+    if (gs.phase !== 'exploded' && gs.phase !== 'replay') return null;
+    if (gs.lifeRestored?.round === gs.roundNumber) return null;
+    const victim = gs.explodedPlayerId;
+    if (!victim) return null;
+    const before = gs.roundStartLives?.[victim] ?? 0;
+    return (gs.lives?.[victim] ?? 0) < before ? victim : null;
+};
+
+export const canRestoreDuelLife = (
+    gs: BombGameState,
+    players: { id: string }[],
+    hostId: string,
+    requesterId: string
+): boolean => {
+    const victim = restorableDuelLife(gs);
+    if (!victim || requesterId === victim) return false;
+    const duelists = duelistsOf(gs);
+    if (!duelists.includes(hostId)) return requesterId === hostId;
+    const spectators = players.map((p) => p.id).filter((id) => !duelists.includes(id));
+    if (spectators.length > 0) return spectators.includes(requesterId);
+    return duelists.includes(requesterId); // just the two of them: the opponent decides
+};
+
+export const restoreDuelLife = async (group: Group, requesterId: string): Promise<void> => {
+    const groupRef = doc(db, 'groups', group.id);
+    try {
+        await runTransaction(db, async (tx) => {
+            const snap = await tx.get(groupRef);
+            if (!snap.exists()) return;
+            const data = snap.data() as Group;
+            const gs = data.gameState as BombGameState;
+            if (!canRestoreDuelLife(gs, data.players, data.hostId, requesterId)) return;
+            const victim = restorableDuelLife(gs)!;
+            const lives = gs.roundStartLives?.[victim] ?? 1;
+
+            const updates: Record<string, unknown> = {
+                [`gameState.lives.${victim}`]: lives,
+                'gameState.lifeRestored': {
+                    playerId: victim,
+                    byPlayerId: requesterId,
+                    round: gs.roundNumber,
+                },
+            };
+            // If that life had made them a ghost, bring them back.
+            if (gs.ghosts.includes(victim)) {
+                updates['gameState.ghosts'] = gs.ghosts.filter((id) => id !== victim);
+                const events = [...(gs.ghostEvents ?? [])];
+                const last = events.lastIndexOf(victim);
+                if (last >= 0) events.splice(last, 1);
+                updates['gameState.ghostEvents'] = events;
+            }
+            tx.update(groupRef, updates);
+        });
+    } catch (e) {
+        if (__DEV__) console.warn('[restoreDuelLife] failed', e);
+    }
+};

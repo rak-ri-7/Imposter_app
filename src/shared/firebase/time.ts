@@ -29,6 +29,16 @@ export const syncServerTimeOffset = async (groupId: string): Promise<void> => {
     }
 };
 
+// Re-measure after a phone notices its clock disagrees with a fresh server
+// timestamp. At most once per 30s, so a slow network can't make it spin.
+const RESYNC_EVERY_MS = 30_000;
+let lastResyncAt = 0;
+export const resyncServerTimeOffset = (groupId: string): void => {
+    if (Date.now() - lastResyncAt < RESYNC_EVERY_MS) return;
+    lastResyncAt = Date.now();
+    syncServerTimeOffset(groupId);
+};
+
 export const getServerNow = (): number => Date.now() + cachedOffsetMs;
 
 export const isTimeSynced = (): boolean => synced;

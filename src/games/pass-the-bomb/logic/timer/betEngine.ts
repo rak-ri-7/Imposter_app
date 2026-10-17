@@ -10,6 +10,7 @@ import {
     scoreFor,
     MIN_STAKE,
     BET_CHARGES_PER_TICKET,
+    DUEL_BET_MULTIPLIER,
     winnerBetPoints,
     isGameLongMarket
 } from '../../data/betOdds';
@@ -150,6 +151,97 @@ export const placeMatchBet = async (
     return result;
 };
 
+// ── LIVE DUEL BET (spectators, on the duel screen before each duel round) ─
+// Who loses a life this duel round? Only knocked-out players can bet, only
+// while the round hasn't started (phase duel-intro), one bet per round. No
+// ticket, and any stake from MIN_STAKE up to the whole bag.
+export const placeDuelBet = async (
+    groupId: string,
+    bettorId: string,
+    pick: string,
+    stake: number
+): Promise<PlaceResult> => {
+    const groupRef = doc(db, 'groups', groupId);
+    let result: PlaceResult = { success: false, reason: 'error' };
+    try {
+        await runTransaction(db, async (transaction) => {
+            const snap = await transaction.get(groupRef);
+            if (!snap.exists()) {
+                result = { success: false, reason: 'not-found' };
+                return;
+            }
+            const data = snap.data();
+            const gameState = data.gameState as BombGameState;
+            const players = (data.players ?? []) as { id: string }[];
+            if (gameState.phase !== 'duel-intro') {
+                result = { success: false, reason: 'duel-started' };
+                return;
+            }
+            const duellists = players
+                .map((p) => p.id)
+                .filter((id) => !gameState.ghosts.includes(id));
+            if (!players.some((p) => p.id === bettorId) || duellists.includes(bettorId)) {
+                result = { success: false, reason: 'spectators-only' };
+                return;
+            }
+            if (!duellists.includes(pick)) {
+                result = { success: false, reason: 'option-unavailable' };
+                return;
+            }
+            const fp = gameState.fusePoints?.[bettorId] ?? 0;
+            if (!Number.isInteger(stake) || stake < MIN_STAKE) {
+                result = { success: false, reason: 'stake-too-low' };
+                return;
+            }
+            if (stake > fp) {
+                result = { success: false, reason: 'not-enough-fp' };
+                return;
+            }
+            const forRound = gameState.roundNumber; // duel-intro already shows the new round
+            const bets = gameState.matchBets ?? [];
+            if (
+                bets.some(
+                    (b) =>
+                        b.bettorId === bettorId &&
+                        b.market === 'duel-loser' &&
+                        b.forRound === forRound
+                )
+            ) {
+                result = { success: false, reason: 'already-bet' };
+                return;
+            }
+            const bet: MatchBet = {
+                id: `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                bettorId,
+                market: 'duel-loser',
+                pick,
+                stake,
+                multiplier: DUEL_BET_MULTIPLIER,
+                forRound,
+                status: 'open',
+                placedAt: Date.now(),
+            };
+            const updates: Record<string, unknown> = {};
+            applyFusePoints(updates, gameState, bettorId, -stake, 'Duel bet placed');
+            updates['gameState.matchBets'] = trimBets([...bets, bet]);
+            transaction.update(groupRef, updates);
+            result = { success: true, multiplier: DUEL_BET_MULTIPLIER };
+        });
+    } catch {
+        result = { success: false, reason: 'error' };
+    }
+    return result;
+};
+
+// The duellist who lost a life this round, or null (shield, dud, force-end).
+const duelRoundLoser = (gameState: BombGameState): string | null => {
+    const start = gameState.roundStartLives ?? {};
+    const lost = Object.keys(start).filter(
+        (id) => (gameState.lives[id] ?? 0) < (start[id] ?? 0)
+    );
+    return lost.length === 1 ? lost[0] : null;
+};
+
 // ── SETTLE (host calls this from the replay screen) ───────────────────────
 // Safe to call as often as you like: a bet only ever settles once. A round
 // bet settles in the replay of the round it covered; a first-ghost bet
@@ -199,7 +291,10 @@ export const settleBets = async (group: Group): Promise<void> => {
                     if (forRound > gameState.roundNumber) verdict = 'wait';
                     else if (forRound < gameState.roundNumber) verdict = 'void';
                     else {
-                        const winner = winningPick(bet.market, outcome);
+                        const winner =
+                            bet.market === 'duel-loser'
+                                ? duelRoundLoser(gameState)
+                                : winningPick(bet.market, outcome);
                         verdict = winner === null ? 'void' : winner === bet.pick ? 'won' : 'lost';
                     }
                 }
@@ -210,14 +305,21 @@ export const settleBets = async (group: Group): Promise<void> => {
                 if (verdict === 'void') {
                     applyFusePoints(updates, gameState, bet.bettorId, bet.stake, 'Bet refunded');
                     // a voided bet doesn't count against the ticket either
-                    chargeRefunds[bet.bettorId] = (chargeRefunds[bet.bettorId] ?? 0) + 1;
+                    // (duel bets never used one)
+                    if (bet.market !== 'duel-loser') {
+                        chargeRefunds[bet.bettorId] = (chargeRefunds[bet.bettorId] ?? 0) + 1;
+                    }
                     return { ...bet, status: 'void', settledRound };
                 }
                 if (verdict === 'lost') return { ...bet, status: 'lost', settledRound };
 
                 const payout = payoutFor(bet.stake, bet.multiplier);
                 applyFusePoints(updates, gameState, bet.bettorId, payout, 'Bet won!');
-                const points = scoreFor(payout - bet.stake, earned[bet.bettorId] ?? 0);
+                // Duel bets: the winnings are FP, cashed into points at game end.
+                const points =
+                    bet.market === 'duel-loser'
+                        ? 0
+                        : scoreFor(payout - bet.stake, earned[bet.bettorId] ?? 0);
                 earned[bet.bettorId] = (earned[bet.bettorId] ?? 0) + points;
                 if (points > 0) awards.push({ playerId: bet.bettorId, points });
                 return { ...bet, status: 'won', payout, scorePoints: points, settledRound };

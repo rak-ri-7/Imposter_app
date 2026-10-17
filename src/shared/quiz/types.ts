@@ -57,6 +57,10 @@ export type QuizQuestion = {
     id: string;
     difficulty: QuizDifficulty;
     level?: QuizLevel;
+    // Only answerable with the choices on screen ("Which of these…"), so
+    // games without options (e.g. Quiz Board's buzzer mode) skip it. Most
+    // such questions are detected automatically; set this for the rest.
+    optionsOnly?: boolean;
     category: QuizCategory;
     prompt: string; // may contain [PLACEHOLDER] tokens
     correctPool: string[];
