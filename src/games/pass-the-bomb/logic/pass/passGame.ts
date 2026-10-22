@@ -1,4 +1,5 @@
-import { doc, updateDoc, runTransaction, increment } from 'firebase/firestore';
+import { doc, updateDoc, runTransaction } from 'firebase/firestore';
+import { scoreFields } from '../../../../shared/firebase/groups';
 import { db } from '../../../../shared/firebase/config';
 import { Group, PassGameState, PassSide, PassTurn, PassReceipt } from '../../../../shared/types';
 import {
@@ -708,7 +709,7 @@ export const continuePassGame = async (group: Group): Promise<void> => {
                 const award = (sideId: string | null | undefined, points: number) => {
                     if (!sideId || points <= 0) return;
                     for (const id of sideById(gs, sideId)?.memberIds ?? []) {
-                        updates[`scores.${id}`] = increment(points);
+                        Object.assign(updates, scoreFields('pass-the-bomb', id, points));
                     }
                 };
                 award(winnerId, PASS_WIN_SCORE);

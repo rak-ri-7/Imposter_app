@@ -13,7 +13,6 @@ import { RootStackParamList } from "../../../App";
 import {
   saveLocalSession,
   getLocalSession,
-  clearLocalSession,
 } from "../utils/localSession";
 
 type Props = {

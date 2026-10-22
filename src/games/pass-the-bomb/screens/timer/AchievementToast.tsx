@@ -59,9 +59,20 @@ export default function AchievementToast({ group, playerId }: Props) {
     if (next.playerId === playerId) Vibration.vibrate([0, 80, 60, 160]);
     slide.setValue(-120);
     Animated.spring(slide, { toValue: 0, friction: 6, useNativeDriver: true }).start();
-    const t = setTimeout(() => setCurrent(null), SHOW_MS);
-    return () => clearTimeout(t);
   }, [queue, current]);
+
+  // Hide each banner after SHOW_MS. Kept separate from the effect above:
+  // there, showing a banner changes `queue`/`current`, which re-ran it and
+  // its cleanup cancelled the hide timer, so the banner never left.
+  useEffect(() => {
+    if (!current) return;
+    const t = setTimeout(() => {
+      Animated.timing(slide, { toValue: -160, duration: 220, useNativeDriver: true }).start(() =>
+        setCurrent(null)
+      );
+    }, SHOW_MS);
+    return () => clearTimeout(t);
+  }, [current]);
 
   if (!current) return null;
   const a = ACHIEVEMENTS[current.achievement as AchievementId];

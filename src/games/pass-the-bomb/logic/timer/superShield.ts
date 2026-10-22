@@ -13,7 +13,6 @@
 import { doc, runTransaction } from 'firebase/firestore';
 import { db } from '../../../../shared/firebase/config';
 import { Group, BombGameState } from '../../../../shared/types';
-import { applyMissionEvent } from './missionEngine';
 
 
 export const SUPER_SHIELD_PRICE = 45;
@@ -71,8 +70,6 @@ export const purchaseSuperShield = async (group: Group, playerId: string): Promi
                 (gs.superShieldItems?.[playerId] ?? 0) + 1,
         };
 
-        const gsAfter = { ...gs, fusePoints: { ...gs.fusePoints, [playerId]: fp - SUPER_SHIELD_PRICE } };
-        applyMissionEvent(updates, gsAfter, group.players, playerId, { kind: 'bought-item', playerId });
 
         transaction.update(groupRef, updates);
         result = { success: true };

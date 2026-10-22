@@ -13,9 +13,10 @@
 //                    fresh every fuse (see hotPotatoDuel.ts); whoever's
 //                    holding it when it blows is out.
 
-import { doc, updateDoc, deleteField, runTransaction, increment } from 'firebase/firestore';
+import { doc, updateDoc, deleteField, runTransaction } from 'firebase/firestore';
+import { scoreFields } from '../../../../shared/firebase/groups';
 import { db } from '../../../../shared/firebase/config';
-import { Group, BombGameState, ActiveQuiz } from '../../../../shared/types';
+import { BombGameState, ActiveQuiz } from '../../../../shared/types';
 import { getRandomQuestion, generateQuizInstance, TIMER_QUIZ } from '../../data/quizQuestions';
 import { applyLifeGain, ROUND_WIN_SCORE } from './bombHelpers';
 import { buildHotPotatoStart, hotPotatoResetFields } from './hotPotatoDuel';
@@ -132,31 +133,6 @@ export const beginGhostTournament = async (groupId: string): Promise<void> => {
     } catch {
         // transient contention — the host can just tap again
     }
-};
-
-// TEMPORARY test hook (remove before release): runs a dry-run tournament
-// with every player, host as the "defender". debug: true means the result
-// applies no lives and no score.
-export const debugStartGhostTournament = async (group: Group): Promise<void> => {
-    const groupRef = doc(db, 'groups', group.id);
-    const everyone = group.players.map((p) => p.id);
-    if (everyone.length < 2) return;
-
-    const wireCutterId = group.hostId;
-    const contenderIds = [wireCutterId, ...everyone.filter((id) => id !== wireCutterId)];
-
-    await updateDoc(groupRef, {
-        'gameState.phase': 'ghost-tournament',
-        'gameState.ghostTournament': {
-            ...introFields(Date.now()),
-            wireCutterId,
-            contenderIds,
-            poolIds: contenderIds,
-            eliminatedIds: [],
-            debug: true,
-        },
-        'gameState.activeQuiz': deleteField(),
-    });
 };
 
 // A challenger picks (or changes) their vote on the intro card.
@@ -316,7 +292,7 @@ export const resolveTournamentQuestion = async (
                 // (and un-ghosts if it was their last).
                 applyLifeGain(updates, gameState, winnerId);
                 if (winnerId !== t.wireCutterId) {
-                    updates[`scores.${winnerId}`] = increment(ROUND_WIN_SCORE);
+                    Object.assign(updates, scoreFields('pass-the-bomb', winnerId, ROUND_WIN_SCORE));
                 }
             }
 

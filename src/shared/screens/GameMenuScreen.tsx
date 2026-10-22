@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Alert,
   Modal,
   ScrollView,
+  TextInput,
 } from "react-native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RouteProp } from "@react-navigation/native";
@@ -25,6 +26,13 @@ import { games } from "../../games/registry";
 import { clearSession } from "../utils/session";
 import { BackHandler } from "react-native";
 import PlayerSelectModal from "../components/PlayerSelectModal";
+import { denseRanks, rankMedal } from "../utils/ranking";
+import { AllTimeRow, getProfile, loadAllTime, setRealName } from "../firebase/profiles";
+
+// Leaderboard slides: 🏆 Session → one per game played this session →
+// 🌍 All-time (everyone you've played with, across sessions, merged by
+// real name).
+type SlideKey = "session" | "alltime" | GameType;
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "GameMenu">;
@@ -41,6 +49,45 @@ export default function GameMenuScreen({ navigation, route }: Props) {
     "leaderboard",
   );
 
+  // Leaderboard slides
+  const [slide, setSlide] = useState(0);
+  const [pageW, setPageW] = useState(0);
+  const pager = useRef<ScrollView>(null);
+  const [allTime, setAllTime] = useState<AllTimeRow[] | null>(null);
+  const [allTimeError, setAllTimeError] = useState(false);
+  const [allTimeLoading, setAllTimeLoading] = useState(false);
+  const refreshAllTime = async () => {
+    setAllTimeLoading(true);
+    setAllTimeError(false);
+    try {
+      setAllTime(await loadAllTime(playerId));
+    } catch {
+      setAllTimeError(true);
+    } finally {
+      setAllTimeLoading(false);
+    }
+  };
+
+  // Real name (this phone's all-time identity)
+  const [realName, setRealNameState] = useState<string>("");
+  const [nameModal, setNameModal] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  useEffect(() => {
+    getProfile(playerId)
+      .then((p) => setRealNameState(p?.realName ?? ""))
+      .catch(() => {});
+  }, [playerId]);
+  const saveRealName = async (value: string) => {
+    try {
+      await setRealName(playerId, value);
+      setRealNameState(value.trim().replace(/\s+/g, " "));
+      setNameModal(false);
+      setAllTime(null);
+    } catch {
+      Alert.alert("Couldn't save", "Check your connection (or the Firestore rule for profiles) and try again.");
+    }
+  };
+
   const isHost = group?.hostId === playerId;
 
   useEffect(() => {
@@ -52,6 +99,8 @@ export default function GameMenuScreen({ navigation, route }: Props) {
       navigation.replace("BombFlow", { groupId, playerId });
     } else if (group?.currentGame === "quiz-board") {
       navigation.replace("QuizBoardFlow", { groupId, playerId });
+    } else if (group?.currentGame === "card-clash") {
+      navigation.replace("ClashFlow", { groupId, playerId });
     }
   }, [group?.currentGame]);
 
@@ -82,7 +131,8 @@ export default function GameMenuScreen({ navigation, route }: Props) {
     } else if (
       gameId === "stop-the-timer" ||
       gameId === "pass-the-bomb" ||
-      gameId === "quiz-board"
+      gameId === "quiz-board" ||
+      gameId === "card-clash"
     ) {
       // online only — let host pick who's actually playing, then go straight in
       setPendingGameId(gameId);
@@ -113,19 +163,23 @@ export default function GameMenuScreen({ navigation, route }: Props) {
     );
   }
 
-  const sortedPlayers = [...group.players].sort(
-    (a, b) => (group.scores[b.id] || 0) - (group.scores[a.id] || 0),
+  const playedGames = games.filter((g) =>
+    Object.values(group.gameScores?.[g.id as GameType] ?? {}).some((v) => (v ?? 0) > 0),
   );
+  const slides: { key: SlideKey; label: string }[] = [
+    { key: "session", label: "🏆 Session" },
+    ...playedGames.map((g) => ({ key: g.id as GameType, label: `${g.emoji} ${g.name}` })),
+    { key: "alltime", label: "🌍 All-time" },
+  ];
+  const slideIndex = Math.min(slide, slides.length - 1);
+  const goToSlide = (i: number) => {
+    setSlide(i);
+    pager.current?.scrollTo({ x: i * pageW, animated: true });
+    if (slides[i]?.key === "alltime" && !allTimeLoading) refreshAllTime();
+  };
 
   const selectedGame = games.find((g) => g.id === "imposter");
   const supportsPassThePhone = selectedGame?.modes.includes("pass-the-phone");
-
-  const getTeamScore = (team: Team) => {
-    return team.playerIds.reduce(
-      (sum: number, pid: string) => sum + (group.scores[pid] || 0),
-      0,
-    );
-  };
 
   const teamsEnabled =
     group?.teamsEnabled && group.teams && group.teams.length > 0;
@@ -170,6 +224,85 @@ export default function GameMenuScreen({ navigation, route }: Props) {
     );
   };
 
+  // One session board (overall or a single game), as teams or players.
+  // Equal scores share a place (10, 10, 7 -> 🥇 🥇 🥈).
+  const renderBoard = (scoreOf: (pid: string) => number) => {
+    if (teamsEnabled) {
+      const teamScore = (t: Team) => t.playerIds.reduce((sum, pid) => sum + scoreOf(pid), 0);
+      const teams = [...(group.teams ?? [])].sort((a, b) => teamScore(b) - teamScore(a));
+      const ranks = denseRanks(teams.map(teamScore));
+      return teams.map((team, index) => (
+        <View key={team.id}>
+          <View style={styles.leaderRow}>
+            <Text style={styles.leaderRank}>{rankMedal(ranks[index])}</Text>
+            <View style={[styles.teamDot, { backgroundColor: team.color }]} />
+            <Text style={styles.leaderName}>{team.name}</Text>
+            <Text style={styles.leaderScore}>{teamScore(team)} pts</Text>
+          </View>
+          <Text style={styles.teamMemberNames}>
+            {team.playerIds.map((pid) => group.players.find((p) => p.id === pid)?.name).join(", ")}
+          </Text>
+        </View>
+      ));
+    }
+    const players = [...group.players].sort((a, b) => scoreOf(b.id) - scoreOf(a.id));
+    const ranks = denseRanks(players.map((p) => scoreOf(p.id)));
+    return players.map((player, index) => (
+      <View key={player.id} style={styles.leaderRow}>
+        <Text style={styles.leaderRank}>{rankMedal(ranks[index])}</Text>
+        <Text style={styles.leaderName}>
+          {player.name}
+          {player.id === playerId ? " (you)" : ""}
+        </Text>
+        <Text style={styles.leaderScore}>{scoreOf(player.id)} pts</Text>
+      </View>
+    ));
+  };
+
+  const renderAllTime = () => {
+    if (allTimeError) {
+      return (
+        <TouchableOpacity onPress={refreshAllTime}>
+          <Text style={styles.allTimeNote}>
+            Couldn't load the all-time board. Tap to retry.{"\n"}(If this keeps happening, the Firestore rule for profiles is missing.)
+          </Text>
+        </TouchableOpacity>
+      );
+    }
+    if (!allTime) {
+      return <Text style={styles.allTimeNote}>{allTimeLoading ? "Loading…" : "Swipe here to load"}</Text>;
+    }
+    if (allTime.length === 0) {
+      return <Text style={styles.allTimeNote}>No all-time points yet. Play a game!</Text>;
+    }
+    const ranks = denseRanks(allTime.map((r) => r.total));
+    return (
+      <>
+        {allTime.map((row, index) => {
+          const parts = games
+            .filter((g) => (row.games[g.id as GameType] ?? 0) > 0)
+            .map((g) => `${g.emoji} ${row.games[g.id as GameType]}`);
+          return (
+            <View key={row.key} style={styles.allTimeRow}>
+              <View style={styles.leaderRow}>
+                <Text style={styles.leaderRank}>{rankMedal(ranks[index])}</Text>
+                <Text style={styles.leaderName} numberOfLines={1}>
+                  {row.name}
+                  {row.isMe ? " (you)" : ""}
+                </Text>
+                <Text style={styles.leaderScore}>{row.total} pts</Text>
+              </View>
+              {parts.length > 0 && <Text style={styles.allTimeGames}>{parts.join("  ·  ")}</Text>}
+            </View>
+          );
+        })}
+        <TouchableOpacity onPress={refreshAllTime}>
+          <Text style={styles.allTimeRefresh}>{allTimeLoading ? "Refreshing…" : "↻ Refresh"}</Text>
+        </TouchableOpacity>
+      </>
+    );
+  };
+
   return (
     <View style={styles.container}>
       <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave}>
@@ -179,6 +312,17 @@ export default function GameMenuScreen({ navigation, route }: Props) {
       <TouchableOpacity onPress={() => Alert.alert("Group Code", group.code)}>
         <Text style={styles.codeHint}>
           Group code: {group.code} (tap to view)
+        </Text>
+      </TouchableOpacity>
+      <TouchableOpacity
+        style={styles.nameChip}
+        onPress={() => {
+          setNameDraft(realName);
+          setNameModal(true);
+        }}
+      >
+        <Text style={styles.nameChipText}>
+          {realName ? `👤 Real name: ${realName}  ✏️` : "👤 Set your real name for the all-time board  ✏️"}
         </Text>
       </TouchableOpacity>
 
@@ -219,64 +363,67 @@ export default function GameMenuScreen({ navigation, route }: Props) {
       </View>
 
       {activeTab === "leaderboard" ? (
-        <ScrollView style={styles.leaderboard} nestedScrollEnabled>
-          {teamsEnabled
-            ? [...(group.teams ?? [])]
-                .sort((a, b) => getTeamScore(b) - getTeamScore(a))
-                .map((team, index) => (
-                  <View key={team.id}>
-                    <View style={styles.leaderRow}>
-                      <Text style={styles.leaderRank}>
-                        {index === 0
-                          ? "🥇"
-                          : index === 1
-                            ? "🥈"
-                            : index === 2
-                              ? "🥉"
-                              : `${index + 1}.`}
-                      </Text>
-                      <View
-                        style={[
-                          styles.teamDot,
-                          { backgroundColor: team.color },
-                        ]}
-                      />
-                      <Text style={styles.leaderName}>{team.name}</Text>
-                      <Text style={styles.leaderScore}>
-                        {getTeamScore(team)} pts
-                      </Text>
-                    </View>
-                    <Text style={styles.teamMemberNames}>
-                      {team.playerIds
-                        .map(
-                          (pid) =>
-                            group.players.find((p) => p.id === pid)?.name,
-                        )
-                        .join(", ")}
-                    </Text>
-                  </View>
-                ))
-            : sortedPlayers.map((player, index) => (
-                <View key={player.id} style={styles.leaderRow}>
-                  <Text style={styles.leaderRank}>
-                    {index === 0
-                      ? "🥇"
-                      : index === 1
-                        ? "🥈"
-                        : index === 2
-                          ? "🥉"
-                          : `${index + 1}.`}
-                  </Text>
-                  <Text style={styles.leaderName}>
-                    {player.name}
-                    {player.id === playerId ? " (you)" : ""}
-                  </Text>
-                  <Text style={styles.leaderScore}>
-                    {group.scores[player.id] || 0} pts
-                  </Text>
-                </View>
-              ))}
-        </ScrollView>
+        <View>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipRow}
+          >
+            {slides.map((sl, i) => (
+              <TouchableOpacity
+                key={sl.key}
+                style={[styles.chip, i === slideIndex && styles.chipOn]}
+                onPress={() => goToSlide(i)}
+              >
+                <Text style={[styles.chipText, i === slideIndex && styles.chipTextOn]}>
+                  {sl.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          <View
+            style={styles.leaderboardBox}
+            onLayout={(e) => setPageW(e.nativeEvent.layout.width)}
+          >
+            {pageW > 0 && (
+              <ScrollView
+                ref={pager}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onMomentumScrollEnd={(e) => {
+                  const i = Math.round(e.nativeEvent.contentOffset.x / pageW);
+                  if (i !== slideIndex) {
+                    setSlide(i);
+                    if (slides[i]?.key === "alltime" && !allTimeLoading) refreshAllTime();
+                  }
+                }}
+              >
+                {slides.map((sl) => (
+                  <ScrollView
+                    key={sl.key}
+                    style={{ width: pageW }}
+                    contentContainerStyle={styles.page}
+                    nestedScrollEnabled
+                  >
+                    {sl.key === "alltime"
+                      ? renderAllTime()
+                      : renderBoard(
+                          sl.key === "session"
+                            ? (pid) => group.scores[pid] || 0
+                            : (pid) => group.gameScores?.[sl.key as GameType]?.[pid] || 0,
+                        )}
+                  </ScrollView>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+          <View style={styles.dots}>
+            {slides.map((sl, i) => (
+              <View key={sl.key} style={[styles.dot, i === slideIndex && styles.dotOn]} />
+            ))}
+          </View>
+        </View>
       ) : (
         <ScrollView style={styles.leaderboard} nestedScrollEnabled>
           {group.players.map((player) => (
@@ -452,6 +599,46 @@ export default function GameMenuScreen({ navigation, route }: Props) {
         </View>
       </Modal>
 
+      {/* Real name: ties this phone's points to one name across sessions */}
+      <Modal
+        visible={nameModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setNameModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>👤 Your real name</Text>
+            <Text style={styles.modalSubtitle}>
+              Whatever username you play under, this phone's points go to this name on the 🌍 All-time board. Use the same name on every phone you play on.
+            </Text>
+            <TextInput
+              style={styles.nameInput}
+              value={nameDraft}
+              onChangeText={setNameDraft}
+              placeholder="e.g. Rakesh"
+              placeholderTextColor="#AAA"
+              maxLength={30}
+              autoFocus
+              autoCapitalize="words"
+              returnKeyType="done"
+              onSubmitEditing={() => saveRealName(nameDraft)}
+            />
+            <TouchableOpacity style={styles.nameSave} onPress={() => saveRealName(nameDraft)}>
+              <Text style={styles.nameSaveText}>Save</Text>
+            </TouchableOpacity>
+            {!!realName && (
+              <TouchableOpacity style={styles.modalCancel} onPress={() => saveRealName("")}>
+                <Text style={[styles.modalCancelText, { color: "#E63946" }]}>Remove real name</Text>
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={styles.modalCancel} onPress={() => setNameModal(false)}>
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
       {/* Player selection modal — host picks who's actually playing before start */}
       <PlayerSelectModal
         visible={showPlayerSelect}
@@ -505,6 +692,57 @@ const styles = StyleSheet.create({
     borderColor: "#EAEAEE",
     height: 170,
   },
+  leaderboardBox: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#EAEAEE",
+    height: 190,
+    overflow: "hidden",
+  },
+  page: { padding: 16 },
+  chipRow: { gap: 8, paddingBottom: 10 },
+  chip: {
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: 16,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#EAEAEE",
+  },
+  chipOn: { backgroundColor: "#E63946", borderColor: "#E63946" },
+  chipText: { color: "#555", fontSize: 12, fontWeight: "600" },
+  chipTextOn: { color: "#fff" },
+  dots: { flexDirection: "row", justifyContent: "center", gap: 6, marginTop: 8, marginBottom: 16 },
+  dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#D6D6DE" },
+  dotOn: { backgroundColor: "#E63946", width: 16 },
+  allTimeRow: { marginBottom: 2 },
+  allTimeGames: { color: "#888", fontSize: 11, marginLeft: 44, marginTop: -6, marginBottom: 6 },
+  allTimeNote: { color: "#888", fontSize: 13, textAlign: "center", marginTop: 30, lineHeight: 19 },
+  allTimeRefresh: { color: "#E63946", fontSize: 12, textAlign: "center", marginTop: 8, fontWeight: "600" },
+  nameChip: {
+    alignSelf: "center",
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#EAEAEE",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    marginTop: -10,
+    marginBottom: 16,
+  },
+  nameChipText: { color: "#1A1A2E", fontSize: 12, fontWeight: "600" },
+  nameInput: {
+    borderWidth: 1,
+    borderColor: "#DDD",
+    borderRadius: 12,
+    padding: 14,
+    fontSize: 16,
+    color: "#1A1A2E",
+    marginBottom: 12,
+  },
+  nameSave: { backgroundColor: "#E63946", borderRadius: 12, padding: 14, alignItems: "center" },
+  nameSaveText: { color: "#fff", fontSize: 16, fontWeight: "700" },
   leaderRow: {
     flexDirection: "row",
     alignItems: "center",

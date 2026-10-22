@@ -59,6 +59,3 @@ export const stopSound = (name: SoundName) => {
     }
 };
 
-export const stopAllSounds = () => {
-    (Object.keys(players) as SoundName[]).forEach((name) => stopSound(name));
-};

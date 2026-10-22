@@ -8,14 +8,23 @@ export const FUSE_POINTS = {
     SURVIVED_HOLD_AND_PASSED: 2,
     // DUEL_WIN: 25,
     // DUEL_LOSS: 5,
-    LIFE_MISSION: 10,
-    NON_LIFE_MISSION: 20,
     CLINGY_WRONG_PASS: -5,
     CALLOUT_VOTED_OUT: -10,
     // CALLOUT_SURVIVED: 5,
     GAME_WIN: 30,
 
 } as const;
+
+// 🔨 An auction called off (panic, force-end): every bidder gets back what
+// was taken from them. Lives here so game.ts can use it without importing
+// bombAuction.ts (which imports game.ts).
+export const auctionRefundUpdates = (gameState: BombGameState): Record<string, unknown> => {
+    const updates: Record<string, unknown> = {};
+    for (const [id, amount] of Object.entries(gameState.auction?.paid ?? {})) {
+        if (amount > 0) applyFusePoints(updates, gameState, id, amount, '🔨 Auction called off (refund)');
+    }
+    return updates;
+};
 
 export const ROUND_WIN_SCORE = 3;       // defusing, or a ghost reclaiming their life
 export const GAME_WIN_SCORE_BONUS = 15;

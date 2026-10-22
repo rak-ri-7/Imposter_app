@@ -361,15 +361,6 @@ const styles = StyleSheet.create({
     color: "#fff",
     fontWeight: "600",
   },
-  joinLink: {
-    alignItems: "center",
-    marginTop: 8,
-  },
-  joinLinkText: {
-    color: "#888",
-    fontSize: 13,
-    textDecorationLine: "underline",
-  },
 
   divider: {
     flexDirection: "row",

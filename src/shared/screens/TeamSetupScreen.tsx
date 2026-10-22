@@ -13,7 +13,7 @@ import { RouteProp } from "@react-navigation/native";
 import { RootStackParamList } from "../../../App";
 import { useGroup } from "../hooks/useGroup";
 import { saveTeams } from "../firebase/groups";
-import { Team, Player } from "../types";
+import { Team } from "../types";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "TeamSetup">;
@@ -26,7 +26,7 @@ const TEAM_NAMES = ["Team A", "Team B", "Team C", "Team D"];
 const generateTeamId = () => Math.random().toString(36).substring(2, 8);
 
 export default function TeamSetupScreen({ navigation, route }: Props) {
-  const { groupId, playerId } = route.params;
+  const { groupId } = route.params;
   const { group } = useGroup(groupId);
   const [teams, setTeams] = useState<Team[]>(() => {
     if (group?.teams && group.teams.length > 0) return group.teams;
@@ -231,7 +231,7 @@ export default function TeamSetupScreen({ navigation, route }: Props) {
           </View>
         )}
 
-        {teams.map((team, index) => (
+        {teams.map((team) => (
           <View
             key={team.id}
             style={[styles.teamBox, { borderColor: team.color }]}

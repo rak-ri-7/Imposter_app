@@ -8,7 +8,7 @@ export type Player = {
     isReady: boolean;
 };
 
-export type GameType = 'imposter' | 'stop-the-timer' | 'pass-the-bomb' | 'quiz-board';
+export type GameType = 'imposter' | 'stop-the-timer' | 'pass-the-bomb' | 'quiz-board' | 'card-clash';
 
 export type ImposterSettings = {
     imposterCount: number;
@@ -39,9 +39,11 @@ export type Group = {
     hostId: string;
     players: Player[];
     scores: Record<string, number>;
+    // The same points split by game (session leaderboard slides).
+    gameScores?: Partial<Record<GameType, Record<string, number>>>;
     currentGame: GameType | 'menu';
     status: GameStatus;
-    gameState: ImposterGameState | TimerGameState | BombGameState | PassGameState | QuizBoardGameState;
+    gameState: ImposterGameState | TimerGameState | BombGameState | PassGameState | QuizBoardGameState | ClashGameState;
     createdAt?: number;
     teams?: Team[];
     teamsEnabled?: boolean;
@@ -119,19 +121,6 @@ export const emptyImposterState: ImposterGameState = {
     hintUsed: false,
 };
 
-export const emptyTimerState: TimerGameState = {
-    question: '',
-    answer: 0,
-    difficulty: 'easy',
-    phase: 'lobby',
-    timerStartedAt: 0,
-    stops: {},
-    roundNumber: 0,
-    distractionsEnabled: false,
-    finalStops: {}
-
-}
-
 //Bomb game
 
 export type BetMarket = 'boom-or-defuse' | 'round-victim' | 'first-ghost' | 'game-winner' | 'next-ghost' | 'duel-loser';
@@ -163,39 +152,6 @@ export type PassEvent = {
     usedFallback?: boolean;
     fallback?: string; // the fallback text at the time, kept because it gets overwritten on the player's next hold
 
-};
-
-export type BombMission = {
-    id: string;
-    text: string;
-    tier: 'easy' | 'medium' | 'hard';
-    type: 'auto' | 'vote'; // 'vote' = confirmed by a group vote
-    conditionType: string;
-    conditionValue?: number;
-    targetId?: string;
-    targetName?: string;
-    isLifeMission: boolean;
-    completed: boolean;
-    progress?: number;
-    progressSet?: string[];
-    roundFlag?: boolean; // avoid-target missions: this round is spoiled
-    rewardText?: string; // what it paid; shown in the toast and the reveal
-    roundTouched?: boolean;
-};
-
-export type PlayerMissions = {
-    mission1: BombMission;
-    mission2: BombMission;
-    lifeMission?: BombMission; // unlocked by completing a normal mission
-};
-
-export type MissionClaim = {
-    claimerId: string;
-    missionKey: 'mission1' | 'mission2';
-    text: string;
-    yesIds: string[];
-    noIds: string[];
-    startedAt: number;
 };
 
 export type ClingyLock = {
@@ -237,6 +193,26 @@ export type PendingPass = {
     kind: 'lazy' | 'sneak';
     usedFallback?: boolean;
     speedBoost?: number;       // seething: fuse speed multiplier while it drags
+    heldMs?: number;           // how long the passer held it (for achievements)
+};
+// 🔨 Auction Bomb: the holder tapped Pass, everyone else is bidding.
+export type BombAuction = {
+    id: string;                     // one auction (guards the settle)
+    holderId: string;
+    startedAt: number;              // holder's clock: replay/ordering only
+    durationMs: number;             // phones time it from when they see it
+    bids: Record<string, number>;   // every living non-holder's current bid
+    paid?: Record<string, number>;  // FP already taken from each bidder (held till it settles)
+    heldMs?: number;                // the holder's hold before tapping (achievements)
+    first?: boolean;                // the game's first auction (longer, with a hint)
+};
+export type AuctionRecord = {
+    holderId: string;
+    loserId: string;
+    bids: Record<string, number>;   // final bids
+    paid?: Record<string, number>;  // what each actually paid (broke bidders pay what they have)
+    pot: number;
+    tied?: string[];                // shared the lowest bid: the bomb picked at random (🎲)
 };
 export type QuirkDetail = {
     fledTo?: string;
@@ -307,7 +283,6 @@ export type BombGameState = {
     instructions: Record<string, string>;
     instructionIds: Record<string, string>;
     instructionFallbacks: Record<string, string>;
-    missions: Record<string, PlayerMissions>;
     passHistory: PassEvent[];
     lives: Record<string, number>;
     ghosts: string[];
@@ -366,7 +341,6 @@ export type BombGameState = {
     hotSeatWrongCount?: number;   // 0–3, resets fresh each time a new holder's turn starts
     hotSeatLockedUntil?: number;  // separate from duelFffLockedUntil — escalating duration, not a fixed 3s
     revealEndsAt?: number;
-    missionClaim?: MissionClaim;
     matchBets?: MatchBet[];
     betScoreEarned?: Record<string, number>;
     betCharges?: Record<string, number>
@@ -379,7 +353,7 @@ export type BombGameState = {
     pauseResumeAt?: number;
     roundAdvanceClaimed?: number
     roundAdvanceClaimedAt?: number;   // when; an old claim is stale (the advance failed)
-    roundEndMissionsRound?: number;   // round whose end-of-round missions were already applied
+    roundEndEventsRound?: number;     // round whose end-of-round achievements were already applied
     duelStartClaimed?: number;        // round whose quiz duel the host is already starting
     duelRoundIndex?: number;          // 1 = first round of the final duel, 2 = second…
     bombQuirks?: BombQuirkState;      // quirks the bomb picked up this round
@@ -387,6 +361,9 @@ export type BombGameState = {
     quirkReveal?: QuirkReveal;        // the mid-game card (fuse paused till endsAt)
     roundQuirks?: RoundQuirk[];       // everything it turned into this round (replay)
     toxicBoom?: boolean;              // toxic bomb blew on an impatient tap
+    auction?: BombAuction;            // 🔨 a live auction
+    auctionLog?: AuctionRecord[];     // 🔨 this round's settled auctions (replay)
+    auctionCount?: number;            // 🔨 auctions so far this game
     achievements?: Record<string, AchievementRecord>; // per player, this game
     achFeed?: AchievementUnlock[];    // latest unlocks (toasts on every phone)
     // Game end: every player's leftover FP turned into leaderboard points.
@@ -490,50 +467,6 @@ export type GhostTournamentState = {
     debug?: boolean;
     lastDudLine?: number;
     lastDudId?: string;
-};
-
-export const emptyBombState: BombGameState = {
-    phase: 'lobby',
-    currentHolderId: '',
-    timerMode: 'on',
-    timerStartedAt: 0,
-    timerDuration: 30,
-    correctWire: 'red',
-    personality: 'normal',
-    personalityName: 'STANDARD BOMB',
-    personalityEmoji: '💣',
-    personalityEffect: 'normal',
-    personalityDescription: '',
-    instructions: {},
-    instructionIds: {},
-    missions: {},
-    passHistory: [],
-    lives: {},
-    ghosts: [],
-    everGhosted: [],
-    roundNumber: 1,
-    usedPersonalities: [],
-    usedInstructions: [],
-    boomerangUsed: {},
-    chainPassed: [],
-    ghostImmunePlayers: [],
-    speedMultiplier: 1,
-    seatingOrder: [],
-    wrongPassCounts: {},
-    holdCounts: {},
-    disputes: [],
-    usedQuizQuestions: [],
-    instructionFallbacks: {},
-    roundSummaries: [],
-    strictMemoryMode: true,
-    fusePoints: {},
-    duelChips: {},
-    pointEvents: [],
-    bettingTickets: {},
-    tbcTickets: {},
-    freeBettingClaimed: {},
-    freeTbcClaimed: {},
-
 };
 
 export type PassDispute = {
@@ -734,6 +667,58 @@ export type QuizBoardRound = {
     reviewSeen?: boolean;             // host dismissed / handled the review
     changed?: boolean;                // host corrected the call
     voided?: boolean;
+};
+
+// ── 🃏 CLASH CARDS ─────────────────────────────────────────────────
+// Top-Trumps style: everyone plays their top card, the caller picks a stat,
+// the highest value takes every card in the clash. Last one standing wins.
+// ★ Gold cards: one per player at the deal. A gold card that loses to a
+// normal card gets a Gold Defence: a rematch on a stat its owner picks.
+export type ClashPhase = 'calling' | 'reveal' | 'defending' | 'over';
+export type ClashResult = {
+    round: number;
+    callerId: string;
+    statKey: string;
+    wildcard?: boolean;              // a 🃏 backup stat
+    auto?: boolean;                  // the caller ran out of time
+    plays: Record<string, string>;   // playerId -> card id played
+    winnerId: string;
+    tied?: string[];                 // shared the top value: the 🎲 roll picked winnerId
+    out?: string[];                  // knocked out by this clash
+    stage?: 'clash' | 'defence';     // missing = 'clash'
+    gold?: string[];                 // gold card ids among plays (before any change)
+    goldTie?: boolean;               // a gold card won a tie at the top
+    defenceNext?: boolean;           // a gold card lost: Gold Defence next, no cards moved yet
+    pot?: Record<string, string>;    // defence: every card at stake (the first clash's plays)
+    firstStatKey?: string;           // defence: the stat the first clash was called on
+    goldTo?: string;                 // defence: the challenger's card took the gold
+};
+export type ClashDefence = {
+    defenderId: string;
+    challengerId: string;
+    goldCard: string;
+    challengerCard: string;
+    firstStatKey: string;
+    firstValues: Record<string, number>; // playerId -> value on the first stat
+    pot: Record<string, string>;     // playerId -> card id, everything at stake
+};
+export type ClashGameState = {
+    game: 'card-clash';
+    deck: 'countries' | 'animals';
+    phase: ClashPhase;
+    round: number;
+    piles: Record<string, string[]>; // playerId -> card ids, top card first
+    callerId: string;
+    startedWith: number;             // cards dealt to each player
+    wildcardUsed?: Record<string, boolean>;
+    skipsUsed?: Record<string, number>;  // playerId -> clash they used ⏭️ Skip in
+    hintsUsed?: Record<string, number>;  // playerId -> clash they used 🔍 Hint in
+    outRound?: Record<string, number>; // playerId -> the round they ran out of cards
+    last?: ClashResult;
+    gold?: Record<string, boolean>;  // ★ card id -> true
+    defence?: ClashDefence;          // set from the losing clash until the defence is called
+    endedEarly?: boolean;
+    pointsAwarded?: boolean;
 };
 
 export type QuizBoardGameState = {

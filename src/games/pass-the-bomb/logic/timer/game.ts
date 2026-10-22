@@ -47,10 +47,10 @@ import {
     EligibilityContext,
     instructions,
 } from '../../data/content';
-import { assignMissions } from '../../data/missions';
-import { applyMissionEvent, applyRoundEndMissions } from './missionEngine';
+import { applyGameEvent, applyRoundEndEvents } from './achievementEngine';
+import { potCapFor, potForHold } from './bombPot';
 import { buildActiveQuiz } from './Fastestfinger';
-import { FUSE_POINTS, applyFusePoints, ROUND_WIN_SCORE, GAME_WIN_SCORE_BONUS, RUNNER_UP_SCORE_BONUS, markDisputeOutcome } from './bombHelpers';
+import { FUSE_POINTS, applyFusePoints, auctionRefundUpdates, ROUND_WIN_SCORE, GAME_WIN_SCORE_BONUS, RUNNER_UP_SCORE_BONUS, markDisputeOutcome } from './bombHelpers';
 import { settleBets, settleWinnerBets } from './betEngine';
 import { FP_PER_POINT } from '../../data/betOdds';
 import { payGhostStipends } from './ghostEconomy';
@@ -117,6 +117,11 @@ export const nextRevealerAccuracy = (bought: number): number =>
 const getRandomDuration = () =>
     Math.floor(Math.random() * (BOMB_MAX_DURATION - BOMB_MIN_DURATION + 1)) +
     BOMB_MIN_DURATION;
+
+const pickLowestFpHolder = (playerIds: string[], fp: Record<string, number>): string => {
+    const low = Math.min(...playerIds.map((id) => fp[id] ?? 0));
+    return pickRandomHolder(playerIds.filter((id) => (fp[id] ?? 0) === low));
+};
 
 const pickRandomHolder = (playerIds: string[]): string =>
     playerIds[Math.floor(Math.random() * playerIds.length)];
@@ -247,14 +252,6 @@ export const purchaseBettingTicket = async (
             updates[`gameState.freeBettingClaimed.${playerId}`] = true;
         }
 
-        // Mission sees the FP *after* the purchase, so a completion can't undo the charge.
-        const gsAfter = {
-            ...gameState,
-            fusePoints: { ...gameState.fusePoints, [playerId]: currentFP - price },
-        };
-        if (price > 0) { // a free first ticket doesn't count as "buying"
-            applyMissionEvent(updates, gsAfter, group.players, playerId, { kind: 'bought-item', playerId });
-        }
 
         transaction.update(groupRef, updates);
         result = { success: true };
@@ -296,14 +293,6 @@ export const purchaseTbcTicket = async (
             updates[`gameState.freeTbcClaimed.${playerId}`] = true;
         }
 
-        // Mission sees the FP *after* the purchase, so a completion can't undo the charge.
-        const gsAfter = {
-            ...gameState,
-            fusePoints: { ...gameState.fusePoints, [playerId]: currentFP - price },
-        };
-        if (price > 0) { // a free first ticket doesn't count as "buying"
-            applyMissionEvent(updates, gsAfter, group.players, playerId, { kind: 'bought-item', playerId });
-        }
 
         transaction.update(groupRef, updates);
         result = { success: true };
@@ -342,12 +331,6 @@ export const purchaseWireRevealer = async (
             [`gameState.revealerItems.${playerId}`]: owned,
         };
 
-        // Mission sees the FP *after* the purchase, so a completion can't undo the charge.
-        const gsAfter = {
-            ...gameState,
-            fusePoints: { ...gameState.fusePoints, [playerId]: fp - ITEM_PRICES.WIRE_REVEALER },
-        };
-        applyMissionEvent(updates, gsAfter, group.players, playerId, { kind: 'bought-item', playerId });
 
         transaction.update(groupRef, updates);
         result = { success: true, accuracy };
@@ -378,12 +361,6 @@ export const purchaseBombShield = async (
             [`gameState.fusePoints.${playerId}`]: fp - ITEM_PRICES.BOMB_SHIELD,
             [`gameState.shieldItems.${playerId}`]: (gameState.shieldItems?.[playerId] ?? 0) + 1,
         };
-
-        const gsAfter = {
-            ...gameState,
-            fusePoints: { ...gameState.fusePoints, [playerId]: fp - ITEM_PRICES.BOMB_SHIELD },
-        };
-        applyMissionEvent(updates, gsAfter, group.players, playerId, { kind: 'bought-item', playerId });
 
         transaction.update(groupRef, updates);
         result = { success: true };
@@ -516,8 +493,6 @@ export const startBombGame = async (
         used.push(instruction.id);
     }
 
-    // Missions are retired (hidden achievements replaced them).
-    const missionMap = {};
 
     const lives: Record<string, number> = {};
     playerIds.forEach((id) => (lives[id] = 3));
@@ -544,7 +519,6 @@ export const startBombGame = async (
         instructions: texts,
         instructionIds: ids,
         instructionFallbacks: fallbackTexts,
-        missions: missionMap,
         passHistory: [],
         lives,
         ghosts: [],
@@ -613,7 +587,8 @@ export type PassResult =
         | 'toxic'          // toxic: impatient tap, the fuse sped up
         | 'toxic-boom'     // toxic: the 3rd impatient tap blew it
         | 'cuddled'        // cuddler: stuck in a hug for a few seconds
-        | 'rebound';       // rebound: the pass bounced straight back
+        | 'rebound'        // rebound: the pass bounced straight back
+        | 'auction';       // auction round: Pass opens an auction instead
         penaltySeconds?: number;
         remainingLockMs?: number;
     };
@@ -622,7 +597,8 @@ export type PassResult =
 
 // Quirks only exist in normal, live timer rounds.
 const quirksLive = (gs: BombGameState): boolean =>
-    gs.phase === 'playing' && !gs.duelRound && gs.personalityEffect !== 'quiz';
+    gs.phase === 'playing' && !gs.duelRound && gs.personalityEffect !== 'quiz' &&
+    gs.personalityEffect !== 'auction';
 
 const cloneQuirks = (gs: BombGameState): BombQuirkState =>
     JSON.parse(JSON.stringify(gs.bombQuirks ?? {}));
@@ -658,7 +634,7 @@ const reanchorTimer = (
 
 // Freeze the fuse until `until`. An existing pause keeps its start, and its
 // end only ever moves later. resumeTimer (every phone's watcher) unfreezes it.
-const pauseFuseUntil = (
+export const pauseFuseUntil = (
     updates: Record<string, unknown>,
     gs: BombGameState,
     now: number,
@@ -834,7 +810,7 @@ const applyArrivalQuirks = (
     if (others.length > 0 && Math.random() < strangerFleeChance(variant)) {
         const fleeId = others[Math.floor(Math.random() * others.length)];
         fleeBombTo(updates, gs, activePlayerIds, toId, fleeId, now);
-        applyMissionEvent(updates, gs, data.players, toId, { kind: 'bomb-fled', playerId: toId });
+        applyGameEvent(updates, gs, toId, { kind: 'bomb-fled', playerId: toId });
         revealQuirk(updates, gs, data, variant, toId, now, { fledTo: fleeId });
         return;
     }
@@ -848,14 +824,14 @@ const applyArrivalQuirks = (
 
 // Everything a successful pass from → to changes. Shared by a normal tap and
 // by a delayed (lazy / sneaky) pass landing later.
-const applyPassSuccess = (
+export const applyPassSuccess = (
     updates: Record<string, unknown>,
     gameState: BombGameState,
     group: Group,
     fromId: string,
     toId: string,
     now: number,
-    opts: { usedFallback?: boolean; boomerang?: boolean; label?: string; rewards?: boolean }
+    opts: { usedFallback?: boolean; boomerang?: boolean; label?: string; rewards?: boolean; heldMs?: number }
 ) => {
     const isDuel = gameState.phase === 'duel' || gameState.phase === 'duel-intro';
     const personality = isDuel ? null : gameState.personalityEffect;
@@ -1022,22 +998,15 @@ const applyPassSuccess = (
 
     if (!rewards) return;
 
-    // When did the passer catch it? The last pass this round, or the round start.
-    const lastIn = gameState.passHistory[gameState.passHistory.length - 1];
-    const caughtAt = lastIn && lastIn.to === fromId ? lastIn.timestamp : gameState.timerStartedAt;
-    const heldMs = Math.max(0, now - caughtAt);
+    // How long the passer held it: measured on their own phone when it sent
+    // one (immune to clock differences between phones and to pauses), else
+    // since the last pass to them / the round start.
+    const heldMs = opts.heldMs ?? Math.max(0, now - heldSince(gameState, fromId));
 
-    applyMissionEvent(updates, gameState, group.players, fromId, {
+    applyGameEvent(updates, gameState, fromId, {
         kind: 'pass',
         fromId,
-        toId,
-        activePlayerIds,
-        duringPanic: gameState.phase === 'panic',
         heldMs,
-    });
-    applyMissionEvent(updates, gameState, group.players, fromId, {
-        kind: 'survived-hold',
-        playerId: fromId,
     });
 
     applyFusePoints(
@@ -1047,7 +1016,19 @@ const applyPassSuccess = (
         FUSE_POINTS.SURVIVED_HOLD_AND_PASSED,
         'Survived your hold'
     );
+
+    // 💰 The pot: banked as the pass lands, but only in normal play. If the
+    // panic countdown started first (e.g. during a lazy pass), it burned.
+    if (!isDuel && gameState.phase === 'playing') {
+        const pot = potForHold(heldMs, potCapFor(gameState));
+        if (pot > 0) {
+            applyFusePoints(updates, gameState, fromId, pot, `💰 Pot banked (${Math.floor(heldMs / 1000)}s hold)`);
+        }
+    }
 };
+
+// Leeway when checking a phone's hold time against the shared timestamps.
+const HOLD_CLOCK_SLACK_MS = 10_000;
 
 // How long the holder has had it (since the last pass to them, or the round start).
 const heldSince = (gs: BombGameState, holderId: string): number => {
@@ -1059,7 +1040,12 @@ export const passBomb = async (
     group: Group,
     fromId: string,
     toId: string,
-    usedFallback: boolean = false
+    usedFallback: boolean = false,
+    // Hold time measured on the holder's phone, counting only while the fuse
+    // actually ran. Comparing this phone's clock with the timestamp another
+    // phone wrote breaks whenever the two clocks disagree, and would also
+    // count quirk cards / pauses as holding.
+    clientHeldMs?: number
 ): Promise<PassResult> => {
     const groupRef = doc(db, 'groups', group.id);
     let result: PassResult = { success: false, reason: 'stale' };
@@ -1083,6 +1069,12 @@ export const passBomb = async (
             // (not during the ghost window or the ghost reveal).
             if (gameState.phase === 'panic' && (!gameState.panicStartedAt || gameState.ghostWindowEndsAt)) return;
 
+            // 🔨 Auction round: in normal play the bomb only moves by auction.
+            if (gameState.phase === 'playing' && gameState.personalityEffect === 'auction' && !gameState.duelRound) {
+                result = { success: false, reason: 'auction' };
+                return;
+            }
+
             // The quirk card is up: everyone is reading, the fuse is paused.
             if (gameState.quirkReveal && now < gameState.quirkReveal.endsAt) {
                 result = { success: false, reason: 'quirk-reveal' };
@@ -1093,6 +1085,17 @@ export const passBomb = async (
                 result = { success: false, reason: 'in-transit' };
                 return;
             }
+
+            // The phone's own hold time, sanity-capped: never negative, and
+            // never more than the hold the shared timestamps show plus some
+            // slack for phones whose clocks disagree.
+            const phoneHeldMs =
+                clientHeldMs !== undefined && Number.isFinite(clientHeldMs)
+                    ? Math.min(
+                        Math.max(0, clientHeldMs),
+                        Math.max(0, now - heldSince(gameState, fromId)) + HOLD_CLOCK_SLACK_MS
+                    )
+                    : undefined;
 
             // Personalities never apply in 2-player duels — plain timer only.
             const isDuel = gameState.phase === 'duel' || gameState.phase === 'duel-intro';
@@ -1140,10 +1143,6 @@ export const passBomb = async (
                     },
                 };
 
-                applyMissionEvent(wrongPassUpdates, gameState, group.players, fromId, {
-                    kind: 'wrong-pass',
-                    playerId: fromId,
-                });
 
                 // wrong-answer branch: replace the updateDoc + return with
                 transaction.update(groupRef, wrongPassUpdates);
@@ -1196,7 +1195,7 @@ export const passBomb = async (
                                 'gameState.activeBets': {},
                                 'gameState.ghostResponded': [],
                             });
-                            applyMissionEvent(updates, gameState, group.players, fromId, {
+                            applyGameEvent(updates, gameState, fromId, {
                                 kind: 'toxic-boom',
                                 playerId: fromId,
                             });
@@ -1250,7 +1249,7 @@ export const passBomb = async (
             // 😴 Lazy: an 8s+ hold makes it lazy; a lazy bomb leaves 2s after the tap.
             let woke = false;
             if (live) {
-                const heldMs = Math.max(0, now - heldSince(gameState, fromId));
+                const heldMs = phoneHeldMs ?? Math.max(0, now - heldSince(gameState, fromId));
                 if (q.lazy && heldMs < LAZY_WAKE_MS) {
                     delete q.lazy; // a quick pass wakes it up
                     woke = true;
@@ -1268,6 +1267,7 @@ export const passBomb = async (
                         to: targetId,
                         arrivesAt: startAt + LAZY_DELAY_MS,
                         kind: 'lazy',
+                        heldMs,
                         ...(usedFallback ? { usedFallback: true } : {}),
                     };
                     if (variant === 'seething') {
@@ -1291,6 +1291,7 @@ export const passBomb = async (
                 usedFallback,
                 boomerang,
                 label,
+                ...(phoneHeldMs !== undefined ? { heldMs: phoneHeldMs } : {}),
             });
             applyArrivalQuirks(updates, gameState, data, activePlayerIds, fromId, targetId, now, q);
             finish({ success: true, ...(woke ? { woke: true } : {}) });
@@ -1352,6 +1353,7 @@ export const completePendingPass = async (group: Group): Promise<void> => {
                 usedFallback: pending.usedFallback,
                 label: sneak ? '(snuck back 😈)' : undefined,
                 rewards: !sneak,
+                ...(pending.heldMs !== undefined ? { heldMs: pending.heldMs } : {}),
             });
             if (!sneak && quirksLive(base)) {
                 const q = cloneQuirks(base);
@@ -1367,6 +1369,7 @@ export const completePendingPass = async (group: Group): Promise<void> => {
 
 // Fields every new round (and a force-end) wipes clean.
 const quirkRoundResets = (): Record<string, unknown> => ({
+    'gameState.auction': deleteField(),
     'gameState.bombQuirks': deleteField(),
     'gameState.pendingPass': deleteField(),
     'gameState.quirkReveal': deleteField(),
@@ -1399,7 +1402,9 @@ export const triggerPanic = async (groupId: string): Promise<void> => {
 
         if (!anyGhostHasTicket) {
             transaction.update(groupRef, {
+                ...auctionRefundUpdates(gameState),
                 'gameState.phase': 'panic',
+                'gameState.auction': deleteField(), // 🔨 called off, bids refunded
                 'gameState.panicStartedAt': now,
                 'gameState.timerStartedAt': now,
                 'gameState.timerDuration': PANIC_THRESHOLD,
@@ -1413,7 +1418,9 @@ export const triggerPanic = async (groupId: string): Promise<void> => {
         }
 
         transaction.update(groupRef, {
+            ...auctionRefundUpdates(gameState),
             'gameState.phase': 'panic',
+            'gameState.auction': deleteField(), // 🔨 called off, bids refunded
             'gameState.ghostWindowEndsAt': now + GHOST_WINDOW_MAX_MS,
             'gameState.ghostRevealEndsAt': deleteField(),
             'gameState.activeBets': {},
@@ -1551,7 +1558,7 @@ export const lockInWire = async (
 // out — regardless of how early (or whether at all) the holder locked
 // in a wire via lockInWire(). This is where cutWire's old resolution
 // logic now lives: the immune/defused/exploded branching, lives/ghosts
-// updates, fuse points, mission events, AND the betting payout — any
+// updates, fuse points, achievement events, AND the betting payout — any
 // ghost whose bet correctly guessed the true correct wire wins when the
 // holder explodes, kicking off a ghost tournament for however many of
 // them won.
@@ -1604,9 +1611,8 @@ export const resolvePanicOutcome = async (group: Group, seenSeq?: number): Promi
                 'gameState.quirkReveal': deleteField(),
                 ...refundActiveBets(gameState),
             };
-            if (wire != null) {
-                applyMissionEvent(immuneUpdates, gameState, group.players, playerId, { kind: 'wire-cut', playerId });
-            }
+            // No achievement credit: an immune player is saved whichever
+            // wire they cut, so it isn't a real defuse.
             transaction.update(groupRef, immuneUpdates);
             return;
         }
@@ -1630,13 +1636,7 @@ export const resolvePanicOutcome = async (group: Group, seenSeq?: number): Promi
             };
 
             applyFusePoints(updates, gameState, playerId, FUSE_POINTS.WIRE_DEFUSED, 'Wire defused!');
-            applyMissionEvent(updates, gameState, group.players, playerId, {
-                kind: 'defused',
-                playerId,
-                usedRevealer: !!gameState.revealerHints?.[playerId],
-                betsAgainst: Object.keys(gameState.activeBets ?? {}).length,
-            });
-            applyMissionEvent(updates, gameState, group.players, playerId, { kind: 'wire-cut', playerId }); applyMissionEvent(updates, gameState, group.players, playerId, { kind: 'survived-hold', playerId });
+            applyGameEvent(updates, gameState, playerId, { kind: 'defused', playerId });
 
             transaction.update(groupRef, updates);
             scoreDefuserId = playerId;
@@ -1663,7 +1663,7 @@ export const resolvePanicOutcome = async (group: Group, seenSeq?: number): Promi
         if (shielded) {
             // Vest took the hit: no life loss and no ghosting.
             updates['gameState.shieldAbsorbedPlayerId'] = playerId;
-            applyMissionEvent(updates, gameState, group.players, playerId, { kind: 'vest-saved', playerId });
+            applyGameEvent(updates, gameState, playerId, { kind: 'vest-saved', playerId });
             updates['gameState.roundShields'] = (gameState.roundShields ?? []).filter(
                 (id) => id !== playerId
             );
@@ -1688,14 +1688,14 @@ export const resolvePanicOutcome = async (group: Group, seenSeq?: number): Promi
                 }
             }
 
-            // Whoever handed the bomb to the victim earns credit for "assassin"
-            // missions, but only when it actually cost the victim a life.
+            // Whoever handed the bomb to the victim gets credit towards the
+            // Assassin / Serial Bomber achievements, but only when it actually
+            // cost the victim a life.
             const lastPass = gameState.passHistory[gameState.passHistory.length - 1];
             if (lastPass && lastPass.to === playerId && lastPass.from !== playerId) {
-                applyMissionEvent(updates, gameState, group.players, lastPass.from, {
+                applyGameEvent(updates, gameState, lastPass.from, {
                     kind: 'caused-explosion',
                     passerId: lastPass.from,
-                    eliminated,
                 });
             }
         }
@@ -1718,7 +1718,7 @@ export const resolvePanicOutcome = async (group: Group, seenSeq?: number): Promi
 
     // Outside the transaction: only the call that actually resolved the bomb scores.
     if (scoreDefuserId) {
-        await addScore(group.id, scoreDefuserId, ROUND_WIN_SCORE, group.scores);
+        await addScore(group.id, scoreDefuserId, ROUND_WIN_SCORE, 'pass-the-bomb');
     }
 };
 
@@ -1753,7 +1753,7 @@ export const toggleDisputeVote = async (
         if (voterId === passEvent.from) return;
         if (passEvent.boomerang) return;
         // Duel passes follow no instruction — the game picked the target.
-        if (passEvent.instruction === '(Hot potato)' || passEvent.instruction === '(Fastest Finger First)') return;
+        if (passEvent.instruction === '(Hot potato)' || passEvent.instruction === '(Fastest Finger First)' || passEvent.instruction === '(Auction 🔨)') return;
 
         const disputes = [...(gameState.disputes ?? [])];
         const existingIndex = disputes.findIndex((d) => d.passIndex === passIndex);
@@ -1800,12 +1800,6 @@ export const toggleDisputeVote = async (
                 'gameState.penaltyResult': deleteField(),
             };
             applyFusePoints(disputeUpdates, gameState, dispute.accusedId, FUSE_POINTS.CALLOUT_VOTED_OUT, 'Called out!');
-            for (const voterId of dispute.voterIds) {
-                applyMissionEvent(disputeUpdates, gameState, group.players, voterId, {
-                    kind: 'callout-passed',
-                    voterIds: dispute.voterIds,
-                });
-            }
             transaction.update(groupRef, disputeUpdates);
         } else {
             transaction.update(groupRef, { 'gameState.disputes': updatedDisputes });
@@ -1850,8 +1844,6 @@ export const cutPenaltyWire = async (
                         updates['gameState.everGhosted'] = [...(gameState.everGhosted ?? []), playerId];
                     }
                 }
-            } else {
-                applyMissionEvent(updates, gameState, group.players, playerId, { kind: 'penalty-survived', playerId });
             }
 
             markDisputeOutcome(updates, gameState, playerId, caught ? 'caught' : 'safe');
@@ -1983,6 +1975,7 @@ const startDuelRound = async (
         'gameState.roundStartLives': gameState.lives,
         ...quirkRoundResets(),
         'gameState.roundQuirks': [],
+        'gameState.auctionLog': [],
         'gameState.duelRound': true,
         // previous round was a duel round too → this is the next one
         'gameState.duelRoundIndex': gameState.duelRound ? (gameState.duelRoundIndex ?? 1) + 1 : 1,
@@ -2100,8 +2093,16 @@ export const startNextRound = async (group: Group): Promise<void> => {
     }
 };
 
-const advanceRound = async (group: Group): Promise<void> => {
-    const groupRef = doc(db, 'groups', group.id);
+const advanceRound = async (staleGroup: Group): Promise<void> => {
+    const groupRef = doc(db, 'groups', staleGroup.id);
+
+    // Close out the round first, the final round included: the round-end
+    // achievements can award lives (and bring a ghost back), so everything
+    // below must be built from the document as it is AFTER that.
+    await applyRoundEndEvents(staleGroup.id);
+    const freshSnap = await getDoc(groupRef);
+    if (!freshSnap.exists()) return;
+    const group = { ...(freshSnap.data() as Group), id: staleGroup.id };
     const gameState = group.gameState as BombGameState;
 
     const activePlayers = group.players.filter(
@@ -2112,7 +2113,6 @@ const advanceRound = async (group: Group): Promise<void> => {
         await updateDoc(groupRef, { 'gameState.phase': 'result' });
         return;
     }
-    await applyRoundEndMissions(group);
     if (activePlayers.length === 2) {
         await startDuelRound(group, activePlayers, gameState);
         return;
@@ -2120,11 +2120,15 @@ const advanceRound = async (group: Group): Promise<void> => {
     await payGhostStipends(group.id);
     const personality = getRandomPersonality(
         gameState.usedPersonalities,
-        activePlayers.length, gameState.timerMode  // use active players, not total
+        activePlayers.length, gameState.timerMode,  // use active players, not total
+        gameState.roundNumber + 1
     );
     const duration = getRandomDuration();
     const playerIds = activePlayers.map((p) => p.id);
-    const startingHolder = pickRandomHolder(playerIds);
+    // 🔨 Auction rounds start with whoever has the least FP.
+    const startingHolder = personality.effect === 'auction'
+        ? pickLowestFpHolder(playerIds, gameState.fusePoints ?? {})
+        : pickRandomHolder(playerIds);
     const correctWire = pickRandomWire();
 
     const newHoldCounts = {
@@ -2251,6 +2255,7 @@ const advanceRound = async (group: Group): Promise<void> => {
         'gameState.roundStartLives': gameState.lives,
         ...quirkRoundResets(),
         'gameState.roundQuirks': [],
+        'gameState.auctionLog': [],
         'gameState.duelRound': false,
         'gameState.lifeRestored': deleteField(),
 
@@ -2334,7 +2339,7 @@ export const endBombGame = async (group: Group): Promise<void> => {
     // follow, build on the one before instead of a stale snapshot.
     const scores: Record<string, number> = { ...(group.scores ?? {}) };
     const award = async (playerId: string, points: number) => {
-        await addScore(group.id, playerId, points, scores);
+        await addScore(group.id, playerId, points, 'pass-the-bomb');
         scores[playerId] = (scores[playerId] ?? 0) + points;
     };
     if (winnerId) await award(winnerId, GAME_WIN_SCORE_BONUS);
@@ -2391,33 +2396,6 @@ export const resumeTimer = async (groupId: string): Promise<void> => {
         });
     });
 };
-
-// ── LIAR HINT ────────────────────────────────────────────────────
-export const getLiarHint = (correctWire: 'red' | 'blue'): string => {
-    const isLying = Math.random() < 0.7;
-    const hintWire = isLying
-        ? correctWire === 'red' ? 'blue' : 'red'
-        : correctWire;
-
-    const hints = {
-        red: [
-            'I heard red wires are usually safe...',
-            'Someone said cut the red one',
-            'Red means stop — stop the timer!',
-            'The red wire looks harmless',
-        ],
-        blue: [
-            'Blue is the color of safety, right?',
-            'Cut the blue one, trust me',
-            'Blue wires never explode',
-            'The blue wire is definitely safe',
-        ],
-    };
-
-    const hintList = hints[hintWire];
-    return hintList[Math.floor(Math.random() * hintList.length)];
-};
-
 
 // Called when the accused, sitting in the penalty phase, chooses Trial
 // by Combat and picks one specific accuser to challenge. Only sets up
@@ -2587,6 +2565,7 @@ export const forceEndRound = async (group: Group): Promise<void> => {
             }
 
             transaction.update(groupRef, {
+                ...auctionRefundUpdates(gameState), // 🔨 a live auction's bids go back
                 'gameState.phase': 'replay',
                 'gameState.forceEnded': true,
                 ...quirkRoundResets(),
@@ -2624,11 +2603,6 @@ export const computeRoundRemaining = (gs: BombGameState, now = Date.now()): numb
     const elapsed = ((effectiveNow - gs.timerStartedAt) / 1000) * gs.speedMultiplier;
     return Math.max(0, gs.timerDuration - elapsed);
 };
-
-export const computePanicRemaining = (gs: BombGameState, now = Date.now()): number =>
-    gs.panicStartedAt
-        ? Math.max(0, PANIC_THRESHOLD - (now - gs.panicStartedAt) / 1000)
-        : PANIC_THRESHOLD;
 
 // ── AWAY PLAYERS ─────────────────────────────────────────────────
 // When a player drops out the host can end the live round (forceEndRound)

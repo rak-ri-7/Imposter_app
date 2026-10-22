@@ -27,7 +27,6 @@ export default function DescribeScreen({ group, playerId }: Props) {
     hint,
     handleUseHint,
     loading,
-    activePlayers,
   } = useImposterGame(group, playerId);
 
   const [pulse] = useState(new Animated.Value(1));

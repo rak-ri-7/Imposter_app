@@ -38,6 +38,8 @@ export default function GroupLobbyScreen({ navigation, route }: Props) {
       navigation.replace("BombFlow", { groupId, playerId });
     } else if (group?.currentGame === "quiz-board") {
       navigation.replace("QuizBoardFlow", { groupId, playerId });
+    } else if (group?.currentGame === "card-clash") {
+      navigation.replace("ClashFlow", { groupId, playerId });
     }
   }, [group?.currentGame, groupId, playerId, navigation]);
 
@@ -233,11 +235,6 @@ const styles = StyleSheet.create({
     fontSize: 42,
     fontWeight: "bold",
     letterSpacing: 8,
-  },
-  shareHint: {
-    color: "#888",
-    fontSize: 12,
-    marginTop: 8,
   },
   playersTitle: {
     color: "#888",

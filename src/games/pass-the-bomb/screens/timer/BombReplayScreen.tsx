@@ -14,7 +14,6 @@ import { startNextRound, endBombGame, toggleDisputeVote } from "../../logic/time
 import BombAlleyScreen from "./BombAlleyScreen";
 import { QUIRK_INFO, QuirkVariant } from "../../logic/timer/bombQuirks";
 import { ACHIEVEMENTS, AchievementId, rewardText } from "../../data/achievements";
-import MissionsButton from "./MissionsButton";
 import BombBetSheet, { betPickLabel } from "./BombBetSheet";
 import { settleBets } from "../../logic/timer/betEngine";
 import { liarOffset } from "../../logic/timer/liarClock";
@@ -24,9 +23,11 @@ type Props = {
   playerId: string;
 };
 
+// Passes nobody can call out: duel passes and auction sales (no instruction).
 const isDuelPass = (p: { instruction?: string }) =>
   p.instruction === "(Hot potato)" ||
-  p.instruction === "(Fastest Finger First)";
+  p.instruction === "(Fastest Finger First)" ||
+  p.instruction === "(Auction 🔨)";
 
 const verdictInfo = (
   d: PassDispute,
@@ -73,6 +74,17 @@ export default function BombReplayScreen({ group, playerId }: Props) {
   const [loading, setLoading] = useState(false);
   const [showAlley, setShowAlley] = useState(false);
   const [showBets, setShowBets] = useState(false);
+  const [showAch, setShowAch] = useState(false);
+  // Everyone's unlocked achievements, for the 🏅 button / pop-up.
+  const achByPlayer = group.players
+    .map((p) => ({
+      player: p,
+      ids: Object.keys(gameState.achievements?.[p.id]?.earned ?? {}).filter(
+        (id) => !!ACHIEVEMENTS[id as AchievementId],
+      ) as AchievementId[],
+    }))
+    .filter((x) => x.ids.length > 0);
+  const achCount = achByPlayer.reduce((n, x) => n + x.ids.length, 0);
   const [expandedPasses, setExpandedPasses] = useState<Record<number, boolean>>(
     {},
   );
@@ -122,7 +134,8 @@ export default function BombReplayScreen({ group, playerId }: Props) {
     await toggleDisputeVote(group, passIndex, playerId);
   };
 
-  const finalInstruction = gameState.explodedPlayerId
+  // Auction rounds have no instructions.
+  const finalInstruction = gameState.explodedPlayerId && gameState.personalityEffect !== "auction"
     ? gameState.instructions[gameState.explodedPlayerId]
     : undefined;
 
@@ -216,11 +229,21 @@ export default function BombReplayScreen({ group, playerId }: Props) {
   return (
     <View style={styles.container}>
       <View style={styles.headerRow}>
-        <Text style={styles.title}>
+        <Text style={[styles.title, achCount === 0 && styles.titleTwoIcons]}>
           🎬 Round {gameState.roundNumber} Replay
         </Text>
         <View style={styles.iconGroup}>
-          <MissionsButton />
+          {achCount > 0 && (
+            <TouchableOpacity
+              style={styles.iconBtn}
+              onPress={() => setShowAch(true)}
+            >
+              <Text style={styles.iconBtnText}>🏅</Text>
+              <View style={styles.achCountBadge}>
+                <Text style={styles.achCountText}>{achCount}</Text>
+              </View>
+            </TouchableOpacity>
+          )}
           <TouchableOpacity
             style={styles.iconBtn}
             onPress={() => setShowBets(true)}
@@ -436,7 +459,7 @@ export default function BombReplayScreen({ group, playerId }: Props) {
                   <Text style={styles.journeyInstruction}>
                     "{finalInstruction}"
                   </Text>
-                ) : (
+                ) : gameState.personalityEffect === "auction" ? null : (
                   <Text style={styles.journeyInstruction}>
                     (no instruction on record)
                   </Text>
@@ -466,6 +489,28 @@ export default function BombReplayScreen({ group, playerId }: Props) {
             </View>
           </View>
         </ScrollView>
+
+        {(gameState.auctionLog ?? []).length > 0 && (
+          <>
+            <Text style={styles.sectionLabel}>🔨 AUCTIONS</Text>
+            <View style={styles.betResults}>
+              {(gameState.auctionLog ?? []).map((a, i) => (
+                <View key={i} style={{ marginBottom: 6 }}>
+                  <Text style={[styles.betResultLine, { color: "#FFD700", fontWeight: "800" }]}>
+                    {getPlayerName(a.holderId)} sold it to {getPlayerName(a.loserId)}
+                    {a.tied ? " 🎲 (tie roll)" : ""} · pot {a.pot} FP
+                  </Text>
+                  <Text style={styles.betResultLine}>
+                    {Object.entries(a.bids)
+                      .sort((x, y) => y[1] - x[1])
+                      .map(([id, bid]) => `${getPlayerName(id)} ${bid}`)
+                      .join(" · ")}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
 
         {(gameState.roundQuirks ?? []).length > 0 && (
           <>
@@ -538,24 +583,6 @@ export default function BombReplayScreen({ group, playerId }: Props) {
             return (
               <View key={player.id} style={styles.livesCard}>
                 <Text style={styles.livesPlayerName}>{player.name}</Text>
-                {Object.keys(gameState.achievements?.[player.id]?.earned ?? {}).length > 0 && (
-                  <View style={{ flexDirection: "row", flexWrap: "wrap", justifyContent: "center", gap: 2 }}>
-                    {Object.keys(gameState.achievements?.[player.id]?.earned ?? {}).map((id) => {
-                      const a = ACHIEVEMENTS[id as AchievementId];
-                      if (!a) return null;
-                      return (
-                        <TouchableOpacity
-                          key={id}
-                          onPress={() =>
-                            Alert.alert(`${a.emoji} ${a.name}`, `${player.name}: ${a.how}\n${rewardText(a)}`)
-                          }
-                        >
-                          <Text style={{ fontSize: 15 }}>{a.emoji}</Text>
-                        </TouchableOpacity>
-                      );
-                    })}
-                  </View>
-                )}
                 {isElim ? (
                   <Text style={styles.ghostTag}>👻</Text>
                 ) : (
@@ -594,6 +621,57 @@ export default function BombReplayScreen({ group, playerId }: Props) {
           Waiting for host to start next round...
         </Text>
       )}
+
+      {/* 🏅 Everyone's achievements */}
+      <Modal
+        visible={showAch}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowAch(false)}
+      >
+        <TouchableOpacity
+          style={styles.achOverlay}
+          activeOpacity={1}
+          onPress={() => setShowAch(false)}
+        >
+          <TouchableOpacity activeOpacity={1} style={styles.achSheet}>
+            <Text style={styles.achSheetTitle}>🏅 ACHIEVEMENTS UNLOCKED</Text>
+            <ScrollView style={{ maxHeight: 420 }}>
+              {achByPlayer.map(({ player, ids }) => (
+                <View key={player.id} style={styles.achPlayerBlock}>
+                  <Text style={styles.achPlayerName}>
+                    {player.id === playerId ? "You" : player.name}
+                  </Text>
+                  {ids.map((id) => {
+                    const a = ACHIEVEMENTS[id];
+                    const unlock = (gameState.achFeed ?? []).find(
+                      (f) => f.playerId === player.id && f.achievement === id,
+                    );
+                    return (
+                      <View key={id} style={styles.achItem}>
+                        <Text style={styles.achItemEmoji}>{a.emoji}</Text>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.achItemName}>{a.name}</Text>
+                          <Text style={styles.achItemHow}>{a.how}</Text>
+                        </View>
+                        <Text style={styles.achItemReward}>
+                          {rewardText(a, unlock?.gotLife)}
+                        </Text>
+                      </View>
+                    );
+                  })}
+                </View>
+              ))}
+            </ScrollView>
+            <TouchableOpacity
+              style={styles.achCloseBtn}
+              onPress={() => setShowAch(false)}
+            >
+              <Text style={styles.achCloseText}>Close</Text>
+            </TouchableOpacity>
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </Modal>
 
       <Modal
         visible={showBets}
@@ -695,8 +773,67 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
     flex: 1,
     textAlign: "center",
-    marginLeft: 118, // balances the icon button on the right so the title stays visually centered
+    marginLeft: 118, // balances the icon buttons on the right so the title stays visually centered
   },
+  titleTwoIcons: { marginLeft: 76 }, // no 🏅 button yet
+  achCountBadge: {
+    position: "absolute",
+    top: -4,
+    right: -4,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: "#FFD700",
+    alignItems: "center",
+    justifyContent: "center",
+    paddingHorizontal: 3,
+  },
+  achCountText: { color: "#000", fontSize: 10, fontWeight: "900" },
+  achOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.7)",
+    justifyContent: "center",
+    padding: 20,
+  },
+  achSheet: {
+    backgroundColor: "#1E1A0A",
+    borderWidth: 2,
+    borderColor: "#FFD700",
+    borderRadius: 16,
+    padding: 16,
+  },
+  achSheetTitle: {
+    color: "#FFD700",
+    fontSize: 15,
+    fontWeight: "900",
+    textAlign: "center",
+    marginBottom: 12,
+    letterSpacing: 1,
+  },
+  achPlayerBlock: { marginBottom: 12 },
+  achPlayerName: { color: "#fff", fontSize: 14, fontWeight: "800", marginBottom: 6 },
+  achItem: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#2A2306",
+    borderRadius: 10,
+    padding: 10,
+    marginBottom: 6,
+  },
+  achItemEmoji: { fontSize: 24 },
+  achItemName: { color: "#FFD700", fontSize: 12, fontWeight: "900" },
+  achItemHow: { color: "#ccc", fontSize: 11, marginTop: 2 },
+  achItemReward: { color: "#4CAF50", fontSize: 12, fontWeight: "800" },
+  achCloseBtn: {
+    marginTop: 6,
+    alignSelf: "center",
+    paddingVertical: 8,
+    paddingHorizontal: 28,
+    borderRadius: 20,
+    backgroundColor: "#FFD700",
+  },
+  achCloseText: { color: "#000", fontWeight: "900" },
   iconBtn: {
     width: 34,
     height: 34,

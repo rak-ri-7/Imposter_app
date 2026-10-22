@@ -9,7 +9,6 @@ import {
     submitVote,
     calculateMostVoted,
     eliminatePlayer,
-    endGame,
     awardPointsAndReturnToMenu,
     useHint,
 } from './game';
@@ -27,7 +26,6 @@ export const useImposterGame = (group: Group | null, playerId: string) => {
     ) ?? [];
     const currentPlayer = activePlayers[gameState?.currentTurn ?? 0];
     const isMyTurn = currentPlayer?.id === playerId;
-    const totalPlayers = group?.players.length ?? 0;
     const activePlayerCount = activePlayers.length;
     const allVoted = gameState
         ? Object.keys(gameState.votes).length === activePlayerCount
@@ -121,20 +119,6 @@ export const useImposterGame = (group: Group | null, playerId: string) => {
         }
     };
 
-    // const handleEndGame = async () => {
-    //     if (!group) return;
-    //     setLoading(true);
-    //     try {
-    //         const mostVoted = calculateResult(group.gameState);
-    //         if (!mostVoted) {
-    //             Alert.alert('No votes submitted yet!');
-    //             return;
-    //         }
-    //         await endGame(group.id);
-    //     } finally {
-    //         setLoading(false);
-    //     }
-    // };
     const handleReturnToMenu = async () => {
         if (!group || !isHost) return;
         setLoading(true);

@@ -9,7 +9,6 @@ import { db } from '../../../../shared/firebase/config';
 import { Group, BombGameState, ActiveQuiz } from '../../../../shared/types';
 import { getRandomQuestion, generateQuizInstance, TIMER_QUIZ } from '../../data/quizQuestions';
 // import { applyLifeGain, ROUND_WIN_SCORE } from './bombHelpers';
-import { addScore } from '../../../../shared/firebase/groups';
 
 const QUESTION_DURATION_MS = 8000;
 
@@ -32,29 +31,6 @@ export const buildActiveQuiz = (
         },
         usedQuestionId: question.id,
     };
-};
-
-// ── START A QUESTION (first one of a round) ──────────────────────────
-export const startFastestFingerQuestion = async (
-    group: Group,
-    mode: ActiveQuiz['mode'],
-    chainNext: boolean
-): Promise<void> => {
-    const groupRef = doc(db, 'groups', group.id);
-    const gameState = group.gameState as BombGameState;
-    const { activeQuiz, usedQuestionId } = buildActiveQuiz(
-        gameState.usedQuizQuestions ?? [],
-        mode,
-        chainNext
-    );
-
-    await updateDoc(groupRef, {
-        'gameState.activeQuiz': activeQuiz,
-        'gameState.usedQuizQuestions': [
-            ...(gameState.usedQuizQuestions ?? []),
-            usedQuestionId,
-        ],
-    });
 };
 
 // ── SUBMIT AN ANSWER ────────────────────────────────────────────────
@@ -152,19 +128,13 @@ const resolveOutcome = (
 };
 
 // ── COMMIT A DECIDED LOSER ────────────────────────────────────────────
-// Single writer, single write: moves the bomb (a harmless no-op if the
-// "loser" is actually the current holder, for the "no-change" outcome)
-// and, in the SAME update, either clears activeQuiz or rolls straight
-// into the next question. Collapsing what used to be two separate
-// round-trips (delete, then re-fetch-and-write) into one atomic write
-// removes the gap where BombFlowScreen would flicker to BombPlayScreen
-// between chained questions.
+// One write: closes the quiz and hands control back to the current holder,
+// with "Pass to <loser>" shown as their instruction. The bomb itself never
+// moves here; the holder makes a normal pass (see below).
 const commitLoser = async (
     group: Group,
     gameState: BombGameState,
-    loserId: string,
-    chainNext: boolean,
-    mode: ActiveQuiz['mode']
+    loserId: string
 ): Promise<void> => {
     const groupRef = doc(db, 'groups', group.id);
     const holderId = gameState.currentHolderId;
@@ -226,7 +196,7 @@ export const resolveFastestFingerQuestion = async (group: Group): Promise<void> 
     const loserId =
         outcome.type === 'loser' ? outcome.loserId : gameState.currentHolderId;
 
-    await commitLoser(group, gameState, loserId, activeQuiz.chainNext, activeQuiz.mode);
+    await commitLoser(group, gameState, loserId);
 };
 
 // ── CHOOSER TAPS A NAME (the "awaiting choice" branches) ─────────────
@@ -242,49 +212,6 @@ export const chooseFastestFingerLoser = async (
     if (!activeQuiz?.awaitingChoice) return;
     if (!activeQuiz.awaitingChoice.choosablePlayerIds.includes(chosenPlayerId)) return;
 
-    await commitLoser(
-        group,
-        gameState,
-        chosenPlayerId,
-        activeQuiz.chainNext,
-        activeQuiz.mode
-    );
-};
-
-export const startGhostTournament = async (
-    group: Group,
-    wireCutterId: string,
-    winningGhostIds: string[]
-): Promise<void> => {
-    if (winningGhostIds.length === 0) return; // nobody won a bet — no tournament
-
-    const groupRef = doc(db, 'groups', group.id);
-    const gameState = group.gameState as BombGameState;
-    const poolIds = [wireCutterId, ...winningGhostIds];
-
-    const question = getRandomQuestion(gameState.usedQuizQuestions ?? [], TIMER_QUIZ);
-    const instance = generateQuizInstance(question);
-    const activeQuiz: ActiveQuiz = {
-        question: instance,
-        startedAt: Date.now(),
-        durationMs: 8000, // same breathing-room timing as the duel/TBC fix
-        answers: {},
-        resolved: false,
-        mode: 'ghost-tournament',
-        chainNext: true,
-    };
-
-    await updateDoc(groupRef, {
-        'gameState.ghostTournament': {
-            poolIds,
-            eliminatedIds: [],
-            wireCutterId,
-        },
-        'gameState.activeQuiz': activeQuiz,
-        'gameState.usedQuizQuestions': [
-            ...(gameState.usedQuizQuestions ?? []),
-            question.id,
-        ],
-    });
+    await commitLoser(group, gameState, chosenPlayerId);
 };
 

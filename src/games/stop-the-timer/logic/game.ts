@@ -2,7 +2,7 @@
 import { doc, updateDoc, runTransaction, increment, serverTimestamp, Timestamp, Transaction } from 'firebase/firestore';
 import { db } from '../../../shared/firebase/config';
 import { Group, TimerGameState } from '../../../shared/types';
-import { returnToMenu } from '../../../shared/firebase/groups';
+import { returnToMenu, scoreFields } from '../../../shared/firebase/groups';
 import { generateQuestionForRound } from '../data/questions';
 
 export const COUNTDOWN_SECONDS = 10;
@@ -120,7 +120,7 @@ const buildAwardUpdates = (data: Group, gameState: TimerGameState) => {
         'gameState.pointsAwardedRound': gameState.roundNumber,
     };
     for (const r of ranking) {
-        if (r.points > 0) updates[`scores.${r.playerId}`] = increment(r.points);
+        if (r.points > 0) Object.assign(updates, scoreFields('stop-the-timer', r.playerId, r.points));
     }
     return updates;
 };
@@ -199,7 +199,7 @@ export type RankingEntry = {
     playerId: string;
     stoppedAt: number | null; // null = didn't stop in time
     diff: number;             // ms from the answer; Infinity if didn't stop
-    rank: number;             // ties share a rank (1, 1, 3, …)
+    rank: number;             // place shown; ties share it and the next takes the next (1, 1, 2, …)
     points: number;
     didNotStop: boolean;
 };
@@ -229,16 +229,22 @@ export const calculateRanking = (
     const stopped = entries.filter((e) => !e.didNotStop).sort((a, b) => a.diff - b.diff);
     const notStopped = entries.filter((e) => e.didNotStop);
 
-    // Competition ranking: equal diffs share a rank and the same points.
+    // Equal diffs (to the millisecond) share a place: 1, 1, 2 (same as the
+    // menu leaderboard). Points still follow how many players beat you
+    // (the 1, 1, 3 position), so a tie above you doesn't inflate your points.
+    let position = 0;
     stopped.forEach((e, i) => {
         const prev = stopped[i - 1];
-        e.rank = prev && prev.diff === e.diff ? prev.rank : i + 1;
-        e.points = Math.max(0, totalPlayers - e.rank);
+        const tied = !!prev && prev.diff === e.diff;
+        if (!tied) position = i + 1;
+        e.rank = tied ? prev.rank : (prev ? prev.rank + 1 : 1);
+        e.points = Math.max(0, totalPlayers - position);
     });
 
-    // Everyone who didn't stop shares last place with 0 points.
+    // Everyone who didn't stop shares the place after the last stopper, 0 points.
+    const lastRank = stopped.length > 0 ? stopped[stopped.length - 1].rank : 0;
     notStopped.forEach((e) => {
-        e.rank = stopped.length + 1;
+        e.rank = lastRank + 1;
         e.points = 0;
     });
 

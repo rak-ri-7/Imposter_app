@@ -48,7 +48,6 @@ export const useTimerGame = (group: Group | null, playerId: string) => {
             : undefined;
     const phase = gameState?.phase;
     const countdownSeconds = countdownSecondsFor(gameState?.difficulty);
-    const roundNumber = gameState?.roundNumber;
     // Unique per round — safer than roundNumber, which restarts at 1 each game.
     const countdownStartMs = toMillis(gameState?.countdownStartedAt);
     const timerStartMs = toMillis(gameState?.timerStartedAt);

@@ -104,7 +104,18 @@ export const bombPersonalities: BombPersonality[] = [
         description: 'Every pass is decided by a Fastest Finger First question',
         effect: 'quiz',
     },
+    {
+        id: 'auction',
+        name: 'THE AUCTION BOMB',
+        emoji: '🔨',
+        description: 'No instructions. The holder taps Pass and everyone else gets a few seconds to match or raise the top FP bid. The lowest bid gets the bomb (a tie: the bomb picks). Everyone pays their bid and the holder pockets the pot.',
+        effect: 'auction',
+    },
 ];
+
+// Auction rounds: never before this round, and only with this many alive.
+export const AUCTION_FROM_ROUND = 3;
+export const AUCTION_MIN_PLAYERS = 3;
 
 
 // ── REUSABLE FALLBACKS ──────────────────────────────────────────
@@ -536,7 +547,7 @@ export const dynamicOptions: Record<string, string[]> = {
         ['fold their hands',
             'tell their names',
             'cough',
-            'form '
+
         ]
 };
 
@@ -1475,9 +1486,6 @@ export const instructions: Instruction[] = [
 
 
 
-// ── MISSIONS ──────────────────────────────────────────────────
-
-
 // ── ANSWER TYPES ─────────────────────────────────────────────────
 export type InstructionAnswerType =
     | 'seat-left'
@@ -1703,7 +1711,8 @@ export const getRandomInstruction = (
 export const getRandomPersonality = (
     usedIds: string[],
     playerCount: number = 6,
-    timerMode: 'on' | 'off' | 'mixed' = 'on'
+    timerMode: 'on' | 'off' | 'mixed' = 'on',
+    roundNumber: number = 1
 ): BombPersonality => {
     const MIN_PLAYERS_FOR_CHAIN = 6;
 
@@ -1712,6 +1721,7 @@ export const getRandomPersonality = (
     const allowed = (p: BombPersonality) => {
         if (p.id === 'chain' && playerCount < MIN_PLAYERS_FOR_CHAIN) return false;
         if (p.id === 'liar' && timerMode === 'off') return false;
+        if (p.id === 'auction' && (roundNumber < AUCTION_FROM_ROUND || playerCount < AUCTION_MIN_PLAYERS)) return false;
         return true;
     };
 

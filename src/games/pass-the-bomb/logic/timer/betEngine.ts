@@ -343,7 +343,7 @@ export const settleBets = async (group: Group): Promise<void> => {
     const scores: Record<string, number> = { ...(group.scores ?? {}) };
     for (const award of awards) {
         try {
-            await addScore(group.id, award.playerId, award.points, scores);
+            await addScore(group.id, award.playerId, award.points, 'pass-the-bomb');
             scores[award.playerId] = (scores[award.playerId] ?? 0) + award.points;
         } catch {
             // the FP side is already saved; a missed leaderboard bonus is not worth failing over
@@ -399,7 +399,7 @@ export const settleWinnerBets = async (
     const scores: Record<string, number> = { ...(runningScores ?? group.scores ?? {}) };
     for (const award of awards) {
         try {
-            await addScore(group.id, award.playerId, award.points, scores);
+            await addScore(group.id, award.playerId, award.points, 'pass-the-bomb');
             scores[award.playerId] = (scores[award.playerId] ?? 0) + award.points;
         } catch {
             // a missed leaderboard bonus is not worth failing the end of the game over

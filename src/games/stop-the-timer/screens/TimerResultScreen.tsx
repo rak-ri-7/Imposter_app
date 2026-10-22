@@ -21,16 +21,30 @@ const ordinal = (n: number) => {
   return n + (suffixes[(v - 20) % 10] || suffixes[v] || suffixes[0]);
 };
 
-const formatSeconds = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
+// 2 decimals: the ranking uses exact milliseconds, so show enough to see why.
+const formatSeconds = (ms: number, dp = 2) => `${(ms / 1000).toFixed(dp)}s`;
 
-const getDiffText = (ms: number, answerMs: number) => {
+// 2 decimals, or 3 when two different times would look identical at 2
+// (5.123 vs 5.127). Equal to the millisecond is a real tie.
+const decimalsFor = (values: number[]): number => {
+  const seen = new Map<string, number>();
+  for (const v of values) {
+    const key = (v / 1000).toFixed(2);
+    const other = seen.get(key);
+    if (other !== undefined && other !== v) return 3;
+    seen.set(key, v);
+  }
+  return 2;
+};
+
+const getDiffText = (ms: number, answerMs: number, dp = 2) => {
   const diff = ms - answerMs;
   const absDiff = Math.abs(diff);
   if (absDiff < 100) return "exact! 🎯";
   if (absDiff < 500)
-    return `incredibly close! (${diff > 0 ? "+" : "-"}${formatSeconds(absDiff)})`;
-  if (diff > 0) return `${formatSeconds(diff)} too late`;
-  return `${formatSeconds(absDiff)} too early`;
+    return `incredibly close! (${diff > 0 ? "+" : "-"}${formatSeconds(absDiff, dp)})`;
+  if (diff > 0) return `${formatSeconds(diff, dp)} too late`;
+  return `${formatSeconds(absDiff, dp)} too early`;
 };
 
 const getRankLabel = (rank: number, didNotStop: boolean) => {
@@ -83,6 +97,11 @@ export default function TimerResultScreen({ group, playerId }: Props) {
     ? []
     : ranking.filter((r) => r.rank === 1 && !r.didNotStop);
   const nobodyStopped = !voided && ranking.length > 0 && winners.length === 0;
+  const stoppedEntries = ranking.filter((r) => r.stoppedAt !== null);
+  const dp = Math.max(
+    decimalsFor(stoppedEntries.map((r) => r.stoppedAt as number)),
+    decimalsFor(stoppedEntries.map((r) => r.diff)),
+  );
 
   return (
     <View style={styles.container}>
@@ -115,7 +134,7 @@ export default function TimerResultScreen({ group, playerId }: Props) {
               <Text style={styles.winnerName}>
                 {getPlayerName(winners[0].playerId)}
               </Text>
-              {` stopped at ${formatSeconds(winners[0].stoppedAt)} — closest!`}
+              {` stopped at ${formatSeconds(winners[0].stoppedAt, dp)} — closest!`}
             </Text>
           </View>
         )}
@@ -127,7 +146,7 @@ export default function TimerResultScreen({ group, playerId }: Props) {
               <Text style={styles.winnerName}>
                 {joinNames(winners.map((w) => getPlayerName(w.playerId)))}
               </Text>
-              {` tied for closest — each ${formatSeconds(winners[0].diff)} off!`}
+              {` tied for closest — each ${formatSeconds(winners[0].diff, dp)} off!`}
             </Text>
           </View>
         )}
@@ -198,9 +217,9 @@ export default function TimerResultScreen({ group, playerId }: Props) {
                     <Text style={styles.rankTime}>
                       Stopped at{" "}
                       <Text style={styles.rankTimeValue}>
-                        {formatSeconds(r.stoppedAt)}
+                        {formatSeconds(r.stoppedAt, dp)}
                       </Text>{" "}
-                      — {getDiffText(r.stoppedAt, answerMs)}
+                      — {getDiffText(r.stoppedAt, answerMs, dp)}
                     </Text>
                   )}
                 </View>

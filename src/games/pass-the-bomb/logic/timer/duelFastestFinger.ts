@@ -5,7 +5,6 @@ import { getRandomQuestion, generateQuizInstance, TIMER_QUIZ } from '../../data/
 import { addScore } from '../../../../shared/firebase/groups';
 import { ROUND_WIN_SCORE, FUSE_POINTS, applyFusePoints, markDisputeOutcome } from './bombHelpers';
 import { applySuperShield } from './superShield';
-import { applyMissionEvent } from './missionEngine';
 
 const DUEL_FFF_IDLE_TIMEOUT_MS = 8000; // silent-skip window
 const DUEL_FFF_LOCK_MS = 3000;         // holder lock duration on failure
@@ -373,7 +372,7 @@ export const resolveTbcTimeout = async (group: Group): Promise<void> => {
                 ? challenge.accusedId
                 : undefined;
     if (winnerId) {
-        await addScore(group.id, winnerId, ROUND_WIN_SCORE, group.scores);
+        await addScore(group.id, winnerId, ROUND_WIN_SCORE, 'pass-the-bomb');
     }
 
 
@@ -394,14 +393,6 @@ export const resolveTbcTimeout = async (group: Group): Promise<void> => {
         'gameState.duelFffHolderCanPass': deleteField(),
         'gameState.duelFffLockReason': deleteField(),
     };
-
-    // The accused beat their accuser — they survived the penalty.
-    if (challenge && winnerId === challenge.accusedId) {
-        applyMissionEvent(updates, gameState, group.players, winnerId, {
-            kind: 'penalty-survived',
-            playerId: winnerId,
-        });
-    }
 
     if (challenge) {
         markDisputeOutcome(
@@ -464,10 +455,6 @@ export const explodeDuelFuse = async (group: Group): Promise<void> => {
                 (p) => p.id !== victim && !gs.ghosts.includes(p.id)
             )?.id;
 
-            const currentLives = gs.lives[victim] ?? 0;
-            const newLives = Math.max(0, currentLives - 1);
-            const eliminated = newLives === 0 && !gs.ghosts.includes(victim);
-
             const updates: Record<string, unknown> = {
                 'gameState.phase': 'exploded',
                 'gameState.defused': false,
@@ -496,7 +483,6 @@ export const explodeDuelFuse = async (group: Group): Promise<void> => {
             }
             if (survivor) {
                 applyFusePoints(updates, gs, survivor, FUSE_POINTS.WIRE_DEFUSED, 'Survived the duel round!');
-                applyMissionEvent(updates, gs, group.players, survivor, { kind: 'duel-won', playerId: survivor });
             }
             transaction.update(groupRef, updates);
             survivorId = survivor ?? null;
@@ -506,6 +492,6 @@ export const explodeDuelFuse = async (group: Group): Promise<void> => {
     }
 
     if (survivorId) {
-        await addScore(group.id, survivorId, ROUND_WIN_SCORE, group.scores);
+        await addScore(group.id, survivorId, ROUND_WIN_SCORE, 'pass-the-bomb');
     }
 };

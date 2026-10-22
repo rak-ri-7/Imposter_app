@@ -153,16 +153,21 @@ export const leaveGroup = async (
         await updateDoc(groupRef, { players: remaining });
     }
 };
+// Leaderboard points as update fields: the session total plus that game's
+// share (for the per-game slides). Every award goes through here.
+export const scoreFields = (game: GameType, playerId: string, points: number): Record<string, unknown> => ({
+    [`scores.${playerId}`]: increment(points),
+    [`gameScores.${game}.${playerId}`]: increment(points),
+});
+
 export const addScore = async (
     groupId: string,
     playerId: string,
     points: number,
-    _currentScores?: Record<string, number> // no longer used; kept so callers don't change
+    game: GameType
 ): Promise<void> => {
     const groupRef = doc(db, 'groups', groupId);
-    await updateDoc(groupRef, {
-        [`scores.${playerId}`]: increment(points),
-    });
+    await updateDoc(groupRef, scoreFields(game, playerId, points));
 };
 
 export const removePlayer = async (

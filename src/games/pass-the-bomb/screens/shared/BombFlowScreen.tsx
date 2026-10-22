@@ -39,6 +39,7 @@ import {
   FAILSAFE_RETRY_MS,
 } from "../../logic/timer/game";
 import QuirkRevealCard, { ToxicBoomScreen } from "../timer/QuirkRevealCard";
+import { settleAuction } from "../../logic/timer/bombAuction";
 import AchievementToast from "../timer/AchievementToast";
 import BombTbcDuelScreen from "../timer/BombTbcDuelScreen";
 import BombHotSeatDuelScreen from "../timer/BombHotSeatDuelScreen";
@@ -47,10 +48,6 @@ import {
   preloadSounds,
   unloadSounds,
 } from "../../../../shared/sounds/soundManager";
-import { useMissionAlerts } from "../../logic/timer/useMissionAlerts";
-import BombMissionsModal from "../timer/BombMissionsModal";
-import BombMissionClaimBar from "../timer/BombMissionClaimBar";
-import { MissionsContext } from "../timer/MissionsButton";
 import { useHostFailover } from "../../../../shared/hooks/useHostFailover";
 import {
   usePresence,
@@ -184,11 +181,6 @@ export default function BombFlowScreen({ navigation, route }: Props) {
     };
   }, [duelWatch, roundNumber]);
 
-  // ── Missions: one global button, one modal, one change-detector ──────
-  const [showMissions, setShowMissions] = useState(false);
-  const myMissions = gameState?.missions?.[playerId];
-  const { unseen, flashKey, toast, markSeen } = useMissionAlerts(myMissions);
-
   // One confirmation for both the on-screen button and Android's back
   // button. The ref stops repeated back presses stacking several alerts.
   const leaveAlertOpenRef = useRef(false);
@@ -243,17 +235,6 @@ export default function BombFlowScreen({ navigation, route }: Props) {
       return () => clearTimeout(t);
     }
   }, [phase]);
-
-  useEffect(() => {
-    if (showMissions) markSeen();
-  }, [showMissions, flashKey]);
-
-  const missionsUi = {
-    available: !!myMissions,
-    unseen,
-    flashKey,
-    open: () => setShowMissions(true),
-  };
 
   useEffect(() => {
     if (group?.currentGame === "menu") {
@@ -377,6 +358,32 @@ export default function BombFlowScreen({ navigation, route }: Props) {
     return () => clearInterval(interval);
   }, [isHost, group?.id, phase, gameState?.pendingPass?.arrivesAt, gameState?.pendingPass?.from]);
 
+  // ── 🔨 Auction: settle it when the bidding window closes ──────────
+  // Timed from when THIS phone saw it open (phone clocks may disagree).
+  // Host on time, every other phone as backup; the auction id makes the
+  // transaction settle it once.
+  const auctionSeenRef = useRef<{ id: string; at: number } | null>(null);
+  useEffect(() => {
+    const auction = gameState?.auction;
+    if (!group || phase !== "playing" || !auction) return;
+    if (auctionSeenRef.current?.id !== auction.id) {
+      auctionSeenRef.current = { id: auction.id, at: Date.now() };
+    }
+    const fireAt =
+      auctionSeenRef.current.at + auction.durationMs + (isHost ? 0 : FAILSAFE_GRACE_MS);
+    let lastAttempt = 0;
+    const check = () => {
+      const now = Date.now();
+      if (now < fireAt || now - lastAttempt < FAILSAFE_RETRY_MS) return;
+      lastAttempt = now;
+      const g = groupRef.current;
+      if (g) settleAuction(g, auction.id);
+    };
+    check();
+    const interval = setInterval(check, 150);
+    return () => clearInterval(interval);
+  }, [isHost, group?.id, phase, gameState?.auction?.id]);
+
   // ── Quirks: the Toxic Bomb snapped — give it a beat, then resolve ──
   useEffect(() => {
     if (!group || phase !== "panic" || !gameState?.toxicBoom) return;
@@ -470,7 +477,6 @@ export default function BombFlowScreen({ navigation, route }: Props) {
   }
 
   return (
-    <MissionsContext.Provider value={missionsUi}>
       <View style={styles.flowContainer}>
         {phase !== "result" && (
           <View style={styles.topBar}>
@@ -491,15 +497,7 @@ export default function BombFlowScreen({ navigation, route }: Props) {
         {!isPassMode && phase === "playing" && <QuirkRevealCard group={group} />}
         {!isPassMode && <AchievementToast group={group} playerId={playerId} />}
 
-        {myMissions && phase !== "panic" && (
-          <BombMissionClaimBar group={group} playerId={playerId} />
-        )}
 
-        {toast && (
-          <View pointerEvents="none" style={styles.toast}>
-            <Text style={styles.toastText}>{toast}</Text>
-          </View>
-        )}
 
         {verdictFor && (
           <View pointerEvents="none" style={styles.verdictOverlay}>
@@ -544,16 +542,7 @@ export default function BombFlowScreen({ navigation, route }: Props) {
           />
         )}
 
-        {myMissions && (
-          <BombMissionsModal
-            visible={showMissions}
-            onClose={() => setShowMissions(false)}
-            group={group}
-            playerId={playerId}
-          />
-        )}
       </View>
-    </MissionsContext.Provider>
   );
 }
 
@@ -589,25 +578,6 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
 
-  toast: {
-    position: "absolute",
-    top: 52,
-    left: 16,
-    right: 16,
-    backgroundColor: "rgba(26,26,26,0.96)",
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: "#FFD700",
-    paddingVertical: 10,
-    paddingHorizontal: 14,
-    zIndex: 20,
-  },
-  toastText: {
-    color: "#FFD700",
-    fontSize: 13,
-    fontWeight: "700",
-    textAlign: "center",
-  },
 
   verdictOverlay: {
     position: "absolute",

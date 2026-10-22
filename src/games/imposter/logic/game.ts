@@ -161,13 +161,6 @@ export const eliminatePlayer = async (
   }
 };
 
-export const endGame = async (groupId: string): Promise<void> => {
-  const groupRef = doc(db, 'groups', groupId);
-  await updateDoc(groupRef, { status: 'result' });
-};
-
-
-
 export const imposterGuess = async (
   groupId: string,
   guess: string,
@@ -185,12 +178,6 @@ export const imposterGuess = async (
 };
 
 
-
-const POINTS = {
-  IMPOSTER_CAUGHT_PLAYER: 2,
-  IMPOSTER_ESCAPED: 3,
-  IMPOSTER_GUESSED_RIGHT: 2,
-};
 
 // Imposter — src/games/imposter/logic/game.ts
 export const awardPointsAndReturnToMenu = async (
@@ -215,18 +202,18 @@ export const awardPointsAndReturnToMenu = async (
   if (allCaught) {
     for (const player of group.players) {
       if (!imposterIds.includes(player.id)) {
-        await addScore(group.id, player.id, POINTS.PLAYER_WIN, group.scores);
+        await addScore(group.id, player.id, POINTS.PLAYER_WIN, 'imposter');
       }
     }
     if (imposterGuessCorrect) {
       for (const imposterId of imposterIds) {
-        await addScore(group.id, imposterId, POINTS.IMPOSTER_GUESS, group.scores);
+        await addScore(group.id, imposterId, POINTS.IMPOSTER_GUESS, 'imposter');
       }
     }
   } else {
     for (const imposterId of imposterIds) {
       if (!eliminatedPlayers.includes(imposterId)) {
-        await addScore(group.id, imposterId, POINTS.IMPOSTER_ESCAPE, group.scores);
+        await addScore(group.id, imposterId, POINTS.IMPOSTER_ESCAPE, 'imposter');
       }
     }
   }
@@ -237,22 +224,3 @@ export const awardPointsAndReturnToMenu = async (
   });
 };
 
-export const resetGameKeepingGroup = async (
-  groupId: string
-): Promise<void> => {
-  const groupRef = doc(db, 'groups', groupId);
-  await updateDoc(groupRef, {
-    status: 'lobby',
-    gameState: {
-      word: '',
-      category: '',
-      imposterIds: [],
-      votes: {},
-      currentTurn: 0,
-      settings: { imposterCount: 1, hintsEnabled: true },
-      votingRound: 1,
-      eliminatedPlayers: [],
-      hintUsed: false,
-    },
-  });
-};

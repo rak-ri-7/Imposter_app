@@ -50,7 +50,6 @@ const pickRandomWord = (): string => pickRandomWordEntry([]).word;
 
 export default function ImposterPassThePhoneScreen({ navigation }: Props) {
   const [phase, setPhase] = useState<Phase>("loading");
-  const [playerNames, setPlayerNames] = useState<string[]>(["", ""]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [word, setWord] = useState("");
@@ -126,52 +125,6 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
   const goToPhase = (p: Phase) => {
     setPhase(p);
     fadeIn();
-  };
-
-  const addPlayer = () => {
-    if (playerNames.length >= 8) return;
-    setPlayerNames([...playerNames, ""]);
-  };
-
-  const removePlayer = (index: number) => {
-    if (playerNames.length <= 2) return;
-    setPlayerNames(playerNames.filter((_, i) => i !== index));
-  };
-
-  const updatePlayerName = (index: number, name: string) => {
-    const updated = [...playerNames];
-    updated[index] = name;
-    setPlayerNames(updated);
-  };
-
-  const handleStartGame = () => {
-    const validNames = playerNames
-      .map((n) => n.trim())
-      .filter((n) => n.length > 0);
-    if (validNames.length < 2) {
-      return Alert.alert("Need at least 2 players");
-    }
-    const hasDuplicates = new Set(validNames).size !== validNames.length;
-    if (hasDuplicates) {
-      return Alert.alert("Player names must be unique");
-    }
-
-    const selectedWord = pickRandomWord();
-    const selectedImposterIndex = Math.floor(Math.random() * validNames.length);
-
-    const initialPlayers: Player[] = validNames.map((name) => ({
-      name,
-      isImposter: false,
-      hasVoted: false,
-      votedFor: null,
-    }));
-    initialPlayers[selectedImposterIndex].isImposter = true;
-
-    setWord(selectedWord);
-    setImposterIndex(selectedImposterIndex);
-    setPlayers(initialPlayers);
-    setCurrentIndex(0);
-    goToPhase("cover");
   };
 
   const handleReveal = () => {

@@ -10,7 +10,7 @@ import {
     Transaction,
 } from 'firebase/firestore';
 import { db } from '../../../shared/firebase/config';
-import { returnToMenu } from '../../../shared/firebase/groups';
+import { returnToMenu, scoreFields } from '../../../shared/firebase/groups';
 import type {
     Group,
     QuizBoardGameState,
@@ -702,7 +702,7 @@ export const finishQuizBoard = async (group: Group): Promise<void> => {
         // Only award a game that was actually played.
         if ((gs.rounds ?? []).some((r) => !r.voided)) {
             for (const s of standings(gs.money, data.players)) {
-                if (s.points > 0) updates[`scores.${s.playerId}`] = increment(s.points);
+                if (s.points > 0) Object.assign(updates, scoreFields('quiz-board', s.playerId, s.points));
             }
         }
         tx.update(groupRef, updates);

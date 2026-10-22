@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import {
   View,
   Text,
@@ -11,6 +11,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { useFocusEffect } from "@react-navigation/native";
 import { RootStackParamList } from "../../../App";
 import { games } from "../../games/registry";
+import { denseRanks, rankMedal } from "../utils/ranking";
 import {
   getLocalSession,
   clearLocalSession,
@@ -74,6 +75,8 @@ export default function QuickPlayMenuScreen({ navigation }: Props) {
   const sortedPlayers = session
     ? [...session.players].sort((a, b) => b.score - a.score)
     : [];
+  // Equal scores share a place (10, 10, 7 -> 🥇 🥇 🥈).
+  const playerRanks = denseRanks(sortedPlayers.map((p) => p.score));
 
   return (
     <View style={styles.container}>
@@ -115,13 +118,7 @@ export default function QuickPlayMenuScreen({ navigation }: Props) {
             {sortedPlayers.map((player, index) => (
               <View key={player.name} style={styles.leaderRow}>
                 <Text style={styles.leaderRank}>
-                  {index === 0
-                    ? "🥇"
-                    : index === 1
-                      ? "🥈"
-                      : index === 2
-                        ? "🥉"
-                        : `${index + 1}.`}
+                  {rankMedal(playerRanks[index])}
                 </Text>
                 <Text style={styles.leaderName}>{player.name}</Text>
                 <Text style={styles.leaderScore}>{player.score} pts</Text>

@@ -696,4 +696,3 @@ export const generateQuestionForRound = (
     return { question: '6 + 6 = ?', answer: 12, difficulty: 'easy', templateId: 'math:fallback' };
 };
 
-export const generateQuestion = (): Question => generateQuestionForRound(3);

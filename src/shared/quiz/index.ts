@@ -4,7 +4,6 @@ import type {
     QuizInstance,
     QuizDifficulty,
     QuizLevel,
-    QuizCategory,
     QuestionFilter,
 } from './types';
 import { QUIZ_CATEGORIES } from './types';
@@ -161,9 +160,24 @@ export const generateQuizInstance = (question: QuizQuestion): QuizInstance => {
 const difficultyMatches = (q: QuizQuestion, d?: QuizDifficulty | QuizDifficulty[]) =>
     !d || (Array.isArray(d) ? d.includes(q.difficulty) : q.difficulty === d);
 
-// Picks an unused question matching the filter. If every match has been
-// used, matches can repeat. If nothing matches at all, the category is
-// dropped first, then the difficulty — so a game never runs dry.
+// ── SESSION MEMORY ─────────────────────────────────────────────────
+// Every question handed out by getRandomQuestion is remembered for the life
+// of the app session, across ALL trivia games, so nothing repeats until every
+// question that fits the current filter has been asked. Only then does that
+// pool start over (other pools keep their history).
+const askedThisSession = new Set<string>();
+let lastAskedId: string | null = null;
+
+export const resetQuizSession = (): void => {
+    askedThisSession.clear();
+    lastAskedId = null;
+};
+
+// Picks a question matching the filter that hasn't been asked yet — neither in
+// this game (usedIds) nor earlier this session. If nothing fresh is left, the
+// session history for the matching questions is cleared and the pool starts
+// over (never repeating the question just asked). If nothing matches at all,
+// the category is dropped first, then the difficulty — so a game never runs dry.
 export const getRandomQuestion = (usedIds: string[], filter: QuestionFilter = {}): QuizQuestion => {
     const matching = (f: QuestionFilter) =>
         activeBank.filter(
@@ -173,23 +187,20 @@ export const getRandomQuestion = (usedIds: string[], filter: QuestionFilter = {}
     if (candidates.length === 0) candidates = matching({ difficulty: filter.difficulty });
     if (candidates.length === 0) candidates = activeBank;
 
-    const unused = candidates.filter((q) => !usedIds.includes(q.id));
-    const pool = unused.length > 0 ? unused : candidates;
-    return pool[Math.floor(Math.random() * pool.length)];
-};
-
-// How many questions each category has at a difficulty — handy for deciding
-// which categories are big enough to offer as a pick.
-export const countByCategory = (
-    difficulty?: QuizDifficulty | QuizDifficulty[]
-): Record<QuizCategory, number> => {
-    const counts = Object.fromEntries(
-        Object.keys(QUIZ_CATEGORIES).map((c) => [c, 0])
-    ) as Record<QuizCategory, number>;
-    for (const q of activeBank) {
-        if (difficultyMatches(q, difficulty)) counts[q.category] += 1;
+    const fresh = (q: QuizQuestion) => !askedThisSession.has(q.id) && !usedIds.includes(q.id);
+    let pool = candidates.filter(fresh);
+    if (pool.length === 0) {
+        // Pool exhausted: forget these questions and go round again.
+        for (const q of candidates) askedThisSession.delete(q.id);
+        pool = candidates.filter((q) => !usedIds.includes(q.id) && q.id !== lastAskedId);
+        if (pool.length === 0) pool = candidates.filter((q) => q.id !== lastAskedId);
+        if (pool.length === 0) pool = candidates;
     }
-    return counts;
+
+    const picked = pool[Math.floor(Math.random() * pool.length)];
+    askedThisSession.add(picked.id);
+    lastAskedId = picked.id;
+    return picked;
 };
 
 // ── DEV VALIDATION ─────────────────────────────────────────────────
@@ -239,8 +250,6 @@ export const LEVEL_VALUES: Record<QuizLevel, number> = {
     5: 5000,
     6: 6000,
 };
-export const DOUBLE_ROUND_MULTIPLIER = 2;
-
 // Which difficulty fills each row.
 export const LEVEL_DIFFICULTY: Record<QuizLevel, QuizDifficulty> = {
     1: 'easy',
@@ -266,9 +275,6 @@ export const LEVEL_FALLBACK: Record<QuizLevel, QuizDifficulty[]> = {
     5: ['hard', 'medium'],
     6: ['hard', 'medium'],
 };
-
-export const prizeForLevel = (level: QuizLevel, multiplier = 1): number =>
-    LEVEL_VALUES[level] * multiplier;
 
 // ₹1,00,000 style (Indian digit grouping), without relying on Intl.
 export const formatRupees = (amount: number): string => {

@@ -20,7 +20,9 @@ import {
 import { liarOffset, liarDisplayedRemaining } from "../../logic/timer/liarClock";
 import BombAlleyScreen from "./BombAlleyScreen";
 import { QUIRK_INFO, QuirkVariant } from "../../logic/timer/bombQuirks";
-import MissionsButton from "./MissionsButton";
+import { potCapFor, potForHold, potPreview, POT_RULE } from "../../logic/timer/bombPot";
+import { isAuctionRound } from "../../logic/timer/bombAuction";
+import BombAuctionPanel from "./BombAuctionPanel";
 
 type Props = {
   group: Group;
@@ -32,6 +34,8 @@ export default function BombPlayScreen({ group, playerId }: Props) {
   const isHost = group.hostId === playerId;
   const isHolder = gameState.currentHolderId === playerId;
   const isGhost = gameState.ghosts.includes(playerId);
+  // 🔨 Auction rounds: no instructions, no target list, one Pass button.
+  const auctionRound = isAuctionRound(gameState);
   const myLives = gameState.lives[playerId] ?? 0;
   const myInstruction = gameState.instructions[playerId] ?? "";
   const myFallback = gameState.instructionFallbacks?.[playerId] ?? "";
@@ -187,6 +191,65 @@ export default function BombPlayScreen({ group, playerId }: Props) {
     }
   }, [gameState.currentHolderId]);
 
+  // ── How long I've held it (for the Lazy quirk + achievements) ──────
+  // Measured here on the holder's own phone, and only while the fuse is
+  // actually running: comparing clocks across phones was unreliable (a
+  // phone a few seconds ahead made every quick pass look like an 8s hold),
+  // and pauses / quirk cards / clingy locks shouldn't count as holding.
+  // Only this phone's own clock is used, and the stopwatch only stops on
+  // state the game writes (a quirk card always pauses the fuse, so
+  // isPaused covers it). It's a start/stop stopwatch, read exactly at the tap.
+  const holdKey = `${gameState.roundNumber}|${gameState.currentHolderId}|${gameState.passHistory.length}`;
+  const holdBankedRef = useRef(0);                  // ms banked from earlier stretches
+  const holdRunningSinceRef = useRef<number | null>(null);
+  const fuseRunningForMe =
+    isHolder &&
+    gameState.phase === "playing" &&
+    !gameState.isPaused &&
+    !gameState.pendingPass &&
+    !isClingyLocked;
+  useEffect(() => {
+    holdBankedRef.current = 0; // a new catch
+  }, [holdKey]);
+  useEffect(() => {
+    if (!fuseRunningForMe) return;
+    holdRunningSinceRef.current = Date.now();
+    return () => {
+      if (holdRunningSinceRef.current !== null) {
+        holdBankedRef.current += Date.now() - holdRunningSinceRef.current;
+      }
+      holdRunningSinceRef.current = null;
+    };
+  }, [fuseRunningForMe, holdKey]);
+  const readHoldMs = () =>
+    holdBankedRef.current +
+    (holdRunningSinceRef.current !== null ? Date.now() - holdRunningSinceRef.current : 0);
+
+  // ── 💰 The pot (hidden / mixed games, Liar rounds) ────────────────
+  const potCap = gameState.phase === "playing" ? potCapFor(gameState) : 0;
+  const [potShown, setPotShown] = useState(0);
+  useEffect(() => {
+    if (!isHolder) {
+      setPotShown(0);
+      if (potPreview.holderId === playerId) potPreview.amount = 0; // passed it on
+      return;
+    }
+    // (not cleared when the round leaves 'playing': the panic screen reads it)
+    if (potCap === 0) return;
+    const tick = () => {
+      const amount = potForHold(readHoldMs(), potCap);
+      setPotShown(amount);
+      // Remembered so the panic screen can say what burned.
+      potPreview.round = gameState.roundNumber;
+      potPreview.holderId = playerId;
+      potPreview.amount = amount;
+    };
+    tick();
+    if (!fuseRunningForMe) return;
+    const id = setInterval(tick, 250);
+    return () => clearInterval(id);
+  }, [isHolder, potCap, fuseRunningForMe, holdKey]);
+
   // ── Quirk feedback: a short line under the status strip ───────────
   const [note, setNote] = useState<string | null>(null);
   const noteTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -239,6 +302,7 @@ export default function BombPlayScreen({ group, playerId }: Props) {
         playerId,
         toId,
         instructionSlide === 1 && myFallback !== "",
+        readHoldMs(),
       );
       if (res.success) {
         if (res.pending) flash("😴 Passed… it's taking its sweet time.", 2500);
@@ -349,10 +413,9 @@ export default function BombPlayScreen({ group, playerId }: Props) {
 
   return (
     <View style={styles.container}>
-      {/* Slim icon row — missions + host controls only, no reserved space when unused */}
+      {/* Slim icon row — Alley + host controls only, no reserved space when unused */}
       <View style={styles.iconRow}>
         <View style={{ flex: 1 }} />
-        <MissionsButton />
         <TouchableOpacity
           style={styles.iconBtn}
           onPress={() => setShowAlley(true)}
@@ -429,6 +492,21 @@ export default function BombPlayScreen({ group, playerId }: Props) {
         </View>
       )}
 
+      {potCap > 0 && (
+        <View style={[styles.potBox, isHolder && styles.potBoxHolder]}>
+          {isHolder ? (
+            <Text style={styles.potAmount}>
+              💰 Pot +{potShown} FP{" "}
+              <Text style={styles.potHint}>
+                {gameState.pendingPass?.from === playerId ? "· banks when it lands" : "· pass to bank it"}
+              </Text>
+            </Text>
+          ) : (
+            <Text style={styles.potRule}>💰 Pot round · {POT_RULE}</Text>
+          )}
+        </View>
+      )}
+
       {gameState.pendingPass?.kind === "lazy" && (
         <View style={styles.lazyBox}>
           <Text style={styles.lazyText}>
@@ -454,8 +532,12 @@ export default function BombPlayScreen({ group, playerId }: Props) {
         </View>
       )}
 
+      {auctionRound && (
+        <BombAuctionPanel group={group} playerId={playerId} readHoldMs={readHoldMs} />
+      )}
+
       {/* Instruction — 2-slide card: main instruction, then fallback */}
-      {isHolder && !isGhost && (
+      {isHolder && !isGhost && !auctionRound && (
         <View style={styles.instructionBox}>
           <View style={styles.instructionHeader}>
             <Text style={styles.instructionLabel}>YOUR INSTRUCTION</Text>
@@ -551,10 +633,10 @@ export default function BombPlayScreen({ group, playerId }: Props) {
 
       {/* Player grid — claims the rest of the screen */}
       <Text style={styles.sectionLabel}>
-        {isHolder && !isGhost ? "TAP TO PASS" : "PLAYERS"}
+        {isHolder && !isGhost && !auctionRound ? "TAP TO PASS" : "PLAYERS"}
       </Text>
       <FlatList
-        data={isHolder && !isGhost ? activePlayers : group.players}
+        data={isHolder && !isGhost && !auctionRound ? activePlayers : group.players}
         keyExtractor={(item) => item.id}
         numColumns={2}
         columnWrapperStyle={styles.gridRow}
@@ -563,7 +645,7 @@ export default function BombPlayScreen({ group, playerId }: Props) {
         renderItem={({ item }) => {
           const isMe = item.id === playerId;
           const hasBomb = item.id === gameState.currentHolderId;
-          const showAsPassable = isHolder && !isGhost;
+          const showAsPassable = isHolder && !isGhost && !auctionRound;
           const blocked = showAsPassable && !canPassTo(item.id);
 
           return (
@@ -605,7 +687,7 @@ export default function BombPlayScreen({ group, playerId }: Props) {
         }}
       />
 
-      {/* Alley — separate full-screen overlay, own Modal, independent of Missions */}
+      {/* Alley — separate full-screen overlay, own Modal */}
       <Modal
         visible={showAlley}
         animationType="slide"
@@ -623,6 +705,20 @@ export default function BombPlayScreen({ group, playerId }: Props) {
 
 const styles = StyleSheet.create({
   quirkRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, marginBottom: 8 },
+  potBox: {
+    alignSelf: "center",
+    backgroundColor: "#1A1606",
+    borderWidth: 1,
+    borderColor: "#5A4A10",
+    borderRadius: 12,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    marginBottom: 8,
+  },
+  potBoxHolder: { borderColor: "#FFD700", backgroundColor: "#2A2306" },
+  potAmount: { color: "#FFD700", fontSize: 16, fontWeight: "900", textAlign: "center" },
+  potHint: { color: "#C9B46A", fontSize: 11, fontWeight: "600" },
+  potRule: { color: "#C9B46A", fontSize: 11, textAlign: "center" },
   quirkChip: {
     color: "#FFD1E3",
     backgroundColor: "#2A1220",

@@ -1,8 +1,9 @@
-// Tracks hidden achievements from the same events the game already emits
-// (applyMissionEvent forwards every one here), plus a few quirk/vest hooks.
-// Mutates `updates` like applyFusePoints, so unlocks land in the caller's write.
-import { BombGameState, AchievementRecord, AchievementUnlock } from '../../../../shared/types';
-import type { MissionEvent } from '../../data/missions';
+// Hidden achievements. The bomb logic reports what happens (applyGameEvent)
+// and this decides who has earned what. Mutates `updates` like
+// applyFusePoints, so unlocks land in the caller's own write.
+import { doc, runTransaction } from 'firebase/firestore';
+import { db } from '../../../../shared/firebase/config';
+import { Group, BombGameState, AchievementRecord, AchievementUnlock } from '../../../../shared/types';
 import {
     ACHIEVEMENTS,
     AchievementId,
@@ -17,8 +18,11 @@ import {
 } from '../../data/achievements';
 import { applyFusePoints, applyLifeGain } from './bombHelpers';
 
-export type AchievementEvent =
-    | MissionEvent
+export type GameEvent =
+    | { kind: 'pass'; fromId: string; heldMs: number } // heldMs: how long the passer held it
+    | { kind: 'defused'; playerId: string }
+    | { kind: 'caused-explosion'; passerId: string }
+    | { kind: 'round-end'; lostLife: boolean }
     | { kind: 'vest-saved'; playerId: string }
     | { kind: 'bomb-fled'; playerId: string }
     | { kind: 'toxic-boom'; playerId: string };
@@ -69,11 +73,11 @@ const unlock = (
     updates['gameState.achFeed'] = [...feed, entry].slice(-FEED_LIMIT);
 };
 
-export const applyAchievementEvent = (
+export const applyGameEvent = (
     updates: Record<string, unknown>,
     gs: BombGameState,
     ownerId: string,
-    event: AchievementEvent
+    event: GameEvent
 ): void => {
     const rec = readRecord(updates, gs, ownerId);
     const p = rec.p;
@@ -136,9 +140,37 @@ export const applyAchievementEvent = (
         case 'toxic-boom':
             if (event.playerId === ownerId) unlock(updates, gs, ownerId, rec, 'bear');
             break;
-        default:
-            break;
     }
 
     if (JSON.stringify(rec) !== before) updates[pathOf(ownerId)] = rec;
+};
+
+// Host, as a round is closed out (start of advanceRound): every player's
+// end-of-round achievements. Once per round, so a retried Next Round can't
+// count the round twice. A transaction on the live document: lives,
+// fusePoints and achFeed are written as whole maps, so computing them from
+// an older snapshot would wipe anything that landed meanwhile (a ticket
+// buy, a bet payout, a ghost stipend).
+export const applyRoundEndEvents = async (groupId: string): Promise<void> => {
+    const groupRef = doc(db, 'groups', groupId);
+    await runTransaction(db, async (transaction) => {
+        const snap = await transaction.get(groupRef);
+        if (!snap.exists()) return;
+        const data = snap.data() as Group;
+        const gameState = data.gameState as BombGameState;
+        if (gameState.roundEndEventsRound === gameState.roundNumber) return;
+        const updates: Record<string, unknown> = {
+            'gameState.roundEndEventsRound': gameState.roundNumber,
+        };
+        if (gameState.explodedPlayerId) { // nothing resolved if force-ended
+            for (const player of data.players) {
+                const startLives = gameState.roundStartLives?.[player.id];
+                const lostLife = startLives !== undefined
+                    ? (gameState.lives[player.id] ?? 0) < startLives
+                    : gameState.explodedPlayerId === player.id && !gameState.defused;
+                applyGameEvent(updates, gameState, player.id, { kind: 'round-end', lostLife });
+            }
+        }
+        transaction.update(groupRef, updates);
+    });
 };

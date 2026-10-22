@@ -51,6 +51,15 @@ export const games: GameDefinition[] = [
         modes: ['online'],
     },
     {
+        id: 'card-clash',
+        name: 'Clash Cards',
+        emoji: '🃏',
+        description: 'Call a stat, highest card wins',
+        minPlayers: 2,
+        available: true,
+        modes: ['online'],
+    },
+    {
         id: 'most-likely-to',
         name: 'Most Likely To',
         emoji: '👥',

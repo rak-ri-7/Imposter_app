@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   View,
   Text,
@@ -338,11 +338,5 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: "center",
     marginTop: 40,
-  },
-  spectatorNote: {
-    color: "#555",
-    fontSize: 14,
-    textAlign: "center",
-    marginTop: 20,
   },
 });

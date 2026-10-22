@@ -26,6 +26,7 @@ import {
   GHOST_WINDOW_MIN_MS,
   activateWireRevealer,
 } from "../../logic/timer/game";
+import { potPreview } from "../../logic/timer/bombPot";
 import {
   playSound,
   pickPanicStartSound,
@@ -192,6 +193,15 @@ export default function BombPanicScreen({ group, playerId }: Props) {
   const holderName =
     group.players.find((p) => p.id === gameState.currentHolderId)?.name ??
     "Someone";
+  // 💰 The pot this phone was growing when the panic hit has burned.
+  const [burnedPot] = useState(() =>
+    potPreview.round === gameState.roundNumber && potPreview.holderId === playerId
+      ? potPreview.amount
+      : 0,
+  );
+  useEffect(() => {
+    if (potPreview.holderId === playerId) potPreview.amount = 0; // say it once
+  }, []);
 
   // Latest snapshot, read by the watchdog's interval without restarting it.
   const gameStateRef = useRef(gameState);
@@ -641,6 +651,13 @@ export default function BombPanicScreen({ group, playerId }: Props) {
       </View>
 
       <View style={styles.body}>
+        {burnedPot > 0 && (
+          <View style={styles.clingyBox}>
+            <Text style={styles.clingyText}>
+              💸 The panic burned your pot: {burnedPot} FP gone!
+            </Text>
+          </View>
+        )}
         {gameState.pendingPass?.kind === "lazy" && (
           <View style={styles.clingyBox}>
             <Text style={styles.clingyText}>
@@ -662,10 +679,13 @@ export default function BombPanicScreen({ group, playerId }: Props) {
 
         {isHolder ? (
           <>
-            {/* Instruction — compact, single line-ish, not a huge block */}
+            {/* Instruction — compact, single line-ish, not a huge block.
+                Auction rounds have no instructions. */}
             <View style={styles.instructionBox}>
               <Text style={styles.instructionText} numberOfLines={2}>
-                {gameState.instructions[playerId] ?? "Pass the bomb quickly!"}
+                {gameState.personalityEffect === "auction"
+                  ? "🔨 No auction in the panic: pass it to anyone!"
+                  : gameState.instructions[playerId] ?? "Pass the bomb quickly!"}
               </Text>
             </View>
 

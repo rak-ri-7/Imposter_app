@@ -7,7 +7,6 @@ import {
     getRunningDistractionBaseWindow,
     generateRunningDistraction,
 } from '../logic/distractions';
-import { getServerNow } from '../../../shared/firebase/time';
 import { playSound } from '../../../shared/audio/sounds';
 
 type Params = {

@@ -792,7 +792,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#FF4500",
   },
-  targetBtnEmpty: { opacity: 0.35, borderColor: "#333" },
   targetName: { color: "#fff", fontSize: 16, fontWeight: "700" },
   targetPasses: { color: "#FFD700", fontSize: 13, fontWeight: "600" },
 
@@ -922,13 +921,6 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "700",
     textAlign: "center",
-  },
-  luckyBtn: {
-    borderRadius: 8,
-    paddingVertical: 4,
-    paddingHorizontal: 8,
-    borderWidth: 1,
-    borderColor: "#4CAF50",
   },
   luckyBtnText: { fontSize: 14 },
 });

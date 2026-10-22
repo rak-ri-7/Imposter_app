@@ -375,7 +375,6 @@ const styles = StyleSheet.create({
     marginTop: 14,
   },
 
-  modeSelectBox: { width: "100%", marginBottom: 20 },
   modeSelectLabel: {
     color: "#888",
     fontSize: 11,
@@ -383,18 +382,6 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     textAlign: "center",
   },
-  modeSelectRow: { flexDirection: "row", gap: 10 },
-  modeBtn: {
-    flex: 1,
-    backgroundColor: "#1A1A1A",
-    borderRadius: 12,
-    padding: 12,
-    alignItems: "center",
-    borderWidth: 1,
-    borderColor: "#333",
-  },
-  modeBtnActive: { borderColor: "#FF4500", backgroundColor: "#2A1A1A" },
-  modeBtnText: { color: "#fff", fontSize: 13, fontWeight: "600" },
   rulesBox: {
     width: "100%",
     backgroundColor: "#161616",

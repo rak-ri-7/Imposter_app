@@ -29,10 +29,10 @@
 // survives. The dud is rolled at that moment, so nothing in the state can
 // give it away beforehand.
 
-import { doc, runTransaction, deleteField, increment } from 'firebase/firestore';
+import { doc, runTransaction, deleteField } from 'firebase/firestore';
 import { db } from '../../../../shared/firebase/config';
 import { Group, BombGameState } from '../../../../shared/types';
-import { addScore } from '../../../../shared/firebase/groups';
+import { addScore, scoreFields } from '../../../../shared/firebase/groups';
 import {
     FUSE_POINTS,
     applyFusePoints,
@@ -40,7 +40,6 @@ import {
     ROUND_WIN_SCORE,
 } from './bombHelpers';
 import { applySuperShield } from './superShield';
-import { applyMissionEvent } from './missionEngine';
 
 export type HpMood = 'neutral' | 'angry' | 'lazy' | 'bored';
 export type HpContext = 'duel' | 'tournament';
@@ -168,10 +167,6 @@ export const hpZeroAt = (gs: BombGameState): number => {
 
 export const hpIsNapping = (gs: BombGameState, now = Date.now()): boolean =>
     !!gs.hpNap && now >= gs.hpNap.from && now < gs.hpNap.until;
-
-// The fuse has hit zero: the bomb is frozen and the finale is playing.
-export const hpInFinale = (gs: BombGameState, now = Date.now()): boolean =>
-    hpIsLive(gs) && now >= hpZeroAt(gs);
 
 // Who actually had the bomb at time t — a lazy pass only lands when it arrives.
 export const hpHolderAt = (gs: BombGameState, t: number): string =>
@@ -492,7 +487,7 @@ const tournamentOutcome = (gs: BombGameState, victim: string): Record<string, un
     if (!t.debug && winnerId) {
         applyLifeGain(updates, gs, winnerId);
         if (winnerId !== t.wireCutterId) {
-            updates[`scores.${winnerId}`] = increment(ROUND_WIN_SCORE);
+            Object.assign(updates, scoreFields('pass-the-bomb', winnerId, ROUND_WIN_SCORE));
         }
     }
     return updates;
@@ -595,7 +590,6 @@ export const explodeHotPotato = async (group: Group): Promise<void> => {
             }
             if (survivor) {
                 applyFusePoints(updates, gs, survivor, FUSE_POINTS.WIRE_DEFUSED, 'Survived the hot potato!');
-                applyMissionEvent(updates, gs, group.players, survivor, { kind: 'duel-won', playerId: survivor });
             }
 
             transaction.update(groupRef, updates);
@@ -607,6 +601,6 @@ export const explodeHotPotato = async (group: Group): Promise<void> => {
 
     // Outside the transaction: only the call that actually exploded the bomb scores.
     if (survivorId) {
-        await addScore(group.id, survivorId, ROUND_WIN_SCORE, group.scores);
+        await addScore(group.id, survivorId, ROUND_WIN_SCORE, 'pass-the-bomb');
     }
 };
