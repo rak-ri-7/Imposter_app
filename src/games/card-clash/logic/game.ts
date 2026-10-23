@@ -4,11 +4,13 @@
 import { deleteField, doc, runTransaction, Transaction } from 'firebase/firestore';
 import { db } from '../../../shared/firebase/config';
 import { returnToMenu, scoreFields } from '../../../shared/firebase/groups';
-import type { ClashDefence, ClashGameState, ClashResult, Group } from '../../../shared/types';
+import type { ClashCall, ClashDefence, ClashGameState, ClashResult, Group } from '../../../shared/types';
 import { DECKS, DECK_CARDS, cardById } from '../data/decks';
 import type { ClashDeckId } from '../data/types';
 
 export const CALL_MS = 30000;        // the caller's time to pick a stat
+export const ANSWER_MS = 20000;      // after a call: time for everyone to tap CLASH!
+export const PASS_AFTER = 3;         // 🎁 calls in a row before the caller may pass the call
 // How long a clash result stays up: see logic/timeline.ts.
 export const HAND_SIZES = [6, 8, 10] as const;
 export const DEFAULT_HAND = 8;
@@ -71,6 +73,7 @@ export const startCardClash = async (
             wildcardUsed: {},
             skipsUsed: {},
             hintsUsed: {},
+            scratched: {},
             outRound: {},
             gold,
         };
@@ -183,6 +186,12 @@ const settlePot = (
     return { piles, out, outRound };
 };
 
+// ── Scratch-off: a stat you call is crossed off for you ──────────────
+// You can't call it again until you've called all 10; then they all come
+// back. Calling from a ★ gold card ignores the list and scratches nothing.
+export const scratchedFor = (gs: ClashGameState, playerId: string): string[] =>
+    Object.keys(gs.scratched?.[playerId] ?? {}).filter((k) => gs.scratched?.[playerId]?.[k]);
+
 // ── The caller picks a stat (or 🃏, or time ran out) ─────────────────
 export type CallChoice = { statKey: string } | { wildcard: true } | { auto: true };
 
@@ -204,6 +213,10 @@ export const callStat = async (
             if (!isAuto && gs.callerId !== playerId) return;
 
             const deck = DECKS[gs.deck];
+            const caller = gs.callerId;
+            const goldFree = isGold(gs, gs.piles[caller]?.[0]);
+            const scratched = gs.scratched?.[caller] ?? {};
+            const unlocked = deck.stats.filter((s) => goldFree || !scratched[s.key]);
             let statKey: string;
             let wildcard = false;
             if ('wildcard' in choice) {
@@ -215,9 +228,13 @@ export const callStat = async (
                 wildcard = true;
             } else if ('statKey' in choice) {
                 if (!deck.stats.some((s) => s.key === choice.statKey)) return;
+                if (!unlocked.some((s) => s.key === choice.statKey)) {
+                    result = { success: false, reason: 'scratched' };
+                    return;
+                }
                 statKey = choice.statKey;
             } else {
-                statKey = pick(deck.stats).key;
+                statKey = pick(unlocked.length > 0 ? unlocked : deck.stats).key;
             }
 
             // Players can leave or be benched mid-game: if that leaves fewer
@@ -229,62 +246,32 @@ export const callStat = async (
                 return;
             }
 
-            // Everyone's top card; the highest value takes them all.
-            const plays: Record<string, string> = {};
-            const values: Record<string, number> = {};
-            for (const id of alive) {
-                const cardId = gs.piles[id][0];
-                plays[id] = cardId;
-                values[id] = cardById(cardId)?.stats[statKey] ?? 0;
-            }
-            const goldOf = (id: string) => isGold(gs, plays[id]);
-            const { winnerId, tied, goldTie } = decide(alive, values, goldOf);
-            const goldCards = alive.filter(goldOf).map((id) => plays[id]);
-            const base: ClashResult = {
-                round: gs.round,
+            // Announce the call; the cards stay hidden until everyone else
+            // has tapped CLASH! (or ANSWER_MS runs out).
+            const called: ClashCall = {
                 stage: 'clash',
-                callerId: gs.callerId,
                 statKey,
-                plays,
-                winnerId,
+                by: caller,
                 ...(wildcard ? { wildcard: true } : {}),
                 ...(isAuto ? { auto: true } : {}),
-                ...(tied ? { tied } : {}),
-                ...(goldTie ? { goldTie: true } : {}),
-                ...(goldCards.length > 0 ? { gold: goldCards } : {}),
+                waitingFor: alive.filter((id) => id !== caller),
             };
-
-            let updates: Record<string, unknown>;
-            // A normal card beat a gold card: Gold Defence before anything moves.
-            // The beaten gold card that came closest defends.
-            const goldLosers = goldOf(winnerId) ? [] : alive.filter((id) => id !== winnerId && goldOf(id));
-            if (goldLosers.length > 0) {
-                const best = Math.max(...goldLosers.map((id) => values[id]));
-                const defenderId = pick(goldLosers.filter((id) => values[id] === best));
-                const defence: ClashDefence = {
-                    defenderId,
-                    challengerId: winnerId,
-                    goldCard: plays[defenderId],
-                    challengerCard: plays[winnerId],
-                    firstStatKey: statKey,
-                    firstValues: values,
-                    pot: plays,
-                };
-                updates = {
-                    'gameState.phase': 'reveal',
-                    'gameState.last': { ...base, defenceNext: true },
-                    'gameState.defence': defence,
-                };
-            } else {
-                const { piles, out, outRound } = settlePot(gs, plays, winnerId);
-                updates = {
-                    'gameState.phase': 'reveal',
-                    'gameState.piles': piles,
-                    'gameState.outRound': outRound,
-                    'gameState.last': { ...base, ...(out.length > 0 ? { out } : {}) },
-                };
-            }
+            const updates: Record<string, unknown> = {
+                'gameState.phase': 'answering',
+                'gameState.called': called,
+                'gameState.ready': {},
+                'gameState.streak': {
+                    playerId: caller,
+                    count: gs.streak?.playerId === caller ? gs.streak.count + 1 : 1,
+                },
+            };
             if (wildcard) updates[`gameState.wildcardUsed.${playerId}`] = true;
+            // Scratch the called stat (all 10 scratched → all back).
+            if (!wildcard && !goldFree) {
+                const next = { ...scratched, [statKey]: true };
+                const allGone = deck.stats.every((s) => next[s.key]);
+                updates[`gameState.scratched.${caller}`] = allGone ? {} : next;
+            }
             tx.update(groupRef, updates);
             result = { success: true };
         });
@@ -292,6 +279,118 @@ export const callStat = async (
         if (__DEV__) console.warn('[callStat] transaction failed', e);
     }
     return result;
+};
+
+// ── Resolving a call: the clash maths ────────────────────────────────
+// The call's top cards meet: highest value takes them all (ties: gold,
+// then 🎲). A normal card beating a gold one sets up the Gold Defence
+// instead, with nothing moved yet.
+const resolveClashUpdates = (
+    gs: ClashGameState,
+    players: { id: string }[],
+    c: ClashCall
+): Record<string, unknown> => {
+    const alive = alivePlayers(gs, players);
+    const done = { 'gameState.called': deleteField(), 'gameState.ready': deleteField() };
+    if (alive.length < 2) return { ...done, 'gameState.phase': 'over' };
+    // Everyone's top card; the highest value takes them all.
+    const plays: Record<string, string> = {};
+    const values: Record<string, number> = {};
+    for (const id of alive) {
+        const cardId = gs.piles[id][0];
+        plays[id] = cardId;
+        values[id] = cardById(cardId)?.stats[c.statKey] ?? 0;
+    }
+    const goldOf = (id: string) => isGold(gs, plays[id]);
+    const { winnerId, tied, goldTie } = decide(alive, values, goldOf);
+    const goldCards = alive.filter(goldOf).map((id) => plays[id]);
+    const base: ClashResult = {
+        round: gs.round,
+        stage: 'clash',
+        callerId: c.by,
+        statKey: c.statKey,
+        plays,
+        winnerId,
+        ...(c.wildcard ? { wildcard: true } : {}),
+        ...(c.auto ? { auto: true } : {}),
+        ...(tied ? { tied } : {}),
+        ...(goldTie ? { goldTie: true } : {}),
+        ...(goldCards.length > 0 ? { gold: goldCards } : {}),
+    };
+
+    let updates: Record<string, unknown>;
+    // A normal card beat a gold card: Gold Defence before anything moves.
+    // The beaten gold card that came closest defends.
+    const goldLosers = goldOf(winnerId) ? [] : alive.filter((id) => id !== winnerId && goldOf(id));
+    if (goldLosers.length > 0) {
+        const best = Math.max(...goldLosers.map((id) => values[id]));
+        const defenderId = pick(goldLosers.filter((id) => values[id] === best));
+        const defence: ClashDefence = {
+            defenderId,
+            challengerId: winnerId,
+            goldCard: plays[defenderId],
+            challengerCard: plays[winnerId],
+            firstStatKey: c.statKey,
+            firstValues: values,
+            pot: plays,
+        };
+        updates = {
+            'gameState.phase': 'reveal',
+            'gameState.last': { ...base, defenceNext: true },
+            'gameState.defence': defence,
+        };
+    } else {
+        const { piles, out, outRound } = settlePot(gs, plays, winnerId);
+        updates = {
+            'gameState.phase': 'reveal',
+            'gameState.piles': piles,
+            'gameState.outRound': outRound,
+            'gameState.last': { ...base, ...(out.length > 0 ? { out } : {}) },
+        };
+    }
+    return { ...updates, ...done };
+};
+
+// Gold Defence maths: gold wins a tie; the winner takes the whole pot; a
+// fallen gold moves to the challenger's card.
+const resolveDefenceUpdates = (gs: ClashGameState, c: ClashCall): Record<string, unknown> => {
+    const d = gs.defence!;
+    const statKey = c.statKey;
+    const gv = cardById(d.goldCard)?.stats[statKey] ?? 0;
+    const cv = cardById(d.challengerCard)?.stats[statKey] ?? 0;
+    const goldHolds = gv >= cv;
+    const winnerId = goldHolds ? d.defenderId : d.challengerId;
+    const { piles, out, outRound } = settlePot(gs, d.pot, winnerId);
+    const gold = { ...(gs.gold ?? {}) };
+    if (!goldHolds) {
+        delete gold[d.goldCard];
+        gold[d.challengerCard] = true;
+    }
+    const last: ClashResult = {
+        round: gs.round,
+        stage: 'defence',
+        callerId: d.defenderId,
+        statKey,
+        plays: { [d.defenderId]: d.goldCard, [d.challengerId]: d.challengerCard },
+        winnerId,
+        pot: d.pot,
+        firstStatKey: d.firstStatKey,
+        gold: [d.goldCard],
+        ...(c.auto ? { auto: true } : {}),
+        ...(gv === cv ? { goldTie: true } : {}),
+        ...(!goldHolds ? { goldTo: d.challengerCard } : {}),
+        ...(out.length > 0 ? { out } : {}),
+    };
+    return {
+        'gameState.phase': 'reveal',
+        'gameState.piles': piles,
+        'gameState.outRound': outRound,
+        'gameState.gold': gold,
+        'gameState.last': last,
+        'gameState.defence': deleteField(),
+        'gameState.called': deleteField(),
+        'gameState.ready': deleteField(),
+    };
 };
 
 // ── ⚡ Gold Defence: the gold card's owner calls a different stat ─────
@@ -311,7 +410,7 @@ export const callDefence = async (
             result = { success: false, reason: 'stale' };
             const cur = await read(tx, groupId);
             if (!cur) return;
-            const { gs, groupRef } = cur;
+            const { gs, data, groupRef } = cur;
             const d = gs.defence;
             if (gs.phase !== 'defending' || gs.round !== round || !d) return;
             const isAuto = 'auto' in choice;
@@ -329,43 +428,114 @@ export const callDefence = async (
                 statKey = pick(open).key;
             }
 
-            const gv = cardById(d.goldCard)?.stats[statKey] ?? 0;
-            const cv = cardById(d.challengerCard)?.stats[statKey] ?? 0;
-            const goldHolds = gv >= cv;
-            const winnerId = goldHolds ? d.defenderId : d.challengerId;
-            const { piles, out, outRound } = settlePot(gs, d.pot, winnerId);
-            const gold = { ...(gs.gold ?? {}) };
-            if (!goldHolds) {
-                delete gold[d.goldCard];
-                gold[d.challengerCard] = true;
-            }
-            const last: ClashResult = {
-                round: gs.round,
+            // Announce it; the challenger taps CLASH! (or time runs out).
+            const challengerHere = data.players.some((p) => p.id === d.challengerId);
+            const called: ClashCall = {
                 stage: 'defence',
-                callerId: d.defenderId,
                 statKey,
-                plays: { [d.defenderId]: d.goldCard, [d.challengerId]: d.challengerCard },
-                winnerId,
-                pot: d.pot,
-                firstStatKey: d.firstStatKey,
-                gold: [d.goldCard],
+                by: d.defenderId,
                 ...(isAuto ? { auto: true } : {}),
-                ...(gv === cv ? { goldTie: true } : {}),
-                ...(!goldHolds ? { goldTo: d.challengerCard } : {}),
-                ...(out.length > 0 ? { out } : {}),
+                waitingFor: challengerHere ? [d.challengerId] : [],
             };
-            tx.update(groupRef, {
-                'gameState.phase': 'reveal',
-                'gameState.piles': piles,
-                'gameState.outRound': outRound,
-                'gameState.gold': gold,
-                'gameState.last': last,
-                'gameState.defence': deleteField(),
-            });
+            tx.update(
+                groupRef,
+                challengerHere
+                    ? { 'gameState.phase': 'answering', 'gameState.called': called, 'gameState.ready': {} }
+                    : resolveDefenceUpdates(gs, called)
+            );
             result = { success: true };
         });
     } catch (e) {
         if (__DEV__) console.warn('[callDefence] transaction failed', e);
+    }
+    return result;
+};
+
+// ── The answer beat: everyone else taps CLASH!, then the reveal ──────
+const resolveCall = (gs: ClashGameState, players: { id: string }[]): Record<string, unknown> | null => {
+    const c = gs.called;
+    if (!c) return null;
+    if (c.stage === 'defence') return gs.defence ? resolveDefenceUpdates(gs, c) : null;
+    return resolveClashUpdates(gs, players, c);
+};
+
+export const markReady = async (groupId: string, playerId: string, round: number): Promise<void> => {
+    try {
+        await runTransaction(db, async (tx) => {
+            const cur = await read(tx, groupId);
+            if (!cur) return;
+            const { gs, data, groupRef } = cur;
+            const c = gs.called;
+            if (gs.phase !== 'answering' || gs.round !== round || !c) return;
+            if (!c.waitingFor.includes(playerId) || gs.ready?.[playerId]) return;
+            const ready = { ...(gs.ready ?? {}), [playerId]: true };
+            // Players who left can't tap: don't wait for them.
+            const stillWaiting = c.waitingFor.filter(
+                (id) => !ready[id] && data.players.some((p) => p.id === id)
+            );
+            const updates = stillWaiting.length === 0 ? resolveCall({ ...gs, ready }, data.players) : null;
+            tx.update(groupRef, updates ?? { [`gameState.ready.${playerId}`]: true });
+        });
+    } catch (e) {
+        if (__DEV__) console.warn('[markReady] transaction failed', e);
+    }
+};
+
+// Out of time (host's phone, others as backup): reveal anyway.
+export const resolveAnswers = async (
+    groupId: string,
+    round: number,
+    stage: 'clash' | 'defence'
+): Promise<void> => {
+    try {
+        await runTransaction(db, async (tx) => {
+            const cur = await read(tx, groupId);
+            if (!cur) return;
+            const { gs, data, groupRef } = cur;
+            if (gs.phase !== 'answering' || gs.round !== round || gs.called?.stage !== stage) return;
+            const updates = resolveCall(gs, data.players);
+            if (updates) tx.update(groupRef, updates);
+        });
+    } catch (e) {
+        if (__DEV__) console.warn('[resolveAnswers] transaction failed', e);
+    }
+};
+
+// ── 🎁 Pass the call ─────────────────────────────────────────────────
+// After PASS_AFTER calls in a row, the caller may hand the call on: to the
+// other player, or with more, to a 🎲 roll among everyone else still in.
+export const canPassCall = (gs: ClashGameState): boolean =>
+    gs.phase === 'calling' && gs.streak?.playerId === gs.callerId && (gs.streak?.count ?? 0) >= PASS_AFTER;
+
+export const passCall = async (
+    groupId: string,
+    playerId: string,
+    round: number
+): Promise<{ success: boolean; reason?: string }> => {
+    let result: { success: boolean; reason?: string } = { success: false, reason: 'stale' };
+    try {
+        await runTransaction(db, async (tx) => {
+            result = { success: false, reason: 'stale' };
+            const cur = await read(tx, groupId);
+            if (!cur) return;
+            const { gs, data, groupRef } = cur;
+            if (gs.round !== round || gs.callerId !== playerId) return;
+            if (!canPassCall(gs)) {
+                result = { success: false, reason: 'locked' };
+                return;
+            }
+            const pool = alivePlayers(gs, data.players).filter((id) => id !== playerId);
+            if (pool.length === 0) return;
+            const to = pick(pool);
+            tx.update(groupRef, {
+                'gameState.callerId': to,
+                'gameState.streak': { playerId: to, count: 0 },
+                'gameState.passedCall': { round, from: playerId, to, pool },
+            });
+            result = { success: true };
+        });
+    } catch (e) {
+        if (__DEV__) console.warn('[passCall] transaction failed', e);
     }
     return result;
 };

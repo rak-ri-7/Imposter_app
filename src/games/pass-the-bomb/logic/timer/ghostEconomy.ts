@@ -1,7 +1,7 @@
 import { doc, runTransaction } from 'firebase/firestore';
 import { db } from '../../../../shared/firebase/config';
 import { BombGameState } from '../../../../shared/types';
-import { applyFusePoints, applyLifeGain } from './bombHelpers';
+import { addAlleyReceipt, applyFusePoints, applyLifeGain } from './bombHelpers';
 
 // ── TUNING ────────────────────────────────────────────────────────────────
 export const GHOST_STIPEND_FP = 5;          // FP a ghost receives for each round it sits out (placeholder)
@@ -104,6 +104,7 @@ export const buyLife = async (groupId: string, playerId: string): Promise<BuyLif
             applyLifeGain(updates, gameState, playerId);
             updates[`gameState.lifePurchases.${playerId}`] = purchases + 1;
             updates[`gameState.lifeBoughtRound.${playerId}`] = gameState.roundNumber;
+            addAlleyReceipt(updates, gameState, playerId, 'life', price);
             transaction.update(groupRef, updates);
             result = { success: true, price };
         });

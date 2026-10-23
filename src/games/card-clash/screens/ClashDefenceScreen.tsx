@@ -135,7 +135,7 @@ export default function ClashDefenceScreen({ group, gs, playerId }: Props) {
                 deck={gs.deck}
                 width={bigW}
                 gold
-                usedKey={d.firstStatKey}
+                usedKeys={[d.firstStatKey]}
                 onPickStat={pick}
                 disabled={busy || !!chosen}
                 selectedKey={picked ?? undefined}

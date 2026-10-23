@@ -20,7 +20,8 @@ import {
 import type { ClashGameState, Group } from "../../../shared/types";
 import { cardById } from "../data/decks";
 import { prefetchCardPhotos } from "../data/photos";
-import { CALL_MS, callStat, skipCard, takeHint } from "../logic/game";
+import { CALL_MS, PASS_AFTER, callStat, canPassCall, passCall, scratchedFor, skipCard, takeHint } from "../logic/game";
+import { DECKS } from "../data/decks";
 import { hintFor, HINT_KIND } from "../data/hints";
 import ClashCardView from "../components/ClashCardView";
 import FlipCard from "../components/FlipCard";
@@ -41,8 +42,13 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
   const myPile = gs.piles[playerId] ?? [];
   const myCard = cardById(myPile[0] ?? "");
   const myGold = !!myCard && !!gs.gold?.[myCard.id];
+  // Scratch-off: stats you've called stay crossed out until all 10 are gone.
+  const myScratched = myGold ? [] : scratchedFor(gs, playerId);
+  const statCount = DECKS[gs.deck].stats.length;
   const out = gs.piles[playerId] !== undefined && myPile.length === 0;
   const callerName = group.players.find((p) => p.id === gs.callerId)?.name ?? "Someone";
+  const nameOf = (id: string) =>
+    id === playerId ? "You" : group.players.find((p) => p.id === id)?.name ?? "Someone";
   const wildLeft = !gs.wildcardUsed?.[playerId];
   const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<string | null>(null); // selected, not locked in
@@ -50,8 +56,10 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
   const [flipped, setFlipped] = useState(false);
 
   // The countdown runs from when this phone saw the round start.
-  const seen = useRef<{ round: number; at: number } | null>(null);
-  if (seen.current?.round !== gs.round) seen.current = { round: gs.round, at: Date.now() };
+  // (Keyed on the caller too: a 🎁 passed call starts a fresh 30s.)
+  const seenKey = `${gs.round}:${gs.callerId}`;
+  const seen = useRef<{ key: string; at: number } | null>(null);
+  if (seen.current?.key !== seenKey) seen.current = { key: seenKey, at: Date.now() };
   const [, setTick] = useState(0);
 
   // Draw: slide the new top card in, then flip it. Runs again after a Skip.
@@ -73,9 +81,34 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
   }, [gs.round, topId]);
   useEffect(() => {
     const t = setInterval(() => setTick((n) => n + 1), 250);
-    if (isCaller) Vibration.vibrate([0, 100, 60, 100]);
     return () => clearInterval(t);
   }, [gs.round]);
+  useEffect(() => {
+    if (isCaller) Vibration.vibrate([0, 100, 60, 100]);
+    setPicked(null);
+    setChosen(null);
+  }, [gs.round, gs.callerId]);
+
+  // 🎁 Pass the call: after PASS_AFTER calls in a row. With 3+ players a
+  // 🎲 roll (shown on every phone) picks the new caller.
+  const passed = gs.passedCall?.round === gs.round && gs.passedCall.to === gs.callerId ? gs.passedCall : null;
+  const ROLL_SHOW_MS = 2600;
+  const sinceSeen = Date.now() - seen.current.at;
+  const rolling = !!passed && passed.pool.length > 1 && sinceSeen < ROLL_SHOW_MS;
+  const showPassed = !!passed && sinceSeen < ROLL_SHOW_MS + 2500;
+  const rollName = passed ? passed.pool[Math.floor(sinceSeen / 120) % passed.pool.length] : "";
+  const canPass = isCaller && canPassCall(gs) && !chosen && !busy;
+  const [passing, setPassing] = useState(false);
+  const doPass = async () => {
+    if (!canPass || passing) return;
+    setPassing(true);
+    Vibration.vibrate(40);
+    try {
+      await passCall(group.id, playerId, gs.round);
+    } finally {
+      setPassing(false);
+    }
+  };
 
   // ⏭️ Skip: the card flies off to the right, then the next one is drawn.
   const [skipping, setSkipping] = useState(false);
@@ -143,7 +176,7 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
   }, [gs.round]);
 
   const call = async (choice: { statKey: string } | { wildcard: true }) => {
-    if (busy || chosen || !isCaller || !flipped) return;
+    if (busy || chosen || !isCaller || !flipped || rolling) return;
     setBusy(true);
     setChosen("statKey" in choice ? choice.statKey : "wild");
     Vibration.vibrate(40);
@@ -158,7 +191,7 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
   const choiceOf = (k: string) => (k === "wild" ? ({ wildcard: true } as const) : { statKey: k });
   const lockIn = () => picked && call(choiceOf(picked));
   const pick = (k: string) => {
-    if (busy || chosen || !isCaller || !flipped) return;
+    if (busy || chosen || !isCaller || !flipped || rolling) return;
     Vibration.vibrate(15);
     setPicked((cur) => (cur === k ? null : k));
   };
@@ -217,6 +250,37 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
             )}
           </View>
         )}
+        {!out && myCard && (myGold || myScratched.length > 0) && (
+          <Text style={[styles.scratchNote, myGold && styles.scratchGold]}>
+            {myGold
+              ? "★ Gold card: every stat unlocked, nothing gets scratched"
+              : `🔒 ${myScratched.length} of ${statCount} stats scratched · they all come back once you've called all ${statCount}`}
+          </Text>
+        )}
+
+        {showPassed && passed && (
+          <View style={styles.passBox}>
+            {rolling ? (
+              <>
+                <Text style={styles.passTitle}>🎲 {nameOf(passed.from)} passed the call… rolling</Text>
+                <Text style={styles.passName}>{nameOf(rollName)}</Text>
+              </>
+            ) : (
+              <Text style={styles.passTitle}>
+                🎁 {nameOf(passed.from)} passed the call · {passed.to === playerId ? "it's YOUR call!" : `${nameOf(passed.to)} takes it!`}
+              </Text>
+            )}
+          </View>
+        )}
+
+        {canPass && (
+          <TouchableOpacity style={[styles.passBtn, passing && styles.dim]} onPress={doPass} disabled={passing} activeOpacity={0.7}>
+            <Text style={styles.passBtnText}>
+              🎁 PASS THE CALL · you've called {gs.streak?.count ?? PASS_AFTER} in a row
+            </Text>
+          </TouchableOpacity>
+        )}
+
         {skippedBy.length > 0 && (
           <Text style={styles.skipNote}>⏭️ {skippedBy.map((p) => p.name).join(", ")} skipped a card</Text>
         )}
@@ -267,6 +331,8 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
                     onPickStat={isCaller ? pick : undefined}
                     disabled={busy || !!chosen || !flipped}
                     selectedKey={picked && picked !== "wild" ? picked : undefined}
+                    usedKeys={myScratched}
+                    usedLabel="called"
                     calledKey={chosen && chosen !== "wild" ? chosen : undefined}
                   />
                 }
@@ -353,6 +419,13 @@ const styles = StyleSheet.create({
   lifeBtnOn: { borderColor: CC.gold },
   lifeText: { color: CC.text, fontSize: 13, fontWeight: "900", letterSpacing: 0.5 },
   lifeTextOn: { color: CC.gold },
+  passBox: { backgroundColor: CC.panel, borderRadius: 14, borderWidth: 2, borderColor: CC.gold, padding: 12, alignItems: "center", gap: 4 },
+  passTitle: { color: CC.text, fontSize: 14, fontWeight: "800", textAlign: "center" },
+  passName: { color: CC.gold, fontSize: 26, fontWeight: "900", fontFamily: SERIF },
+  passBtn: { borderRadius: 14, borderWidth: 2, borderColor: CC.gold, backgroundColor: "#3A2A10", paddingVertical: 11, alignItems: "center" },
+  passBtnText: { color: CC.gold, fontSize: 13, fontWeight: "900", letterSpacing: 0.5 },
+  scratchNote: { color: CC.textMuted, fontSize: 12, fontWeight: "700", textAlign: "center" },
+  scratchGold: { color: CC.gold },
   skipNote: { color: CC.textMuted, fontSize: 13, fontWeight: "700", textAlign: "center" },
   hintBox: { backgroundColor: CC.panel, borderRadius: 14, borderWidth: 2, borderColor: CC.gold, padding: 12, gap: 6 },
   hintTitle: { color: CC.gold, fontSize: 12, fontWeight: "900", letterSpacing: 1 },

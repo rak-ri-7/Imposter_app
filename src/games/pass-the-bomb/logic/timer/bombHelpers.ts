@@ -1,4 +1,18 @@
-import { BombGameState, PassDispute } from '../../../../shared/types';
+import { AlleyItem, BombGameState, PassDispute } from '../../../../shared/types';
+
+// 🧾 Adds a public receipt for an Alley purchase to a transaction's updates.
+export const addAlleyReceipt = (
+    updates: Record<string, unknown>,
+    gs: BombGameState,
+    playerId: string,
+    item: AlleyItem,
+    price: number
+): void => {
+    updates['gameState.alleyReceipts'] = [
+        ...(gs.alleyReceipts ?? []),
+        { playerId, item, price, round: gs.roundNumber, at: Date.now() },
+    ];
+};
 
 export const MAX_POINT_EVENTS = 10;
 

@@ -19,8 +19,9 @@ type Props = { group: Group; playerId: string };
 
 const RULES = [
   "Everyone gets a pile of cards. You only ever see your own top card.",
-  "The caller picks one stat from their card. Everyone's top card flips.",
+  "The caller picks one stat from their card and hits CLASH!. Everyone sees the call and their own number, then taps CLASH! when ready. Then all the cards flip.",
   "Highest number wins every card in the clash. The winner calls next.",
+  "✏️ Scratch-off: a stat you call is crossed off for you. Once you've called all 10, they all come back. Calling from a ★ gold card skips this: every stat is open.",
   "A tie at the top? A ★ gold card wins it. Otherwise 🎲 the die picks the winner.",
   "★ Everyone starts with one GOLD card. Beat a gold card with a normal one and it gets a ⚡ Gold Defence: its owner picks a new stat and you must win again. Win twice and the gold moves to your card.",
   "Lifelines, once a game each: ⏭️ Skip sends your top card to the bottom of your pile (anyone, before the call). 🔍 Hint, on your call, shows each opponent's continent (countries) or animal group.",
@@ -29,6 +30,7 @@ const RULES = [
   "Run out of cards and you're out. Last one standing wins.",
   "🏆 Winner: 6 pts (2 players) or 10 pts (3+). Reach 10 clashes and everyone else scores too: 5 for the runner-up, 2 for the rest.",
   "The caller has 30 seconds: pick a stat, then hit CLASH! Too slow and your pick (or a random stat) is called.",
+  "🎁 Called 3 in a row? You can pass the call: to the other player, or with more, to a 🎲 roll among the rest.",
 ];
 
 export default function ClashLobbyScreen({ group, playerId }: Props) {

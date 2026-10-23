@@ -113,10 +113,11 @@ type Props = {
   calledKey?: string; // stamp "CALLED!" on this stat
   selectedKey?: string; // picked but not locked in yet
   gold?: boolean;
-  usedKey?: string; // can't be picked (Gold Defence: the first clash's stat)
+  usedKeys?: string[]; // can't be picked: scratched, or the Gold Defence's first stat
+  usedLabel?: string;  // shown after a used stat ("called", "used")
 };
 
-export default function ClashCardView({ card, deck, width, onPickStat, disabled, calledKey, selectedKey, gold, usedKey }: Props) {
+export default function ClashCardView({ card, deck, width, onPickStat, disabled, calledKey, selectedKey, gold, usedKeys, usedLabel = "used" }: Props) {
   const d = DECKS[deck];
   const photo = useCardPhoto(card);
   const calling = !!onPickStat;
@@ -140,7 +141,7 @@ export default function ClashCardView({ card, deck, width, onPickStat, disabled,
         {d.stats.map((s, i) => {
           const hot = calledKey === s.key;
           const sel = !calledKey && selectedKey === s.key;
-          const used = usedKey === s.key;
+          const used = !!usedKeys?.includes(s.key);
           const Row = calling && !used ? TouchableOpacity : View;
           return (
             <Row
@@ -154,7 +155,7 @@ export default function ClashCardView({ card, deck, width, onPickStat, disabled,
               >
                 {sel ? "▶ " : ""}
                 {s.emoji} {s.label}
-                {used ? "  · used" : ""}
+                {used ? `  · ${usedLabel}` : ""}
               </Text>
               <Text style={[styles.statValue, used && styles.statUsed]}>{formatStat(s, card.stats[s.key] ?? 0)}</Text>
               {hot && (

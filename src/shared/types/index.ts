@@ -206,6 +206,15 @@ export type BombAuction = {
     heldMs?: number;                // the holder's hold before tapping (achievements)
     first?: boolean;                // the game's first auction (longer, with a hint)
 };
+// 🧾 One Alley purchase (timer mode). Public: anyone can check the receipts.
+export type AlleyItem = 'betting-ticket' | 'tbc-ticket' | 'wire-revealer' | 'bomb-shield' | 'super-shield' | 'life';
+export type AlleyReceipt = {
+    playerId: string;
+    item: AlleyItem;
+    price: number;   // FP paid (0 = a free first ticket)
+    round: number;
+    at: number;
+};
 export type AuctionRecord = {
     holderId: string;
     loserId: string;
@@ -363,6 +372,7 @@ export type BombGameState = {
     toxicBoom?: boolean;              // toxic bomb blew on an impatient tap
     auction?: BombAuction;            // 🔨 a live auction
     auctionLog?: AuctionRecord[];     // 🔨 this round's settled auctions (replay)
+    alleyReceipts?: AlleyReceipt[];   // 🧾 every Alley purchase this game (public)
     auctionCount?: number;            // 🔨 auctions so far this game
     achievements?: Record<string, AchievementRecord>; // per player, this game
     achFeed?: AchievementUnlock[];    // latest unlocks (toasts on every phone)
@@ -674,7 +684,18 @@ export type QuizBoardRound = {
 // the highest value takes every card in the clash. Last one standing wins.
 // ★ Gold cards: one per player at the deal. A gold card that loses to a
 // normal card gets a Gold Defence: a rematch on a stat its owner picks.
-export type ClashPhase = 'calling' | 'reveal' | 'defending' | 'over';
+// After every call there's an 'answering' beat: the stat is announced, each
+// other player sees their own number and taps CLASH! when ready, then the
+// reveal.
+export type ClashPhase = 'calling' | 'answering' | 'reveal' | 'defending' | 'over';
+export type ClashCall = {
+    stage: 'clash' | 'defence';
+    statKey: string;
+    by: string;                      // the caller (clash) or defender (defence)
+    wildcard?: boolean;
+    auto?: boolean;
+    waitingFor: string[];            // players who still need to tap CLASH!
+};
 export type ClashResult = {
     round: number;
     callerId: string;
@@ -713,6 +734,13 @@ export type ClashGameState = {
     wildcardUsed?: Record<string, boolean>;
     skipsUsed?: Record<string, number>;  // playerId -> clash they used ⏭️ Skip in
     hintsUsed?: Record<string, number>;  // playerId -> clash they used 🔍 Hint in
+    // Stats each player has called and can't call again until they've
+    // called all 10 (then they all unlock). Not used on a gold card.
+    scratched?: Record<string, Record<string, boolean>>;
+    called?: ClashCall;              // set during 'answering'
+    ready?: Record<string, boolean>; // playerId -> tapped CLASH!
+    streak?: { playerId: string; count: number }; // calls in a row by one player
+    passedCall?: { round: number; from: string; to: string; pool: string[] }; // 🎁 the latest pass
     outRound?: Record<string, number>; // playerId -> the round they ran out of cards
     last?: ClashResult;
     gold?: Record<string, boolean>;  // ★ card id -> true

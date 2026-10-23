@@ -8,7 +8,7 @@ import {
   Alert,
   Animated,
 } from "react-native";
-import { Group, BombGameState } from "../../../../shared/types";
+import { Group, BombGameState, AlleyItem } from "../../../../shared/types";
 import {
   purchaseBettingTicket,
   purchaseTbcTicket,
@@ -38,9 +38,19 @@ type Props = {
   onClose: () => void;
 };
 
+// 🧾 The public receipts: everyone's purchases, newest first.
+const ITEM_LABELS: Record<AlleyItem, string> = {
+  "betting-ticket": "🎟️ Back Room Pass",
+  "tbc-ticket": "⚔️ Beat the Rap",
+  "wire-revealer": "👁️ The Snitch",
+  "bomb-shield": "🛡️ Second-hand Shield",
+  "super-shield": "🛡️ Barely-used Shield",
+  life: "❤️ Borrowed Time",
+};
+
 const TAGLINES = [
   "Keep your voice down.",
-  "Nothing here comes with a receipt.",
+  "Everything goes on the receipts.",
   "Cash talks. Everything else walks.",
   "Don't ask where it came from.",
 ];
@@ -78,6 +88,12 @@ function PriceTag({
 export default function BombAlleyScreen({ group, playerId, onClose }: Props) {
   const gameState = group.gameState as BombGameState;
   const [buying, setBuying] = useState(false);
+  const [showReceipts, setShowReceipts] = useState(false);
+  const receipts = [...(gameState.alleyReceipts ?? [])].reverse();
+  const nameOf = (id: string) =>
+    id === playerId
+      ? "You"
+      : [...group.players, ...(group.benchedPlayers ?? [])].find((p) => p.id === id)?.name ?? "Someone";
   const [tagline] = useState(
     () => TAGLINES[Math.floor(Math.random() * TAGLINES.length)],
   );
@@ -307,6 +323,34 @@ export default function BombAlleyScreen({ group, playerId, onClose }: Props) {
         <Text style={styles.stashValue}>⚡ {myFP} FP</Text>
       </View>
 
+      <TouchableOpacity style={styles.receiptsBtn} onPress={() => setShowReceipts((v) => !v)}>
+        <Text style={styles.receiptsBtnText}>
+          {showReceipts ? "← BACK TO THE GOODS" : `🧾 RECEIPTS (${receipts.length}) · who bought what`}
+        </Text>
+      </TouchableOpacity>
+
+      {showReceipts ? (
+        <ScrollView style={styles.shopList} showsVerticalScrollIndicator={false}>
+          {receipts.length === 0 ? (
+            <Text style={styles.receiptEmpty}>Nobody's bought anything yet.</Text>
+          ) : (
+            receipts.map((r, i) => (
+              <View key={`${r.at}-${i}`} style={styles.receiptRow}>
+                <Text style={styles.receiptWho} numberOfLines={1}>
+                  {nameOf(r.playerId)}
+                </Text>
+                <Text style={styles.receiptItem} numberOfLines={1}>
+                  {ITEM_LABELS[r.item] ?? r.item}
+                </Text>
+                <Text style={styles.receiptPrice}>
+                  {r.price > 0 ? `${r.price} FP` : "free"} · R{r.round}
+                </Text>
+              </View>
+            ))
+          )}
+          <Text style={styles.footer}>Everything goes on the receipts. No returns.</Text>
+        </ScrollView>
+      ) : (
       <ScrollView style={styles.shopList} showsVerticalScrollIndicator={false}>
         <View style={styles.crate}>
           <View style={styles.crateIcon}>
@@ -513,8 +557,9 @@ export default function BombAlleyScreen({ group, playerId, onClose }: Props) {
           />
         </View>
 
-        <Text style={styles.footer}>No receipts. No returns.</Text>
+        <Text style={styles.footer}>Everything goes on the receipts. No returns.</Text>
       </ScrollView>
+      )}
     </View>
   );
 }
@@ -665,6 +710,29 @@ const styles = StyleSheet.create({
     letterSpacing: 2,
     marginTop: 4,
   },
+  receiptsBtn: {
+    backgroundColor: "#111A24",
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: "#FFB347",
+    paddingVertical: 10,
+    alignItems: "center",
+    marginBottom: 12,
+  },
+  receiptsBtnText: { color: "#FFB347", fontSize: 12, fontWeight: "900", letterSpacing: 1.5 },
+  receiptRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: "#1F2C3B",
+    borderStyle: "dashed",
+  },
+  receiptWho: { color: "#E8EEF5", fontSize: 13, fontWeight: "800", width: 80 },
+  receiptItem: { color: "#B7C4D3", fontSize: 13, flex: 1 },
+  receiptPrice: { color: "#FFB347", fontSize: 12, fontWeight: "700" },
+  receiptEmpty: { color: "#6F8299", fontSize: 13, textAlign: "center", marginTop: 30 },
   footer: {
     color: "#3E4F63",
     fontSize: 11,

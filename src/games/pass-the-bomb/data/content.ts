@@ -36,6 +36,11 @@ export type EligibilityContext = {
     lastPassedTo?: Record<string, string>;
     wireCutters: string[];
     passCounts: Record<string, number>;
+    // 🛒🎲🔨❤️ public money moves (all optional: older games have none)
+    alleyReceipts?: { playerId: string; price: number; item: string }[];
+    settledBets?: { bettorId: string; status: 'won' | 'lost'; settledRound: number; placedAt: number }[];
+    lastAuction?: { loserId: string; bids: Record<string, number> };
+    lifeBuyers?: string[];
 };
 
 // ── BOMB PERSONALITIES ──────────────────────────────────────────
@@ -927,6 +932,18 @@ export const instructions: Instruction[] = [
         category: 'memory'
     },
 
+    // ── Money moves: answers are on the 🧾 Alley receipts, the bet
+    // results and the auction cards, if you were paying attention ──
+    { id: 'm14', text: '🛒 Pass to whoever has bought something at the Alley.', category: 'memory' },
+    { id: 'm15', text: '🛒 Pass to whoever has spent the most FP at the Alley.', category: 'memory' },
+    { id: 'm16', text: '🛒 Pass to whoever has never bought anything at the Alley.', category: 'memory' },
+    { id: 'm17', text: '🎲 Pass to whoever won a bet most recently.', category: 'memory' },
+    { id: 'm18', text: '🎲 Pass to whoever has won a bet this game.', category: 'memory' },
+    { id: 'm19', text: '🎲 Pass to whoever lost a bet most recently.', category: 'memory' },
+    { id: 'm20', text: "🔨 Pass to whoever got stuck with the bomb at this round's auction.", category: 'memory' },
+    { id: 'm21', text: "🔨 Pass to whoever bid the most at this round's auction.", category: 'memory' },
+    { id: 'm22', text: '❤️ Pass to whoever has bought a life back.', category: 'memory' },
+
 
 
 
@@ -1503,6 +1520,15 @@ export type InstructionAnswerType =
     | 'received-from-holder-last'
     | 'never-cut-wire'
     | 'most-passes-overall'
+    | 'alley-buyer'
+    | 'alley-top-spender'
+    | 'alley-never'
+    | 'bet-won-latest'
+    | 'bet-won-ever'
+    | 'bet-lost-latest'
+    | 'auction-stuck'
+    | 'auction-top-bid'
+    | 'life-buyer'
 
 // Instructions with an objectively deducible correct target.
 // Wrong pass here → clingy penalty.
@@ -1522,6 +1548,15 @@ export const instructionAnswerTypes: Record<string, InstructionAnswerType> = {
     m9: 'received-from-holder-last',
     m11: 'never-cut-wire',
     m13: 'most-passes-overall',
+    m14: 'alley-buyer',
+    m15: 'alley-top-spender',
+    m16: 'alley-never',
+    m17: 'bet-won-latest',
+    m18: 'bet-won-ever',
+    m19: 'bet-lost-latest',
+    m20: 'auction-stuck',
+    m21: 'auction-top-bid',
+    m22: 'life-buyer',
 
 };
 
@@ -1659,10 +1694,60 @@ const resolveRawTargets = (
             return winners.length > 0 ? winners : null;
         }
 
+        // ── money moves: only players still in count as answers ──
+        case 'alley-buyer':
+        case 'alley-top-spender':
+        case 'alley-never': {
+            const others = ctx.activePlayerIds.filter((id) => id !== ctx.holderId);
+            const receipts = ctx.alleyReceipts ?? [];
+            const bought = new Set(receipts.map((r) => r.playerId));
+            if (answerType === 'alley-buyer') return orNull(others.filter((id) => bought.has(id)));
+            if (answerType === 'alley-never') {
+                // Only once someone has shopped (otherwise it's just "anyone").
+                return receipts.length > 0 ? orNull(others.filter((id) => !bought.has(id))) : null;
+            }
+            const spent: Record<string, number> = {};
+            for (const r of receipts) spent[r.playerId] = (spent[r.playerId] ?? 0) + r.price;
+            const top = Math.max(0, ...others.map((id) => spent[id] ?? 0));
+            return top > 0 ? orNull(others.filter((id) => (spent[id] ?? 0) === top)) : null;
+        }
+
+        case 'bet-won-latest':
+        case 'bet-lost-latest':
+        case 'bet-won-ever': {
+            const want = answerType === 'bet-lost-latest' ? 'lost' : 'won';
+            const bets = (ctx.settledBets ?? []).filter(
+                (b) => b.status === want && ctx.activePlayerIds.includes(b.bettorId) && b.bettorId !== ctx.holderId
+            );
+            if (bets.length === 0) return null;
+            if (answerType === 'bet-won-ever') return orNull([...new Set(bets.map((b) => b.bettorId))]);
+            // Most recent = the latest round any of them settled in.
+            const latest = Math.max(...bets.map((b) => b.settledRound));
+            return orNull([...new Set(bets.filter((b) => b.settledRound === latest).map((b) => b.bettorId))]);
+        }
+
+        case 'auction-stuck': {
+            const a = ctx.lastAuction;
+            return a && ctx.activePlayerIds.includes(a.loserId) ? [a.loserId] : null;
+        }
+
+        case 'auction-top-bid': {
+            const a = ctx.lastAuction;
+            if (!a) return null;
+            const bids = Object.entries(a.bids).filter(([id]) => ctx.activePlayerIds.includes(id));
+            const top = Math.max(0, ...bids.map(([, v]) => v));
+            return top > 0 ? orNull(bids.filter(([, v]) => v === top).map(([id]) => id)) : null;
+        }
+
+        case 'life-buyer':
+            return orNull((ctx.lifeBuyers ?? []).filter((id) => ctx.activePlayerIds.includes(id)));
+
         default:
             return null;
     }
 };
+
+const orNull = (ids: string[]): string[] | null => (ids.length > 0 ? ids : null);
 
 // Resolves the correct target set for an answer-typed instruction, with
 // the holder ALWAYS excluded — a holder can never legally pass to

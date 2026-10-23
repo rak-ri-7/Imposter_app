@@ -50,7 +50,7 @@ import {
 import { applyGameEvent, applyRoundEndEvents } from './achievementEngine';
 import { potCapFor, potForHold } from './bombPot';
 import { buildActiveQuiz } from './Fastestfinger';
-import { FUSE_POINTS, applyFusePoints, auctionRefundUpdates, ROUND_WIN_SCORE, GAME_WIN_SCORE_BONUS, RUNNER_UP_SCORE_BONUS, markDisputeOutcome } from './bombHelpers';
+import { FUSE_POINTS, applyFusePoints, auctionRefundUpdates, ROUND_WIN_SCORE, GAME_WIN_SCORE_BONUS, RUNNER_UP_SCORE_BONUS, markDisputeOutcome, addAlleyReceipt } from './bombHelpers';
 import { settleBets, settleWinnerBets } from './betEngine';
 import { FP_PER_POINT } from '../../data/betOdds';
 import { payGhostStipends } from './ghostEconomy';
@@ -163,7 +163,22 @@ const buildEligibilityContext = (
     lastPassedTo: gameState.lastPassedTo,
     wireCutters: gameState.wireCutters ?? [],
     passCounts: gameState.passCounts ?? {},
-
+    alleyReceipts: gameState.alleyReceipts ?? [],
+    settledBets: (gameState.matchBets ?? [])
+        .filter((b) => (b.status === 'won' || b.status === 'lost') && b.settledRound !== undefined)
+        .map((b) => ({
+            bettorId: b.bettorId,
+            status: b.status as 'won' | 'lost',
+            settledRound: b.settledRound!,
+            placedAt: b.placedAt,
+        })),
+    lastAuction: gameState.auctionLog?.length
+        ? {
+              loserId: gameState.auctionLog[gameState.auctionLog.length - 1].loserId,
+              bids: gameState.auctionLog[gameState.auctionLog.length - 1].bids,
+          }
+        : undefined,
+    lifeBuyers: Object.keys(gameState.lifePurchases ?? {}).filter((id) => (gameState.lifePurchases?.[id] ?? 0) > 0),
 });
 
 // Only one call per round gets to advance it — protects the payouts that
@@ -251,6 +266,7 @@ export const purchaseBettingTicket = async (
         if (!alreadyClaimedFree) {
             updates[`gameState.freeBettingClaimed.${playerId}`] = true;
         }
+        addAlleyReceipt(updates, gameState, playerId, 'betting-ticket', price);
 
 
         transaction.update(groupRef, updates);
@@ -292,6 +308,7 @@ export const purchaseTbcTicket = async (
         if (!alreadyClaimedFree) {
             updates[`gameState.freeTbcClaimed.${playerId}`] = true;
         }
+        addAlleyReceipt(updates, gameState, playerId, 'tbc-ticket', price);
 
 
         transaction.update(groupRef, updates);
@@ -330,6 +347,7 @@ export const purchaseWireRevealer = async (
             [`gameState.revealerPurchases.${playerId}`]: bought + 1,
             [`gameState.revealerItems.${playerId}`]: owned,
         };
+        addAlleyReceipt(updates, gameState, playerId, 'wire-revealer', ITEM_PRICES.WIRE_REVEALER);
 
 
         transaction.update(groupRef, updates);
@@ -361,6 +379,7 @@ export const purchaseBombShield = async (
             [`gameState.fusePoints.${playerId}`]: fp - ITEM_PRICES.BOMB_SHIELD,
             [`gameState.shieldItems.${playerId}`]: (gameState.shieldItems?.[playerId] ?? 0) + 1,
         };
+        addAlleyReceipt(updates, gameState, playerId, 'bomb-shield', ITEM_PRICES.BOMB_SHIELD);
 
         transaction.update(groupRef, updates);
         result = { success: true };
