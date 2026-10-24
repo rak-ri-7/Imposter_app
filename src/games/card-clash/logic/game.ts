@@ -42,10 +42,13 @@ export const alivePlayers = (gs: ClashGameState, players: { id: string }[]): str
     players.map((p) => p.id).filter((id) => (gs.piles[id]?.length ?? 0) > 0);
 
 // ── Start ────────────────────────────────────────────────────────────
+export type ClashLength = 'capped' | 'unlimited';
+
 export const startCardClash = async (
     group: Group,
     deck: ClashDeckId,
-    perPlayer: number
+    perPlayer: number,
+    lengthMode: ClashLength = 'capped'
 ): Promise<void> => {
     await runTransaction(db, async (tx) => {
         const groupRef = doc(db, 'groups', group.id);
@@ -75,6 +78,7 @@ export const startCardClash = async (
             hintsUsed: {},
             scratched: {},
             outRound: {},
+            lengthMode,
             gold,
         };
         tx.update(groupRef, { gameState: gs, status: 'playing' });
@@ -186,11 +190,14 @@ const settlePot = (
     return { piles, out, outRound };
 };
 
-// ── Scratch-off: a stat you call is crossed off for you ──────────────
-// You can't call it again until you've called all 10; then they all come
-// back. Calling from a ★ gold card ignores the list and scratches nothing.
-export const scratchedFor = (gs: ClashGameState, playerId: string): string[] =>
-    Object.keys(gs.scratched?.[playerId] ?? {}).filter((k) => gs.scratched?.[playerId]?.[k]);
+// ── Scratch-off: a called stat is crossed off for EVERYONE ───────────
+// The stats left shrink with every clash, in three waves: all 10; when
+// they're gone, a random 5 reopen; when those are gone, the other 5; when
+// those are gone, that clash is the last and most cards wins. So a game is
+// at most 20 scratching calls. Calling from a ★ gold card ignores the list
+// and scratches nothing (as do the Wildcard and the Gold Defence).
+export const scratchedStats = (gs: ClashGameState): string[] =>
+    Object.keys(gs.scratched ?? {}).filter((k) => gs.scratched?.[k] === true);
 
 // ── The caller picks a stat (or 🃏, or time ran out) ─────────────────
 export type CallChoice = { statKey: string } | { wildcard: true } | { auto: true };
@@ -215,7 +222,8 @@ export const callStat = async (
             const deck = DECKS[gs.deck];
             const caller = gs.callerId;
             const goldFree = isGold(gs, gs.piles[caller]?.[0]);
-            const scratched = gs.scratched?.[caller] ?? {};
+            const scratched: Record<string, boolean> = {};
+            for (const k of scratchedStats(gs)) scratched[k] = true;
             const unlocked = deck.stats.filter((s) => goldFree || !scratched[s.key]);
             let statKey: string;
             let wildcard = false;
@@ -266,11 +274,36 @@ export const callStat = async (
                 },
             };
             if (wildcard) updates[`gameState.wildcardUsed.${playerId}`] = true;
-            // Scratch the called stat (all 10 scratched → all back).
+            // Scratch the called stat; when every open stat is gone, the next wave.
             if (!wildcard && !goldFree) {
-                const next = { ...scratched, [statKey]: true };
+                const next: Record<string, boolean> = { ...scratched, [statKey]: true };
                 const allGone = deck.stats.every((s) => next[s.key]);
-                updates[`gameState.scratched.${caller}`] = allGone ? {} : next;
+                const wave = gs.statWave ?? 1;
+                if (!allGone) {
+                    updates['gameState.scratched'] = next;
+                } else if (wave === 1) {
+                    // A random 5 reopen; the other 5 stay crossed off for wave 3.
+                    const order = shuffle(deck.stats.map((s) => s.key));
+                    const reserve = order.slice(5);
+                    updates['gameState.scratched'] = Object.fromEntries(reserve.map((k) => [k, true]));
+                    updates['gameState.statReserve'] = reserve;
+                    updates['gameState.statWave'] = 2;
+                } else if (wave === 2) {
+                    // The other 5 (the ones never reopened) come back.
+                    const reserve = new Set(gs.statReserve ?? []);
+                    updates['gameState.scratched'] = Object.fromEntries(
+                        deck.stats.filter((s) => !reserve.has(s.key)).map((s) => [s.key, true])
+                    );
+                    updates['gameState.statWave'] = 3;
+                } else if (gs.lengthMode === 'unlimited') {
+                    // ♾️ No cap: start the waves over with all 10.
+                    updates['gameState.scratched'] = {};
+                    updates['gameState.statWave'] = 1;
+                    updates['gameState.statReserve'] = deleteField();
+                } else {
+                    updates['gameState.scratched'] = next;
+                    updates['gameState.statsOut'] = true; // this clash is the last
+                }
             }
             tx.update(groupRef, updates);
             result = { success: true };
@@ -540,6 +573,50 @@ export const passCall = async (
     return result;
 };
 
+// ── 🏁 Host calls time: finish in N more clashes ─────────────────────
+// Counts the clash in progress. Only ever shortens an earlier call.
+export const FINISH_OPTIONS = [5, 10] as const;
+
+export const isFinalClash = (gs: ClashGameState): boolean =>
+    !!gs.statsOut || (gs.endAtRound !== undefined && gs.round >= gs.endAtRound);
+
+// Clashes left including the one being played now (null = no finish called).
+export const clashesLeft = (gs: ClashGameState): number | null => {
+    if (gs.endAtRound === undefined) return null;
+    return Math.max(0, gs.endAtRound - gs.round + (gs.phase === 'reveal' ? 0 : 1));
+};
+
+export const finishIn = async (
+    groupId: string,
+    playerId: string,
+    n: number
+): Promise<{ success: boolean; reason?: string }> => {
+    let result: { success: boolean; reason?: string } = { success: false, reason: 'stale' };
+    try {
+        await runTransaction(db, async (tx) => {
+            result = { success: false, reason: 'stale' };
+            const cur = await read(tx, groupId);
+            if (!cur) return;
+            const { gs, data, groupRef } = cur;
+            if (data.hostId !== playerId) {
+                result = { success: false, reason: 'not-host' };
+                return;
+            }
+            if (gs.phase === 'over' || n < 1) return;
+            const endAt = clashesPlayed(gs) + n;
+            if (gs.endAtRound !== undefined && gs.endAtRound <= endAt) {
+                result = { success: false, reason: 'not-shorter' };
+                return;
+            }
+            tx.update(groupRef, { 'gameState.endAtRound': endAt });
+            result = { success: true };
+        });
+    } catch (e) {
+        if (__DEV__) console.warn('[finishIn] transaction failed', e);
+    }
+    return result;
+};
+
 // ── After the reveal: Gold Defence, next clash, or the end ───────────
 // The winner of the clash calls next. `stage` is the reveal being left, so
 // a late tap from a phone still on the first reveal can't skip the defence's.
@@ -563,7 +640,7 @@ export const nextClash = async (
                 return;
             }
             const alive = alivePlayers(gs, data.players);
-            if (alive.length < 2) {
+            if (alive.length < 2 || isFinalClash(gs)) {
                 tx.update(groupRef, { 'gameState.phase': 'over' });
                 return;
             }

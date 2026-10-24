@@ -20,7 +20,7 @@ import {
 import type { ClashGameState, Group } from "../../../shared/types";
 import { cardById, statByKey } from "../data/decks";
 import { formatStat } from "../data/types";
-import { nextClash } from "../logic/game";
+import { isFinalClash, nextClash } from "../logic/game";
 import { timelineFor } from "../logic/timeline";
 import { MiniCard } from "../components/ClashCardView";
 import FlipCard from "../components/FlipCard";
@@ -423,10 +423,16 @@ export default function ClashRevealScreen({ group, gs, playerId }: Props) {
           </View>
         )}
 
+        {landed && isFinalClash(gs) && !last.defenceNext && (
+          <Text style={styles.finalNote}>
+            🏁 {gs.statsOut ? "That was the last stat." : "That was the final clash."} Most cards wins!
+          </Text>
+        )}
+
         {isHost && landed && (
           <TouchableOpacity style={styles.nextBtn} onPress={() => nextClash(group.id, last.round, stage)}>
             <Text style={styles.nextText}>
-              {last.defenceNext ? "To the Gold Defence" : "Next clash"} ({secsLeft}s)
+              {last.defenceNext ? "To the Gold Defence" : isFinalClash(gs) ? "🏁 See who won" : "Next clash"} ({secsLeft}s)
             </Text>
           </TouchableOpacity>
         )}
@@ -459,6 +465,7 @@ const styles = StyleSheet.create({
     elevation: 12,
   },
   badge: { position: "absolute", top: -18, alignSelf: "center", fontSize: 40, zIndex: 20 },
+  finalNote: { color: CC.gold, fontSize: 16, fontWeight: "900", textAlign: "center", fontFamily: SERIF },
   recap: { color: CC.textMuted, fontSize: 12, textAlign: "center" },
   shieldBox: { borderRadius: 16, padding: 14, alignItems: "center", gap: 4, overflow: "hidden" },
   shieldTitle: { color: "#3A2400", fontSize: 22, fontWeight: "900", fontFamily: SERIF, letterSpacing: 1 },

@@ -734,9 +734,15 @@ export type ClashGameState = {
     wildcardUsed?: Record<string, boolean>;
     skipsUsed?: Record<string, number>;  // playerId -> clash they used ⏭️ Skip in
     hintsUsed?: Record<string, number>;  // playerId -> clash they used 🔍 Hint in
-    // Stats each player has called and can't call again until they've
-    // called all 10 (then they all unlock). Not used on a gold card.
-    scratched?: Record<string, Record<string, boolean>>;
+    // Stats already called: nobody can call them again. Waves: all 10, then
+    // a random 5 reopen, then the other 5, then the game ends (most cards
+    // wins). A gold card ignores this.
+    scratched?: Record<string, boolean>;
+    statWave?: 1 | 2 | 3;            // missing = 1
+    statReserve?: string[];          // the 5 held back for wave 3
+    statsOut?: boolean;              // the last stat is called: this clash ends the game
+    lengthMode?: 'capped' | 'unlimited'; // missing = 'capped' (the 10 → 5 → 5 waves)
+    endAtRound?: number;             // 🏁 host called time: the game ends after this clash
     called?: ClashCall;              // set during 'answering'
     ready?: Record<string, boolean>; // playerId -> tapped CLASH!
     streak?: { playerId: string; count: number }; // calls in a row by one player

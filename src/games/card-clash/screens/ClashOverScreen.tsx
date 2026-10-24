@@ -27,7 +27,11 @@ export default function ClashOverScreen({ group, gs, playerId }: Props) {
       <Text style={styles.sub}>
         {gs.endedEarly
           ? `Ended early after ${played} clashes · ranked by cards held, then ★ golds`
-          : `Last one standing after ${played} clashes`}
+          : rows.filter((r) => r.cards > 0).length > 1
+            ? gs.statsOut
+              ? `All the stats are used up after ${played} clashes · ranked by cards held, then ★ golds`
+              : `🏁 Host called time after ${played} clashes · ranked by cards held, then ★ golds`
+            : `Last one standing after ${played} clashes`}
       </Text>
       {short && (
         <Text style={styles.note}>

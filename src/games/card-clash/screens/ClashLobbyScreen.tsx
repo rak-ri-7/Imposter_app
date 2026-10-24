@@ -6,7 +6,7 @@ import { DECKS, DECK_CARDS, cardById } from "../data/decks";
 import { MiniCard } from "../components/ClashCardView";
 import CardBack from "../components/CardBack";
 import type { ClashDeckId } from "../data/types";
-import { DEFAULT_HAND, HAND_SIZES, startCardClash } from "../logic/game";
+import { ClashLength, DEFAULT_HAND, HAND_SIZES, startCardClash } from "../logic/game";
 import { CC, SERIF } from "../theme";
 
 // A showcase card for each deck tile.
@@ -21,7 +21,8 @@ const RULES = [
   "Everyone gets a pile of cards. You only ever see your own top card.",
   "The caller picks one stat from their card and hits CLASH!. Everyone sees the call and their own number, then taps CLASH! when ready. Then all the cards flip.",
   "Highest number wins every card in the clash. The winner calls next.",
-  "✏️ Scratch-off: a stat you call is crossed off for you. Once you've called all 10, they all come back. Calling from a ★ gold card skips this: every stat is open.",
+  "✏️ Scratch-off: every stat that gets called is crossed off for EVERYONE. When all 10 are gone, a random 5 come back; when those are gone, the other 5. In a 20-clash game the game then ends and most cards wins (★ golds break ties); in Unlimited the full 10 come back. Calling from a ★ gold card skips this: every stat is open.",
+  "🏁 The host can call time at any point: the game finishes in 5 or 10 more clashes, then most cards wins.",
   "A tie at the top? A ★ gold card wins it. Otherwise 🎲 the die picks the winner.",
   "★ Everyone starts with one GOLD card. Beat a gold card with a normal one and it gets a ⚡ Gold Defence: its owner picks a new stat and you must win again. Win twice and the gold moves to your card.",
   "Lifelines, once a game each: ⏭️ Skip sends your top card to the bottom of your pile (anyone, before the call). 🔍 Hint, on your call, shows each opponent's continent (countries) or animal group.",
@@ -37,6 +38,7 @@ export default function ClashLobbyScreen({ group, playerId }: Props) {
   const isHost = group.hostId === playerId;
   const [deck, setDeck] = useState<ClashDeckId>("countries");
   const [hand, setHand] = useState<number>(DEFAULT_HAND);
+  const [length, setLength] = useState<ClashLength>("capped");
   const [starting, setStarting] = useState(false);
   const maxHand = Math.floor(DECK_CARDS[deck].length / Math.max(1, group.players.length));
 
@@ -45,7 +47,7 @@ export default function ClashLobbyScreen({ group, playerId }: Props) {
     if (group.players.length < 2) return Alert.alert("Needs at least 2 players");
     setStarting(true);
     try {
-      await startCardClash(group, deck, hand);
+      await startCardClash(group, deck, hand, length);
     } finally {
       setStarting(false);
     }
@@ -110,6 +112,30 @@ export default function ClashLobbyScreen({ group, playerId }: Props) {
       </View>
       <Text style={styles.hint}>More cards = a longer game.</Text>
 
+      <Text style={styles.label}>GAME LENGTH</Text>
+      <View style={styles.row}>
+        {(
+          [
+            ["capped", "⏱ 20 clashes", "10 → 5 → 5 stats, then most cards wins"],
+            ["unlimited", "♾️ Unlimited", "Last one standing; stats keep cycling"],
+          ] as const
+        ).map(([id, title, sub]) => {
+          const on = length === id;
+          return (
+            <TouchableOpacity
+              key={id}
+              style={[styles.lenBtn, on && styles.handBtnOn]}
+              onPress={() => isHost && setLength(id)}
+              disabled={!isHost}
+            >
+              <Text style={[styles.lenTitle, on && styles.handTextOn]}>{title}</Text>
+              <Text style={styles.lenSub}>{sub}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+      <Text style={styles.hint}>Either way, the host can 🏁 finish the game in 5 or 10 more clashes at any time.</Text>
+
       <Text style={styles.label}>HOW IT WORKS</Text>
       <View style={styles.rules}>
         {RULES.map((r, i) => (
@@ -164,6 +190,18 @@ const styles = StyleSheet.create({
   handBtnOn: { borderColor: CC.gold },
   handText: { color: CC.text, fontSize: 20, fontWeight: "900" },
   handTextOn: { color: CC.gold },
+  lenBtn: {
+    flex: 1,
+    backgroundColor: CC.panel,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: CC.line,
+    paddingVertical: 10,
+    paddingHorizontal: 8,
+    alignItems: "center",
+  },
+  lenTitle: { color: CC.text, fontSize: 15, fontWeight: "900" },
+  lenSub: { color: CC.textMuted, fontSize: 11, textAlign: "center", marginTop: 2 },
   hint: { color: CC.textMuted, fontSize: 12, marginTop: 6 },
   rules: { backgroundColor: CC.panel, borderRadius: 14, padding: 14, gap: 6 },
   rule: { color: CC.text, fontSize: 13, lineHeight: 19 },

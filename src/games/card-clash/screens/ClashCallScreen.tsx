@@ -16,11 +16,24 @@ import {
   Animated,
   Easing,
   useWindowDimensions,
+  Modal,
 } from "react-native";
 import type { ClashGameState, Group } from "../../../shared/types";
 import { cardById } from "../data/decks";
 import { prefetchCardPhotos } from "../data/photos";
-import { CALL_MS, PASS_AFTER, callStat, canPassCall, passCall, scratchedFor, skipCard, takeHint } from "../logic/game";
+import {
+  CALL_MS,
+  FINISH_OPTIONS,
+  PASS_AFTER,
+  callStat,
+  canPassCall,
+  clashesLeft,
+  finishIn,
+  passCall,
+  scratchedStats,
+  skipCard,
+  takeHint,
+} from "../logic/game";
 import { DECKS } from "../data/decks";
 import { hintFor, HINT_KIND } from "../data/hints";
 import ClashCardView from "../components/ClashCardView";
@@ -42,9 +55,32 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
   const myPile = gs.piles[playerId] ?? [];
   const myCard = cardById(myPile[0] ?? "");
   const myGold = !!myCard && !!gs.gold?.[myCard.id];
-  // Scratch-off: stats you've called stay crossed out until all 10 are gone.
-  const myScratched = myGold ? [] : scratchedFor(gs, playerId);
+  // Scratch-off: every called stat stays crossed out for everyone until all 10 are gone.
+  const myScratched = myGold ? [] : scratchedStats(gs);
   const statCount = DECKS[gs.deck].stats.length;
+  // Waves: 10 → a random 5 reopen → the other 5 → game over.
+  const wave = gs.statWave ?? 1;
+  const unlimited = gs.lengthMode === "unlimited";
+
+  // 🏁 Host: finish in 5 / 10 more clashes (only ever shortens).
+  const isHost = group.hostId === playerId;
+  const left = clashesLeft(gs);
+  const [finishOpen, setFinishOpen] = useState(false);
+  const callFinish = async (n: number) => {
+    setFinishOpen(false);
+    Vibration.vibrate(40);
+    await finishIn(group.id, playerId, n);
+  };
+  const allOff = scratchedStats(gs).length;
+  const statsLeft = statCount - allOff;
+  const waveNote =
+    wave === 1
+      ? `🔒 ${allOff} of ${statCount} stats gone for everyone · when all ${statCount} are gone, 5 random ones come back`
+      : wave === 2
+        ? `🔁 Second wave · ${statsLeft} of 5 stats left · then the last 5 come back`
+        : unlimited
+          ? `🔁 Third wave · ${statsLeft} of 5 stats left · then all ${statCount} come back`
+          : `⚠️ FINAL 5 · ${statsLeft} stat${statsLeft === 1 ? "" : "s"} left · then most cards wins`;
   const out = gs.piles[playerId] !== undefined && myPile.length === 0;
   const callerName = group.players.find((p) => p.id === gs.callerId)?.name ?? "Someone";
   const nameOf = (id: string) =>
@@ -208,10 +244,26 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <Text style={styles.round}>CLASH {gs.round}</Text>
-          <View style={[styles.timerPill, secsLeft <= 5 && styles.timerUrgent]}>
-            <Text style={styles.timer}>⏱ {secsLeft}s</Text>
+          <View style={styles.headerRight}>
+            {isHost && (left === null || left > 1) && (
+              <TouchableOpacity style={styles.finishBtn} onPress={() => setFinishOpen(true)}>
+                <Text style={styles.finishBtnText}>🏁</Text>
+              </TouchableOpacity>
+            )}
+            <View style={[styles.timerPill, secsLeft <= 5 && styles.timerUrgent]}>
+              <Text style={styles.timer}>⏱ {secsLeft}s</Text>
+            </View>
           </View>
         </View>
+        {left !== null && (
+          <View style={styles.finishBanner}>
+            <Text style={styles.finishBannerText}>
+              {left <= 1
+                ? "🏁 FINAL CLASH · then most cards wins"
+                : `🏁 Host called time · ${left} clashes left (including this one)`}
+            </Text>
+          </View>
+        )}
         <PileBar group={group} gs={gs} playerId={playerId} onChipRect={(pid, r) => (chipRects.current[pid] = r)} />
 
         <View style={[styles.banner, isCaller && styles.bannerMine]}>
@@ -250,11 +302,11 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
             )}
           </View>
         )}
-        {!out && myCard && (myGold || myScratched.length > 0) && (
+        {!out && myCard && (myGold || allOff > 0 || wave > 1) && (
           <Text style={[styles.scratchNote, myGold && styles.scratchGold]}>
             {myGold
               ? "★ Gold card: every stat unlocked, nothing gets scratched"
-              : `🔒 ${myScratched.length} of ${statCount} stats scratched · they all come back once you've called all ${statCount}`}
+              : waveNote}
           </Text>
         )}
 
@@ -379,6 +431,24 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
           </TouchableOpacity>
         </View>
       )}
+      <Modal visible={finishOpen} transparent animationType="fade" onRequestClose={() => setFinishOpen(false)}>
+        <View style={styles.modalBg}>
+          <View style={styles.modalBox}>
+            <Text style={styles.modalTitle}>🏁 Finish the game</Text>
+            <Text style={styles.modalSub}>
+              The game ends after this many more clashes (counting this one). Then most cards wins, ★ golds break ties.
+            </Text>
+            {FINISH_OPTIONS.filter((n) => left === null || n < left).map((n) => (
+              <TouchableOpacity key={n} style={styles.modalBtn} onPress={() => callFinish(n)}>
+                <Text style={styles.modalBtnText}>Finish in {n} clashes</Text>
+              </TouchableOpacity>
+            ))}
+            <TouchableOpacity style={styles.modalCancel} onPress={() => setFinishOpen(false)}>
+              <Text style={styles.modalCancelText}>Keep playing</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
       {deal && <FlyingCards flights={deal} onAllDone={() => setDeal(null)} />}
     </View>
   );
@@ -389,6 +459,19 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingTop: 48, paddingBottom: 40, gap: 12 },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   round: { color: CC.gold, fontSize: 22, fontWeight: "900", fontFamily: SERIF, letterSpacing: 2 },
+  headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
+  finishBtn: { backgroundColor: CC.panel, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1.5, borderColor: CC.gold },
+  finishBtnText: { fontSize: 16 },
+  finishBanner: { backgroundColor: "#3A2A10", borderRadius: 12, borderWidth: 1.5, borderColor: CC.gold, paddingVertical: 8, alignItems: "center" },
+  finishBannerText: { color: CC.gold, fontSize: 13, fontWeight: "900" },
+  modalBg: { flex: 1, backgroundColor: "rgba(0,0,0,0.6)", justifyContent: "center", padding: 24 },
+  modalBox: { backgroundColor: CC.panel, borderRadius: 18, borderWidth: 2, borderColor: CC.gold, padding: 20, gap: 10 },
+  modalTitle: { color: CC.gold, fontSize: 22, fontWeight: "900", textAlign: "center", fontFamily: SERIF },
+  modalSub: { color: CC.textMuted, fontSize: 13, textAlign: "center", lineHeight: 19 },
+  modalBtn: { backgroundColor: CC.gold, borderRadius: 14, paddingVertical: 14, alignItems: "center" },
+  modalBtnText: { color: "#1A0F00", fontSize: 16, fontWeight: "900" },
+  modalCancel: { paddingVertical: 10, alignItems: "center" },
+  modalCancelText: { color: CC.textMuted, fontSize: 14, fontWeight: "700" },
   timerPill: { backgroundColor: CC.panel, borderRadius: 14, paddingHorizontal: 12, paddingVertical: 4 },
   timerUrgent: { backgroundColor: CC.lose },
   timer: { color: CC.text, fontSize: 16, fontWeight: "900" },
