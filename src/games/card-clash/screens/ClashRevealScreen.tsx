@@ -319,6 +319,9 @@ export default function ClashRevealScreen({ group, gs, playerId }: Props) {
           <Text style={styles.statName}>
             {stat?.emoji} {stat?.label.toUpperCase()}
           </Text>
+          {last.counterBy && !isDefence && (
+            <Text style={styles.caller}>🔄 {nameOf(last.counterBy)} counter-called it</Text>
+          )}
         </View>
 
         <View style={styles.grid}>
@@ -414,6 +417,16 @@ export default function ClashRevealScreen({ group, gs, playerId }: Props) {
               🏆 {last.winnerId === playerId ? "You take" : `${nameOf(last.winnerId)} takes`} {potN} cards
               {last.tied ? " (won the roll)" : last.goldTie ? " (★ gold wins a tie)" : ""}
             </Text>
+            {landed && last.penaltyCard && last.counterBy && (
+              <Text style={styles.outText}>
+                🔄 {nameOf(last.counterBy)} lost the counter-call: {last.counterBy === playerId ? "your" : "their"} next card goes too
+              </Text>
+            )}
+            {landed && last.folderId && (
+              <Text style={styles.foldNote}>
+                🏳️ {nameOf(last.folderId)} folded · {last.winnerId === playerId ? "you decide" : `${nameOf(last.winnerId)} decides`} next
+              </Text>
+            )}
             {landed &&
               (last.out ?? []).map((id) => (
                 <Text key={id} style={styles.outText}>
@@ -423,7 +436,7 @@ export default function ClashRevealScreen({ group, gs, playerId }: Props) {
           </View>
         )}
 
-        {landed && isFinalClash(gs) && !last.defenceNext && (
+        {landed && isFinalClash(gs) && !last.defenceNext && !(gs.fold?.round === gs.round && !gs.fold.deciderId) && (
           <Text style={styles.finalNote}>
             🏁 {gs.statsOut ? "That was the last stat." : "That was the final clash."} Most cards wins!
           </Text>
@@ -432,7 +445,14 @@ export default function ClashRevealScreen({ group, gs, playerId }: Props) {
         {isHost && landed && (
           <TouchableOpacity style={styles.nextBtn} onPress={() => nextClash(group.id, last.round, stage)}>
             <Text style={styles.nextText}>
-              {last.defenceNext ? "To the Gold Defence" : isFinalClash(gs) ? "🏁 See who won" : "Next clash"} ({secsLeft}s)
+              {last.defenceNext
+                ? "To the Gold Defence"
+                : gs.fold?.round === gs.round && !gs.fold.deciderId
+                  ? "To the fold"
+                  : isFinalClash(gs)
+                    ? "🏁 See who won"
+                    : "Next clash"}{" "}
+              ({secsLeft}s)
             </Text>
           </TouchableOpacity>
         )}
@@ -465,6 +485,7 @@ const styles = StyleSheet.create({
     elevation: 12,
   },
   badge: { position: "absolute", top: -18, alignSelf: "center", fontSize: 40, zIndex: 20 },
+  foldNote: { color: CC.text, fontSize: 14, fontWeight: "800", textAlign: "center" },
   finalNote: { color: CC.gold, fontSize: 16, fontWeight: "900", textAlign: "center", fontFamily: SERIF },
   recap: { color: CC.textMuted, fontSize: 12, textAlign: "center" },
   shieldBox: { borderRadius: 16, padding: 14, alignItems: "center", gap: 4, overflow: "hidden" },

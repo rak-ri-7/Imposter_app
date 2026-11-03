@@ -22,6 +22,8 @@ const RULES = [
   "The caller picks one stat from their card and hits CLASH!. Everyone sees the call and their own number, then taps CLASH! when ready. Then all the cards flip.",
   "Highest number wins every card in the clash. The winner calls next.",
   "✏️ Scratch-off: every stat that gets called is crossed off for EVERYONE. When all 10 are gone, a random 5 come back; when those are gone, the other 5. In a 20-clash game the game then ends and most cards wins (★ golds break ties); in Unlimited the full 10 come back. Calling from a ★ gold card skips this: every stat is open.",
+  "🔄 Counter-call (once a game): when someone calls a stat, swap it for another open stat. If you don't win that clash, you lose your next card too.",
+  "🏳️ Fold (once a game): give up your card instead of clashing. The winner takes it, or calls your bluff: you pick a new stat and your next card takes them on. They win, they get both; you win, you take theirs.",
   "🏁 The host can call time at any point: the game finishes in 5 or 10 more clashes, then most cards wins.",
   "A tie at the top? A ★ gold card wins it. Otherwise 🎲 the die picks the winner.",
   "★ Everyone starts with one GOLD card. Beat a gold card with a normal one and it gets a ⚡ Gold Defence: its owner picks a new stat and you must win again. Win twice and the gold moves to your card.",

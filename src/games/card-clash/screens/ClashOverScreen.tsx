@@ -3,7 +3,7 @@ import { useState } from "react";
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from "react-native";
 import type { ClashGameState, Group } from "../../../shared/types";
 import { rankMedal } from "../../../shared/utils/ranking";
-import { MIN_CLASHES_FOR_ALL, clashStandings, clashesPlayed, finishCardClash } from "../logic/game";
+import { CLASH_CAP, MIN_CLASHES_FOR_ALL, clashStandings, clashesPlayed, finishCardClash, hostCalledTime } from "../logic/game";
 import { CC, SERIF } from "../theme";
 
 type Props = { group: Group; gs: ClashGameState; playerId: string };
@@ -30,7 +30,9 @@ export default function ClashOverScreen({ group, gs, playerId }: Props) {
           : rows.filter((r) => r.cards > 0).length > 1
             ? gs.statsOut
               ? `All the stats are used up after ${played} clashes · ranked by cards held, then ★ golds`
-              : `🏁 Host called time after ${played} clashes · ranked by cards held, then ★ golds`
+              : hostCalledTime(gs)
+                ? `🏁 Host called time after ${played} clashes · ranked by cards held, then ★ golds`
+                : `⏱ ${CLASH_CAP}-clash limit reached · ranked by cards held, then ★ golds`
             : `Last one standing after ${played} clashes`}
       </Text>
       {short && (

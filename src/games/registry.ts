@@ -3,7 +3,7 @@ import type { GameType } from '../shared/types';
 export type GameMode = 'online' | 'pass-the-phone';
 
 export type GameDefinition = {
-    id: GameType | 'most-likely-to' | 'two-truths-lie';
+    id: GameType;
     name: string;
     emoji: string;
     description: string;
@@ -13,6 +13,15 @@ export type GameDefinition = {
 };
 
 export const games: GameDefinition[] = [
+    {
+        id: 'court-of-thieves',
+        name: 'Court of Thieves',
+        emoji: '⚖️',
+        description: 'Rob the room in a blackout, then cut deals',
+        minPlayers: 4,
+        available: true,
+        modes: ['online'],
+    },
     {
         id: 'imposter',
         name: 'Imposter',
@@ -60,21 +69,12 @@ export const games: GameDefinition[] = [
         modes: ['online'],
     },
     {
-        id: 'most-likely-to',
-        name: 'Most Likely To',
-        emoji: '👥',
-        description: 'Vote who fits the prompt',
-        minPlayers: 3,
-        available: false,
-        modes: ['online', 'pass-the-phone'],
-    },
-    {
-        id: 'two-truths-lie',
-        name: 'Two Truths a Lie',
-        emoji: '😏',
-        description: 'Spot the made-up fact',
-        minPlayers: 3,
-        available: false,
-        modes: ['online', 'pass-the-phone'],
+        id: 'clash-holdem',
+        name: "Clash Hold'em",
+        emoji: '💰',
+        description: 'Bet on your card, stats revealed one by one',
+        minPlayers: 2,
+        available: true,
+        modes: ['online'],
     },
 ];

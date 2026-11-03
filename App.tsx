@@ -15,6 +15,8 @@ import TeamSetupScreen from "./src/shared/screens/TeamSetupScreen";
 import BombFlowScreen from "./src/games/pass-the-bomb/screens/shared/BombFlowScreen";
 import QuizBoardFlowScreen from "./src/games/quiz-board/QuizBoardFlowScreen";
 import ClashFlowScreen from "./src/games/card-clash/ClashFlowScreen";
+import HoldemFlowScreen from "./src/games/clash-holdem/HoldemFlowScreen";
+import CotFlowScreen from "./src/games/court-of-thieves/CotFlowScreen";
 import { preloadSounds } from "./src/shared/audio/sounds";
 
 export type RootStackParamList = {
@@ -30,6 +32,8 @@ export type RootStackParamList = {
   BombFlow: { groupId: string; playerId: string };
   QuizBoardFlow: { groupId: string; playerId: string };
   ClashFlow: { groupId: string; playerId: string };
+  HoldemFlow: { groupId: string; playerId: string };
+  CotFlow: { groupId: string; playerId: string };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -83,6 +87,8 @@ export default function App() {
             component={QuizBoardFlowScreen}
           />
           <Stack.Screen name="ClashFlow" component={ClashFlowScreen} />
+          <Stack.Screen name="HoldemFlow" component={HoldemFlowScreen} />
+          <Stack.Screen name="CotFlow" component={CotFlowScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </PaperProvider>

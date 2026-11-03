@@ -8,7 +8,7 @@ export type Player = {
     isReady: boolean;
 };
 
-export type GameType = 'imposter' | 'stop-the-timer' | 'pass-the-bomb' | 'quiz-board' | 'card-clash';
+export type GameType = 'imposter' | 'stop-the-timer' | 'pass-the-bomb' | 'quiz-board' | 'card-clash' | 'clash-holdem' | 'court-of-thieves';
 
 export type ImposterSettings = {
     imposterCount: number;
@@ -33,6 +33,22 @@ export type Team = {
     color: string;
 };
 
+// 💣 Pass the Bomb: what a group told us about itself before playing
+// (timer mode), so it only gets instructions that make sense for them.
+export type BombCrowd = 'friends' | 'family' | 'couples' | 'colleagues' | 'justmet';
+export type BombSpice = 'wholesome' | 'cheeky' | 'savage';
+export type BombTasteId =
+    | 'cricket' | 'football' | 'bollywood' | 'south' | 'hollywood' | 'kpop' | 'anime'
+    | 'gaming' | 'biggboss' | 'pets' | 'fitness' | 'food' | 'politics' | 'festivals'
+    | 'music' | 'horror';
+export type BombGroupProfile = {
+    crowd: BombCrowd;
+    spice: BombSpice;
+    tastes: BombTasteId[];   // empty = skipped → broad default topics
+    realNames?: boolean;     // false = app names are nicknames → skip name-letter instructions
+    setAt?: number;
+};
+
 export type Group = {
     id: string;
     code: string;
@@ -43,7 +59,7 @@ export type Group = {
     gameScores?: Partial<Record<GameType, Record<string, number>>>;
     currentGame: GameType | 'menu';
     status: GameStatus;
-    gameState: ImposterGameState | TimerGameState | BombGameState | PassGameState | QuizBoardGameState | ClashGameState;
+    gameState: ImposterGameState | TimerGameState | BombGameState | PassGameState | QuizBoardGameState | ClashGameState | HoldemGameState | CotGameState;
     createdAt?: number;
     teams?: Team[];
     teamsEnabled?: boolean;
@@ -60,6 +76,8 @@ export type Group = {
     // Pass the Bomb: achievements this group has ever unlocked.
     achievementCollection?: Record<string, { foundAt: number; foundBy: string }>;
     bombLobby?: { mode: 'timer' | 'pass' | null; passBudget: number; passAsTeams: boolean; hiddenPasses?: boolean; } | null;
+    // Pass the Bomb: the group's setup answers, remembered between games.
+    bombProfile?: BombGroupProfile;
 };
 
 export type ImposterGameState = {
@@ -259,6 +277,8 @@ export type AchievementUnlock = {
 export type RoundQuirk = { variant: string; playerId: string; detail?: QuirkDetail };
 
 export type BombGameState = {
+    // The group's setup answers, copied in when the game started.
+    profile?: BombGroupProfile;
     // Players the host chose to continue without while they were offline:
     // playerId -> their last check-in at that moment (see usePresence).
     awayIgnored?: Record<string, number>;
@@ -687,7 +707,15 @@ export type QuizBoardRound = {
 // After every call there's an 'answering' beat: the stat is announced, each
 // other player sees their own number and taps CLASH! when ready, then the
 // reveal.
-export type ClashPhase = 'calling' | 'answering' | 'reveal' | 'defending' | 'over';
+export type ClashPhase =
+    | 'calling'
+    | 'answering'
+    | 'reveal'
+    | 'defending'
+    | 'fold-decide'                  // 🏳️ the decider accepts the fold or calls the bluff
+    | 'fold-pick'                    // 🏳️ bluff called: the folder picks the side clash's stat
+    | 'fold-result'                  // 🏳️ the side clash, shown
+    | 'over';
 export type ClashCall = {
     stage: 'clash' | 'defence';
     statKey: string;
@@ -695,6 +723,28 @@ export type ClashCall = {
     wildcard?: boolean;
     auto?: boolean;
     waitingFor: string[];            // players who still need to tap CLASH!
+    counterBy?: string;              // 🔄 who counter-called (statKey is theirs now)
+    counterFrom?: string;            // 🔄 the stat they swapped out
+};
+// 🏳️ A fold in progress. The folded card stays on top of the folder's pile
+// (left out of the main clash) until it's settled.
+export type ClashFold = {
+    round: number;
+    folderId: string;
+    card: string;                    // the folded card (folder's top card)
+    deciderId?: string;              // caller (2 players) or the main clash's winner
+    deciderCard?: string;            // the decider's card for a side clash
+    deciderOnTop?: boolean;          // true = that card is still the decider's top card (no main clash)
+    statKey?: string;                // bluff called: the folder's stat
+    auto?: boolean;
+    accepted?: boolean;
+    result?: {
+        winnerId: string;
+        folderNext: string;          // the folder's second card
+        values: Record<string, number>;
+        tied?: boolean;
+        out?: string[];
+    };
 };
 export type ClashResult = {
     round: number;
@@ -713,6 +763,10 @@ export type ClashResult = {
     pot?: Record<string, string>;    // defence: every card at stake (the first clash's plays)
     firstStatKey?: string;           // defence: the stat the first clash was called on
     goldTo?: string;                 // defence: the challenger's card took the gold
+    counterBy?: string;              // 🔄 this clash's stat was a counter-call
+    counterFrom?: string;            // 🔄 the stat it replaced
+    penaltyCard?: string;            // 🔄 the counter-caller lost: this extra card went to the winner
+    folderId?: string;               // 🏳️ sat this clash out (folded)
 };
 export type ClashDefence = {
     defenderId: string;
@@ -751,7 +805,69 @@ export type ClashGameState = {
     last?: ClashResult;
     gold?: Record<string, boolean>;  // ★ card id -> true
     defence?: ClashDefence;          // set from the losing clash until the defence is called
+    counterPenalty?: string;         // 🔄 counter-caller who must pay a card if they don't win (during a defence)
+    fold?: ClashFold;
+    foldsUsed?: Record<string, boolean>;
+    countersUsed?: Record<string, boolean>;
     endedEarly?: boolean;
+    pointsAwarded?: boolean;
+};
+
+// ── 🃏💰 CLASH HOLD'EM ──────────────────────────────────────────────
+// Poker with Clash cards: one hidden card each, stats revealed in three
+// streets (flop, turn, river) with betting between; best card on the final
+// stats takes the pot. See games/clash-holdem/logic/engine.ts.
+export type HoldemMode = 'draw' | 'scratch';
+export type HoldemStreet = 'preflop' | 'flop' | 'turn' | 'river';
+export type HoldemPhase = 'choosing' | 'betting' | 'showdown' | 'over';
+export type HoldemAction = 'check' | 'call' | 'bet' | 'raise' | 'fold' | 'ante' | 'blind' | 'all-in';
+export type HoldemLogEntry = { pid: string; action: HoldemAction; amount: number; street: HoldemStreet };
+export type HoldemPot = { amount: number; eligible: string[]; winners: string[] };
+export type HoldemHandResult = {
+    hand: number;
+    mode: HoldemMode;
+    stats: string[];                              // the final stats
+    cards: Record<string, string>;                // shown at showdown (players still in)
+    crowns?: Record<string, number>;              // draw mode: stats won
+    suddenDeath?: string[];                       // tie-break stats flipped, in order
+    pots: HoldemPot[];
+    noShowdown?: boolean;                         // everyone else folded
+    winnerIds: string[];                          // won the main pot
+    gains: Record<string, number>;                // chips won this hand (gross)
+};
+export type HoldemGameState = {
+    game: 'clash-holdem';
+    deck: 'countries' | 'animals';
+    phase: HoldemPhase;
+    modeSetting: 'choice' | 'draw' | 'scratch';
+    mode?: HoldemMode;
+    hand: number;
+    handsTotal: number;
+    seats: string[];                              // seating order
+    dealerId: string;
+    chips: Record<string, number>;
+    inHand: string[];                             // dealt in this hand
+    folded: Record<string, boolean>;
+    cards: Record<string, string>;                // playerId -> card id (this hand)
+    street: HoldemStreet;
+    stats: string[];                              // the live stats
+    usedStats: string[];                          // every stat shown this hand
+    sdOrder: string[];                            // sudden-death order (fixed at the deal)
+    committed: Record<string, number>;            // chips in the pot this hand, per player
+    streetBet: Record<string, number>;            // chips in on this street
+    currentBet: number;
+    lastRaise: number;                            // the last full bet/raise size (the minimum next raise)
+    acted: Record<string, boolean>;               // acted since the last full raise (only they can't re-raise)
+    sbId?: string;                                // small blind this hand
+    bbId?: string;                                // big blind this hand
+    toAct?: string;
+    seq: number;                                  // bumps on every change of turn/phase
+    log: HoldemLogEntry[];                        // this hand
+    lastStreetChange?: { street: HoldemStreet; removed?: string; added?: string };
+    last?: HoldemHandResult;
+    outHand?: Record<string, number>;             // playerId -> hand they went bust in
+    outStack?: Record<string, number>;            // playerId -> chips they started that hand with (ties)
+    endedEarly?: boolean;                         // host ended it (a hand in progress was called off)
     pointsAwarded?: boolean;
 };
 
@@ -786,5 +902,102 @@ export type QuizBoardGameState = {
     picks: Record<string, { option: number; at: Timestamp | number | null }>;
     money: Record<string, number>;    // this game's rupees per player
     rounds: QuizBoardRound[];
+    pointsAwarded?: boolean;
+};
+
+
+// ── ⚖️ COURT OF THIEVES ─────────────────────────────────────────────
+// Hidden roles + a blackout heist + secret deals. Every purse holds real
+// and fake (counterfeit) rupees; only real rupees count at the end. The
+// Thief's payday is fake. See games/court-of-thieves/logic/engine.ts.
+export type CotRole = 'thief' | 'police' | 'judge' | 'advocate' | 'citizen';
+export type CotMoney = { real: number; fake: number };
+export type CotPhase = 'roles' | 'outage' | 'lights' | 'deals' | 'arrest' | 'trial' | 'verdict' | 'roundEnd' | 'over';
+// Where the Thief is: 'home' (their own seat) or a player's id (at that bag).
+export type CotSpot = string;
+export type CotHeistAction =
+    | { k: 'move'; from: CotSpot; to: CotSpot; mode: 'walk' | 'tiptoe'; at: number; until: number }
+    | { k: 'take'; bag: string; amount: number; at: number; until: number }
+    | { k: 'plant'; bag: string; amount: number; at: number; until: number };
+export type CotOfferKind = 'hush' | 'demand' | 'reveal';
+export type CotOfferStatus = 'open' | 'now' | 'later' | 'refused' | 'failed';
+export type CotMsg = {
+    id: string;
+    from: string;                     // playerId
+    at: number;
+    tpl: string;                      // template id (logic/templates.ts)
+    amount?: number;
+    about?: string;                   // a player the message names
+    offer?: { kind: CotOfferKind; status: CotOfferStatus };
+};
+export type CotThread = {
+    id: string;
+    a: string;                        // started it
+    b: string;                        // received it
+    to: string;                       // how A addressed B: a role ('thief'…), 'witness', or 'player'
+    bKnowsA?: boolean;                // B has learned who A is
+    aKnowsB?: boolean;                // A has learned who B is (true when addressed by name)
+    msgs: CotMsg[];
+};
+export type CotPromise = { from: string; to: string; amount: number; why: string };
+export type CotSpeaker = { id: string; as: 'police' | 'advocate' | 'accused' };
+export type CotTrial = {
+    accused: string;
+    policeId: string;
+    judgeId: string;                  // the Judge, or the Advocate standing in if the Judge is on trial
+    speakers: CotSpeaker[];           // in order; the accused always speaks last
+    turn: number;
+};
+export type CotPayout = { id: string; amount: number; why: string };   // + gained, − lost
+export type CotRoundResult = {
+    round: number;
+    thiefId: string;
+    caught: boolean;                  // red-handed
+    seen: boolean;                    // the thief was visible in the early-lights window
+    witnessIds: string[];
+    stolen: Record<string, number>;   // victim -> rupees taken (net, after the round)
+    planted: Record<string, CotMoney>;// target -> money planted
+    loot: CotMoney;                   // what reached the Thief's purse
+    before: Record<string, number>;   // balances shown before the outage
+    after: Record<string, number>;    // balances shown at lights-on (then after the round)
+    notes: string[];
+    // the court (stage 2)
+    policeId?: string;
+    accused?: string | null;          // null = no arrest
+    judgeId?: string;
+    guilty?: boolean;
+    convicted?: boolean;              // the real Thief, found guilty
+    payouts?: CotPayout[];
+};
+export type CotGameState = {
+    game: 'court-of-thieves';
+    phase: CotPhase;
+    round: number;
+    roundsTotal: number;
+    dealMs: number;
+    seats: string[];                  // seating order round the room (also the colour order)
+    roles: Record<string, CotRole>;   // this round
+    purse: Record<string, CotMoney>;
+    phaseEndsAt?: number;             // server-clock ms when a timed phase ends
+    // the outage
+    outageAt?: number;                // lights go out (server ms)
+    lightsAt?: number;                // lights come back
+    flashes?: number[];               // ⚡ lightning (server ms)
+    witnessIds?: string[];            // early lights, 3 s before lightsAt
+    heist?: CotHeistAction[];
+    // the deal phase
+    threads?: CotThread[];
+    lastSentAt?: Record<string, number>;
+    promises?: CotPromise[];          // "pay on acquittal"
+    supporters?: Record<string, boolean>; // took money from the Thief this round
+    thiefPaid?: Record<string, CotMoney>;  // what each one got from the Thief (paid now)
+    // the court
+    picks?: Record<string, string>;   // everyone's secret suspect ('none' = nobody); only the Police's arrests
+    trial?: CotTrial;
+    roundStartPurse?: Record<string, CotMoney>; // before this round's payday (to undo an abandoned round)
+    last?: CotRoundResult;
+    history?: CotRoundResult[];
+    seq: number;
+    endedEarly?: boolean;
     pointsAwarded?: boolean;
 };

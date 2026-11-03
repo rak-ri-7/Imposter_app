@@ -15,6 +15,11 @@ import { returnToMenu } from "../../shared/firebase/groups";
 import {
   ANSWER_MS,
   CALL_MS,
+  FOLD_DECIDE_MS,
+  FOLD_RESULT_MS,
+  decideFold,
+  finishFold,
+  foldPick,
   alivePlayers,
   callDefence,
   callStat,
@@ -29,6 +34,7 @@ import ClashCallScreen from "./screens/ClashCallScreen";
 import ClashRevealScreen from "./screens/ClashRevealScreen";
 import ClashDefenceScreen from "./screens/ClashDefenceScreen";
 import ClashAnswerScreen from "./screens/ClashAnswerScreen";
+import ClashFoldScreen from "./screens/ClashFoldScreen";
 import ClashOverScreen from "./screens/ClashOverScreen";
 import { CC } from "./theme";
 
@@ -60,7 +66,13 @@ export default function ClashFlowScreen({ navigation, route }: Props) {
   // The calling key includes the caller, so a 🎁 passed call gets a fresh timer.
   const phaseKey = gs
     ? `${gs.phase}:${gs.round}:${
-        gs.phase === "reveal" ? stage : gs.phase === "answering" ? callStage : gs.phase === "calling" ? gs.callerId : ""
+        gs.phase === "reveal"
+          ? stage
+          : gs.phase === "answering"
+            ? `${callStage}:${gs.called?.counterBy ?? ""}`
+            : gs.phase === "calling"
+              ? gs.callerId
+              : ""
       }`
     : "";
   const seenAt = useRef<{ key: string; at: number } | null>(null);
@@ -81,9 +93,13 @@ export default function ClashFlowScreen({ navigation, route }: Props) {
         ? timelineFor(gs.last!).total
         : gs.phase === "answering"
           ? ANSWER_MS
-          : pickerGone
-            ? 0
-            : CALL_MS;
+          : gs.phase === "fold-decide"
+            ? FOLD_DECIDE_MS
+            : gs.phase === "fold-result"
+              ? FOLD_RESULT_MS
+              : pickerGone
+                ? 0
+                : CALL_MS;
     const fireAt = (seenAt.current?.at ?? Date.now()) + wait + (isHost ? 0 : BACKUP_GRACE_MS);
     let lastTry = 0;
     const phase = gs.phase;
@@ -94,6 +110,9 @@ export default function ClashFlowScreen({ navigation, route }: Props) {
       if (phase === "calling") callStat(groupIdRef.current, playerId, round, { auto: true });
       else if (phase === "defending") callDefence(groupIdRef.current, playerId, round, { auto: true });
       else if (phase === "answering") resolveAnswers(groupIdRef.current, round, callStage);
+      else if (phase === "fold-decide") decideFold(groupIdRef.current, playerId, round, "auto");
+      else if (phase === "fold-pick") foldPick(groupIdRef.current, playerId, round, { auto: true });
+      else if (phase === "fold-result") finishFold(groupIdRef.current, round);
       else nextClash(groupIdRef.current, round, stage);
     };
     const t = setInterval(check, 250);
@@ -158,7 +177,16 @@ export default function ClashFlowScreen({ navigation, route }: Props) {
   if (gs.phase === "reveal" && gs.last)
     return <ClashRevealScreen key={`${gs.round}:${stage}`} group={group} gs={gs} playerId={playerId} />;
   if (gs.phase === "answering" && gs.called)
-    return <ClashAnswerScreen key={`${gs.round}:${callStage}`} group={group} gs={gs} playerId={playerId} />;
+    return (
+      <ClashAnswerScreen
+        key={`${gs.round}:${callStage}:${gs.called.counterBy ?? ""}`}
+        group={group}
+        gs={gs}
+        playerId={playerId}
+      />
+    );
+  if ((gs.phase === "fold-decide" || gs.phase === "fold-pick" || gs.phase === "fold-result") && gs.fold)
+    return <ClashFoldScreen key={`${gs.round}:${gs.phase}`} group={group} gs={gs} playerId={playerId} />;
   if (gs.phase === "defending" && gs.defence)
     return <ClashDefenceScreen key={gs.round} group={group} gs={gs} playerId={playerId} />;
   if (gs.phase === "over") return <ClashOverScreen group={group} gs={gs} playerId={playerId} />;

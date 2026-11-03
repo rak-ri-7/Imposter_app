@@ -45,9 +45,8 @@ export default function GameMenuScreen({ navigation, route }: Props) {
   const [showModeModal, setShowModeModal] = useState(false);
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [pendingGameId, setPendingGameId] = useState<GameType | null>(null);
-  const [activeTab, setActiveTab] = useState<"leaderboard" | "players">(
-    "leaderboard",
-  );
+  // The leaderboard and player list open as overlays, leaving the screen to the games.
+  const [sheet, setSheet] = useState<null | "board" | "players">(null);
 
   // Leaderboard slides
   const [slide, setSlide] = useState(0);
@@ -101,6 +100,10 @@ export default function GameMenuScreen({ navigation, route }: Props) {
       navigation.replace("QuizBoardFlow", { groupId, playerId });
     } else if (group?.currentGame === "card-clash") {
       navigation.replace("ClashFlow", { groupId, playerId });
+    } else if (group?.currentGame === "clash-holdem") {
+      navigation.replace("HoldemFlow", { groupId, playerId });
+    } else if (group?.currentGame === "court-of-thieves") {
+      navigation.replace("CotFlow", { groupId, playerId });
     }
   }, [group?.currentGame]);
 
@@ -116,7 +119,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
   }, [navigation, groupId, playerId]);
 
   const onSelectGame = async (
-    gameId: GameType | "most-likely-to" | "two-truths-lie",
+    gameId: GameType,
     available: boolean,
   ) => {
     if (!available) return;
@@ -132,7 +135,9 @@ export default function GameMenuScreen({ navigation, route }: Props) {
       gameId === "stop-the-timer" ||
       gameId === "pass-the-bomb" ||
       gameId === "quiz-board" ||
-      gameId === "card-clash"
+      gameId === "card-clash" ||
+      gameId === "clash-holdem" ||
+      gameId === "court-of-thieves"
     ) {
       // online only — let host pick who's actually playing, then go straight in
       setPendingGameId(gameId);
@@ -183,6 +188,26 @@ export default function GameMenuScreen({ navigation, route }: Props) {
 
   const teamsEnabled =
     group?.teamsEnabled && group.teams && group.teams.length > 0;
+
+  // The slim bar: top three of the session (or teams).
+  const topLine = (() => {
+    const rows = teamsEnabled
+      ? (group.teams ?? []).map((t) => ({
+          name: t.name,
+          pts: t.playerIds.reduce((sum, pid) => sum + (group.scores[pid] || 0), 0),
+        }))
+      : group.players.map((p) => ({
+          name: p.id === playerId ? "You" : p.name,
+          pts: group.scores[p.id] || 0,
+        }));
+    rows.sort((a, b) => b.pts - a.pts);
+    if (rows.every((r) => r.pts === 0)) return "";
+    const ranks = denseRanks(rows.map((r) => r.pts));
+    return rows
+      .slice(0, 3)
+      .map((r, i) => `${rankMedal(ranks[i])} ${r.name} ${r.pts}`)
+      .join("  ·  ");
+  })();
 
   const handleLeave = () => {
     Alert.alert(
@@ -326,167 +351,22 @@ export default function GameMenuScreen({ navigation, route }: Props) {
         </Text>
       </TouchableOpacity>
 
-      <Text style={styles.sectionLabel}>LEADERBOARD</Text>
-      <View style={styles.tabRow}>
-        <TouchableOpacity
-          style={[
-            styles.tabBtn,
-            activeTab === "leaderboard" && styles.tabBtnActive,
-          ]}
-          onPress={() => setActiveTab("leaderboard")}
-        >
-          <Text
-            style={[
-              styles.tabBtnText,
-              activeTab === "leaderboard" && styles.tabBtnTextActive,
-            ]}
-          >
-            🏆 Leaderboard
+      {/* Slim standings bar: the full boards open as overlays */}
+      <View style={styles.standBar}>
+        <TouchableOpacity style={styles.standTop} onPress={() => setSheet("board")} activeOpacity={0.7}>
+          <Text style={styles.standText} numberOfLines={1}>
+            {topLine || "🏆 No points yet"}
           </Text>
         </TouchableOpacity>
-        <TouchableOpacity
-          style={[
-            styles.tabBtn,
-            activeTab === "players" && styles.tabBtnActive,
-          ]}
-          onPress={() => setActiveTab("players")}
-        >
-          <Text
-            style={[
-              styles.tabBtnText,
-              activeTab === "players" && styles.tabBtnTextActive,
-            ]}
-          >
-            👥 Players ({group.players.length})
-          </Text>
-        </TouchableOpacity>
+        <View style={styles.standBtns}>
+          <TouchableOpacity style={styles.standBtn} onPress={() => setSheet("board")}>
+            <Text style={styles.standBtnText}>🏆 Leaderboard</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.standBtn} onPress={() => setSheet("players")}>
+            <Text style={styles.standBtnText}>👥 Players ({group.players.length})</Text>
+          </TouchableOpacity>
+        </View>
       </View>
-
-      {activeTab === "leaderboard" ? (
-        <View>
-          <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.chipRow}
-          >
-            {slides.map((sl, i) => (
-              <TouchableOpacity
-                key={sl.key}
-                style={[styles.chip, i === slideIndex && styles.chipOn]}
-                onPress={() => goToSlide(i)}
-              >
-                <Text style={[styles.chipText, i === slideIndex && styles.chipTextOn]}>
-                  {sl.label}
-                </Text>
-              </TouchableOpacity>
-            ))}
-          </ScrollView>
-          <View
-            style={styles.leaderboardBox}
-            onLayout={(e) => setPageW(e.nativeEvent.layout.width)}
-          >
-            {pageW > 0 && (
-              <ScrollView
-                ref={pager}
-                horizontal
-                pagingEnabled
-                showsHorizontalScrollIndicator={false}
-                onMomentumScrollEnd={(e) => {
-                  const i = Math.round(e.nativeEvent.contentOffset.x / pageW);
-                  if (i !== slideIndex) {
-                    setSlide(i);
-                    if (slides[i]?.key === "alltime" && !allTimeLoading) refreshAllTime();
-                  }
-                }}
-              >
-                {slides.map((sl) => (
-                  <ScrollView
-                    key={sl.key}
-                    style={{ width: pageW }}
-                    contentContainerStyle={styles.page}
-                    nestedScrollEnabled
-                  >
-                    {sl.key === "alltime"
-                      ? renderAllTime()
-                      : renderBoard(
-                          sl.key === "session"
-                            ? (pid) => group.scores[pid] || 0
-                            : (pid) => group.gameScores?.[sl.key as GameType]?.[pid] || 0,
-                        )}
-                  </ScrollView>
-                ))}
-              </ScrollView>
-            )}
-          </View>
-          <View style={styles.dots}>
-            {slides.map((sl, i) => (
-              <View key={sl.key} style={[styles.dot, i === slideIndex && styles.dotOn]} />
-            ))}
-          </View>
-        </View>
-      ) : (
-        <ScrollView style={styles.leaderboard} nestedScrollEnabled>
-          {group.players.map((player) => (
-            <View key={player.id} style={styles.playerMgmtRow}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {player.name.charAt(0).toUpperCase()}
-                </Text>
-              </View>
-              <Text style={styles.leaderName}>
-                {player.name}
-                {player.id === playerId ? " (you)" : ""}
-              </Text>
-              {player.isHost && (
-                <View style={styles.hostBadge}>
-                  <Text style={styles.hostBadgeText}>Host</Text>
-                </View>
-              )}
-              {isHost && player.id !== playerId && (
-                <TouchableOpacity
-                  style={styles.kickBtn}
-                  onPress={() => handleKick(player.id, player.name)}
-                >
-                  <Text style={styles.kickBtnText}>✕</Text>
-                </TouchableOpacity>
-              )}
-            </View>
-          ))}
-        </ScrollView>
-      )}
-      {isHost && (
-        <View style={styles.teamBtnRow}>
-          {teamsEnabled ? (
-            <>
-              <TouchableOpacity
-                style={styles.teamBtn}
-                onPress={() =>
-                  navigation.navigate("TeamSetup", { groupId, playerId })
-                }
-              >
-                <Text style={styles.teamBtnText}>👥 Edit Teams</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.teamBtn, styles.teamBtnOutline]}
-                onPress={async () => {
-                  await dissolveTeams(groupId);
-                }}
-              >
-                <Text style={styles.teamBtnOutlineText}>Dissolve Teams</Text>
-              </TouchableOpacity>
-            </>
-          ) : (
-            <TouchableOpacity
-              style={styles.teamBtn}
-              onPress={() =>
-                navigation.navigate("TeamSetup", { groupId, playerId })
-              }
-            >
-              <Text style={styles.teamBtnText}>👥 Play as Teams</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      )}
 
       <Text style={styles.sectionLabel}>CHOOSE A GAME</Text>
       <FlatList
@@ -538,6 +418,162 @@ export default function GameMenuScreen({ navigation, route }: Props) {
           </Text>
         </View>
       )}
+
+      {/* 🏆 Leaderboard overlay */}
+      <Modal visible={sheet === "board"} transparent animationType="slide" onRequestClose={() => setSheet(null)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.sheetDismiss} activeOpacity={1} onPress={() => setSheet(null)} />
+          <View style={styles.sheet}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>🏆 Leaderboard</Text>
+              <TouchableOpacity onPress={() => setSheet(null)}>
+                <Text style={styles.sheetClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+        <View style={{ flex: 1 }}>
+          <ScrollView
+            horizontal
+            style={{ flexGrow: 0 }}
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.chipRow}
+          >
+            {slides.map((sl, i) => (
+              <TouchableOpacity
+                key={sl.key}
+                style={[styles.chip, i === slideIndex && styles.chipOn]}
+                onPress={() => goToSlide(i)}
+              >
+                <Text style={[styles.chipText, i === slideIndex && styles.chipTextOn]}>
+                  {sl.label}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          <View
+            style={styles.sheetBoard}
+            onLayout={(e) => setPageW(e.nativeEvent.layout.width)}
+          >
+            {pageW > 0 && (
+              <ScrollView
+                ref={pager}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onMomentumScrollEnd={(e) => {
+                  const i = Math.round(e.nativeEvent.contentOffset.x / pageW);
+                  if (i !== slideIndex) {
+                    setSlide(i);
+                    if (slides[i]?.key === "alltime" && !allTimeLoading) refreshAllTime();
+                  }
+                }}
+              >
+                {slides.map((sl) => (
+                  <ScrollView
+                    key={sl.key}
+                    style={{ width: pageW }}
+                    contentContainerStyle={styles.page}
+                    nestedScrollEnabled
+                  >
+                    {sl.key === "alltime"
+                      ? renderAllTime()
+                      : renderBoard(
+                          sl.key === "session"
+                            ? (pid) => group.scores[pid] || 0
+                            : (pid) => group.gameScores?.[sl.key as GameType]?.[pid] || 0,
+                        )}
+                  </ScrollView>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+          <View style={styles.dots}>
+            {slides.map((sl, i) => (
+              <View key={sl.key} style={[styles.dot, i === slideIndex && styles.dotOn]} />
+            ))}
+          </View>
+        </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 👥 Players overlay (host: kick, teams) */}
+      <Modal visible={sheet === "players"} transparent animationType="slide" onRequestClose={() => setSheet(null)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.sheetDismiss} activeOpacity={1} onPress={() => setSheet(null)} />
+          <View style={[styles.sheet, styles.sheetShort]}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>👥 Players ({group.players.length})</Text>
+              <TouchableOpacity onPress={() => setSheet(null)}>
+                <Text style={styles.sheetClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+        <ScrollView style={styles.sheetList}>
+          {group.players.map((player) => (
+            <View key={player.id} style={styles.playerMgmtRow}>
+              <View style={styles.avatar}>
+                <Text style={styles.avatarText}>
+                  {player.name.charAt(0).toUpperCase()}
+                </Text>
+              </View>
+              <Text style={styles.leaderName}>
+                {player.name}
+                {player.id === playerId ? " (you)" : ""}
+              </Text>
+              {player.isHost && (
+                <View style={styles.hostBadge}>
+                  <Text style={styles.hostBadgeText}>Host</Text>
+                </View>
+              )}
+              {isHost && player.id !== playerId && (
+                <TouchableOpacity
+                  style={styles.kickBtn}
+                  onPress={() => handleKick(player.id, player.name)}
+                >
+                  <Text style={styles.kickBtnText}>✕</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ))}
+        </ScrollView>
+      {isHost && (
+        <View style={styles.teamBtnRow}>
+          {teamsEnabled ? (
+            <>
+              <TouchableOpacity
+                style={styles.teamBtn}
+                onPress={() =>
+                  (setSheet(null), navigation.navigate("TeamSetup", { groupId, playerId }))
+                }
+              >
+                <Text style={styles.teamBtnText}>👥 Edit Teams</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.teamBtn, styles.teamBtnOutline]}
+                onPress={async () => {
+                  await dissolveTeams(groupId);
+                }}
+              >
+                <Text style={styles.teamBtnOutlineText}>Dissolve Teams</Text>
+              </TouchableOpacity>
+            </>
+          ) : (
+            <TouchableOpacity
+              style={styles.teamBtn}
+              onPress={() =>
+                (setSheet(null), navigation.navigate("TeamSetup", { groupId, playerId }))
+              }
+            >
+              <Text style={styles.teamBtnText}>👥 Play as Teams</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
+
+          </View>
+        </View>
+      </Modal>
 
       {/* Mode selector modal — only for games that support pass the phone */}
       <Modal
@@ -691,6 +727,57 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#EAEAEE",
     height: 170,
+  },
+  standBar: {
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#EAEAEE",
+    padding: 10,
+    marginBottom: 14,
+    gap: 8,
+  },
+  standTop: { paddingHorizontal: 4 },
+  standText: { color: "#1A1A2E", fontSize: 14, fontWeight: "600", textAlign: "center" },
+  standBtns: { flexDirection: "row", gap: 8 },
+  standBtn: {
+    flex: 1,
+    backgroundColor: "#1A1A2E",
+    borderRadius: 10,
+    paddingVertical: 9,
+    alignItems: "center",
+  },
+  standBtnText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+  sheetDismiss: { flex: 1 },
+  sheet: {
+    height: "85%",
+    backgroundColor: "#F7F7FA",
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    padding: 16,
+    paddingBottom: 28,
+  },
+  sheetShort: { height: "70%" },
+  sheetHandle: { alignSelf: "center", width: 44, height: 5, borderRadius: 3, backgroundColor: "#D6D6DE", marginBottom: 10 },
+  sheetHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
+  sheetTitle: { fontSize: 20, fontWeight: "bold", color: "#1A1A2E" },
+  sheetClose: { fontSize: 20, color: "#888", padding: 4 },
+  sheetBoard: {
+    flex: 1,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#EAEAEE",
+    overflow: "hidden",
+  },
+  sheetList: {
+    flex: 1,
+    backgroundColor: "#fff",
+    borderRadius: 14,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#EAEAEE",
   },
   leaderboardBox: {
     backgroundColor: "#fff",

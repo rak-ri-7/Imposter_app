@@ -23,7 +23,9 @@ import { cardById } from "../data/decks";
 import { prefetchCardPhotos } from "../data/photos";
 import {
   CALL_MS,
+  CLASH_CAP,
   FINISH_OPTIONS,
+  hostCalledTime,
   PASS_AFTER,
   callStat,
   canPassCall,
@@ -56,7 +58,9 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
   const myCard = cardById(myPile[0] ?? "");
   const myGold = !!myCard && !!gs.gold?.[myCard.id];
   // Scratch-off: every called stat stays crossed out for everyone until all 10 are gone.
-  const myScratched = myGold ? [] : scratchedStats(gs);
+  // Same list on every phone; only the CALLER with a gold card gets them all open.
+  const goldUnlock = isCaller && myGold;
+  const myScratched = goldUnlock ? [] : scratchedStats(gs);
   const statCount = DECKS[gs.deck].stats.length;
   // Waves: 10 → a random 5 reopen → the other 5 → game over.
   const wave = gs.statWave ?? 1;
@@ -243,7 +247,10 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
-          <Text style={styles.round}>CLASH {gs.round}</Text>
+          <Text style={styles.round}>
+            CLASH {gs.round}
+            {gs.lengthMode !== "unlimited" ? <Text style={styles.roundOf}> / {CLASH_CAP}</Text> : null}
+          </Text>
           <View style={styles.headerRight}>
             {isHost && (left === null || left > 1) && (
               <TouchableOpacity style={styles.finishBtn} onPress={() => setFinishOpen(true)}>
@@ -255,12 +262,14 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
             </View>
           </View>
         </View>
-        {left !== null && (
+        {left !== null && (hostCalledTime(gs) || left <= 5) && (
           <View style={styles.finishBanner}>
             <Text style={styles.finishBannerText}>
               {left <= 1
                 ? "🏁 FINAL CLASH · then most cards wins"
-                : `🏁 Host called time · ${left} clashes left (including this one)`}
+                : hostCalledTime(gs)
+                  ? `🏁 Host called time · ${left} clashes left (including this one)`
+                  : `⏱ ${left} clashes left (including this one) · then most cards wins`}
             </Text>
           </View>
         )}
@@ -302,10 +311,10 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
             )}
           </View>
         )}
-        {!out && myCard && (myGold || allOff > 0 || wave > 1) && (
-          <Text style={[styles.scratchNote, myGold && styles.scratchGold]}>
-            {myGold
-              ? "★ Gold card: every stat unlocked, nothing gets scratched"
+        {!out && myCard && (goldUnlock || allOff > 0 || wave > 1) && (
+          <Text style={[styles.scratchNote, goldUnlock && styles.scratchGold]}>
+            {goldUnlock
+              ? "★ Your gold card: every stat unlocked for this call, nothing gets scratched"
               : waveNote}
           </Text>
         )}
@@ -459,6 +468,7 @@ const styles = StyleSheet.create({
   content: { padding: 16, paddingTop: 48, paddingBottom: 40, gap: 12 },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   round: { color: CC.gold, fontSize: 22, fontWeight: "900", fontFamily: SERIF, letterSpacing: 2 },
+  roundOf: { color: CC.textMuted, fontSize: 15 },
   headerRight: { flexDirection: "row", alignItems: "center", gap: 8 },
   finishBtn: { backgroundColor: CC.panel, borderRadius: 14, paddingHorizontal: 10, paddingVertical: 4, borderWidth: 1.5, borderColor: CC.gold },
   finishBtnText: { fontSize: 16 },

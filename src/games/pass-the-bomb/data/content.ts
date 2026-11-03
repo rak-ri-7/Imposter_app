@@ -1,3 +1,5 @@
+import type { BombCrowd, BombGroupProfile, BombSpice, BombTasteId } from '../../../shared/types';
+
 
 
 export type BombPersonality = {
@@ -8,12 +10,123 @@ export type BombPersonality = {
     effect: string;
 };
 
+// ── GROUP FIT ───────────────────────────────────────────────────
+// Every instruction says what it assumes about the group, so a game only
+// deals instructions that make sense for the people actually playing.
+//   spice:  none = fine for anyone · 'cheeky' · 'savage' (No mercy only)
+//   needs:  'knows'      players know each other's personalities
+//           'close'      private-life facts (birthdays, snoring, 3AM calls)
+//           'names'      uses the letters of real names
+//           'notCouples' pointless when everyone is a couple
+//   tastes: only if the group is into one of these (see TASTES)
+//   kind:   drives how often it comes up (see KIND_WEIGHT)
+export type InstructionSpice = 'cheeky' | 'savage';
+export type InstructionNeed = 'knows' | 'close' | 'names' | 'notCouples';
+export type InstructionKind =
+    | 'vote'      // the whole room points on 3
+    | 'race'      // everyone plays, slowest / first slip-up gets it
+    | 'choice'    // Truth or Dare: holder picks one of two
+    | 'dare'      // pay to choose: perform while the clock runs
+    | 'confess'   // never have I ever
+    | 'story'     // shared history (close groups)
+    | 'taste'     // built on the group's tastes
+    | 'wholesome'
+    | 'revenge';  // only once there is history in this game
+
 export type Instruction = {
     id: string;
     text: string;
     category: 'observation' | 'social' | 'judgement' | 'memory' | 'chaos';
+    kind?: InstructionKind;
+    spice?: InstructionSpice;
+    needs?: InstructionNeed[];
+    tastes?: TasteId[];
     fallback?: keyof typeof fallbacks;
     fallbackText?: string; // the fallback with its [TOKENS] filled in, set when an instruction is picked
+};
+
+// ── GROUP PROFILE (answered before the game; types live in shared/types) ──
+export type GroupCrowd = BombCrowd;
+export type GroupSpice = BombSpice;
+export type TasteId = BombTasteId;
+export type GroupProfile = BombGroupProfile;
+
+// label: "a fan of [TOPIC]" · thing: "name a [TOPIC_THING]"
+export const TASTES: Record<TasteId, { label: string; thing: string; emoji: string }> = {
+    cricket: { label: 'cricket', thing: 'cricketer', emoji: '🏏' },
+    football: { label: 'football', thing: 'footballer', emoji: '⚽' },
+    bollywood: { label: 'Bollywood', thing: 'Bollywood movie', emoji: '🎬' },
+    south: { label: 'South Indian movies', thing: 'South Indian movie', emoji: '🎥' },
+    hollywood: { label: 'Hollywood and Netflix', thing: 'Hollywood movie or Netflix show', emoji: '🍿' },
+    kpop: { label: 'K-pop and K-dramas', thing: 'K-pop group or K-drama', emoji: '💜' },
+    anime: { label: 'anime', thing: 'anime', emoji: '🍥' },
+    gaming: { label: 'gaming', thing: 'video game', emoji: '🎮' },
+    biggboss: { label: 'Bigg Boss', thing: 'Bigg Boss contestant', emoji: '📺' },
+    pets: { label: 'pets', thing: 'dog breed', emoji: '🐶' },
+    fitness: { label: 'fitness', thing: 'exercise', emoji: '💪' },
+    food: { label: 'food', thing: 'dish', emoji: '🍕' },
+    politics: { label: 'politics', thing: 'politician', emoji: '🗳️' },
+    festivals: { label: 'festivals and devotion', thing: 'festival', emoji: '🙏' },
+    music: { label: 'music', thing: 'singer', emoji: '🎵' },
+    horror: { label: 'horror movies', thing: 'horror movie', emoji: '👻' },
+};
+
+// Until a group answers the setup questions: broad topics most groups can play.
+export const DEFAULT_TASTES: TasteId[] = ['cricket', 'football', 'bollywood', 'hollywood', 'food', 'gaming', 'music', 'horror', 'pets'];
+
+// Used until the setup questions exist (and for groups that skip them).
+export const DEFAULT_GROUP_PROFILE: GroupProfile = { crowd: 'friends', spice: 'cheeky', tastes: [] };
+
+// Escalation: spicier instructions unlock as the night warms up.
+export const SPICE_FROM_ROUND: Record<InstructionSpice, number> = { cheeky: 2, savage: 3 };
+const SPICE_RANK: Record<GroupSpice | InstructionSpice, number> = { wholesome: 0, cheeky: 1, savage: 2 };
+
+// Weighting: the loud, whole-room moments come up more often.
+export const KIND_WEIGHT: Record<InstructionKind | 'plain', number> = {
+    vote: 3,
+    race: 3,
+    choice: 2,
+    dare: 2,
+    confess: 2,
+    story: 2,
+    taste: 2,
+    wholesome: 1,
+    revenge: 1,
+    plain: 1,
+};
+
+const groupTastes = (p: GroupProfile): TasteId[] => (p.tastes.length > 0 ? p.tastes : DEFAULT_TASTES);
+
+// How many instructions this group can ever get (for the setup's
+// "N instructions picked for your group").
+export const poolSizeFor = (p: GroupProfile): number =>
+    instructions.filter((i) => fitsGroup(i, p, 99)).length;
+
+// Does this instruction suit this group, this round?
+export const fitsGroup = (i: Instruction, p: GroupProfile, roundNumber: number): boolean => {
+    if (i.spice) {
+        if (SPICE_RANK[i.spice] > SPICE_RANK[p.spice]) return false;
+        if (roundNumber < SPICE_FROM_ROUND[i.spice]) return false;
+    }
+    for (const need of i.needs ?? []) {
+        if (need === 'knows' && p.crowd === 'justmet') return false;
+        if (need === 'close' && (p.crowd === 'colleagues' || p.crowd === 'justmet')) return false;
+        if (need === 'names' && p.realNames === false) return false;
+        if (need === 'notCouples' && p.crowd === 'couples') return false;
+    }
+    if (i.tastes?.length) {
+        const t = groupTastes(p);
+        if (!i.tastes.some((x) => t.includes(x))) return false;
+    }
+    return true;
+};
+
+// [TOPIC] / [TOPIC_THING] share one pick of the group's tastes.
+const fillTopic = (texts: string[], p: GroupProfile): string[] => {
+    if (!texts.some((t) => t.includes('[TOPIC'))) return texts;
+    const pool = groupTastes(p);
+    const t = TASTES[pool[Math.floor(Math.random() * pool.length)]];
+    return texts.map((x) => x.split('[TOPIC_THING]').join(t.thing).split('[TOPIC]').join(t.label));
 };
 
 
@@ -41,6 +154,8 @@ export type EligibilityContext = {
     settledBets?: { bettorId: string; status: 'won' | 'lost'; settledRound: number; placedAt: number }[];
     lastAuction?: { loserId: string; bids: Record<string, number> };
     lifeBuyers?: string[];
+    // 👥 what the group told us before the game (DEFAULT_GROUP_PROFILE if not asked)
+    profile?: GroupProfile;
 };
 
 // ── BOMB PERSONALITIES ──────────────────────────────────────────
@@ -252,7 +367,29 @@ export const fallbacks = {
     memoryAnyone:
         'If nobody qualifies, pass the bomb to anyone you want.',
 
-    rememberBirthday: 'If no one qualifies, say any player\'s birthday out loud and pass the bomb to them.'
+    rememberBirthday: 'If no one qualifies, say any player\'s birthday out loud and pass the bomb to them.',
+
+    // ── PARTY ─────────────────────────────────────────────────
+
+    voteTie: 'If it\'s a tie, the tied players decide between themselves. If it lands on you, pass to the runner-up. If nobody fits, pass to anyone.',
+
+    nobodyConfesses: 'If nobody raises a hand, or everybody does, pass to whoever looks the most guilty.',
+
+    refuseDare: 'Won\'t do it? Then you lose the choice: pass to the person on your right.',
+
+    refuseBoth: 'Won\'t do either? Then the group chooses who gets the bomb.',
+
+    raceFreeze: 'If nobody slips up in 10 seconds, pass to whoever hesitated the longest.',
+
+    sameTime: 'Too close to call? The slowest two decide between themselves.',
+
+    nobodyKnows: 'If nobody names it in 5 seconds, pass to whoever you think secretly knew.',
+
+    storyTime: 'If nobody fits, pass to whoever you have the best memory with.',
+
+    noHistory: 'If nobody fits yet, pass to whoever you trust the least right now.',
+
+    topicNobody: 'If nobody here is into it, pass to whoever would pretend to be the most.',
 
 } as const;
 
@@ -276,11 +413,6 @@ export const fallbacks = {
 
 export const dynamicOptions: Record<string, string[]> = {
 
-    '[GENRE]': [
-        'Rock',
-        'Bollywood',
-        'K-Pop',
-    ],
 
     '[COLOUR]': [
         'red',
@@ -362,11 +494,6 @@ export const dynamicOptions: Record<string, string[]> = {
         'consonant',
     ],
 
-    // Plural
-    '[LETTER_TYPES]': [
-        'vowels',
-        'consonants',
-    ],
 
     '[PARITY]': [
         'odd',
@@ -389,14 +516,11 @@ export const dynamicOptions: Record<string, string[]> = {
         'glasses',
         'slippers',
         'earphones',
-        'nose ring',
         'earring',
     ],
 
     '[ACCESSORY_2]': [
         'rings or jewellery',
-        'makeup',
-        'lipstick',
         'a bracelet',
         'a necklace',
         'a watch',
@@ -407,16 +531,6 @@ export const dynamicOptions: Record<string, string[]> = {
         'single',
     ],
 
-    '[INTEREST]': [
-        'sports',
-        'horror movies',
-        'Bigg Boss',
-        'cricket',
-        'football',
-        'romance movies',
-        'cooking shows',
-        'politics',
-    ],
 
     '[SHORT_VIDEO_APP]': [
         'Instagram Reels',
@@ -453,10 +567,6 @@ export const dynamicOptions: Record<string, string[]> = {
         'hardest',
     ],
 
-    '[QUANTITY_REL]': [
-        'more',
-        'fewer',
-    ],
 
     '[QUANTITY]': [
         'most',
@@ -546,14 +656,63 @@ export const dynamicOptions: Record<string, string[]> = {
         'without counting yourself',
         'excluding yourself'
     ],
-    '[LETTER_COUNT]': ['no vowels', 'exactly 1 vowel', 'exactly 2 vowels', 'no consonants', 'exactly 1 consonant', 'exactly 2 consonants'],
 
     '[TASKS]':
         ['fold their hands',
             'tell their names',
             'cough',
 
-        ]
+        ],
+
+    // ── PARTY instructions: outcomes and content vary, so repeats can't be dodged ──
+    '[LIKELY]': ['most likely', 'least likely'],
+    '[VOTE_RESULT]': ['Most fingers gets the bomb.', 'Pass to someone nobody pointed at.', 'Whoever gets the most fingers picks who gets the bomb.'],
+    '[HAND_RESULT]': ['Pass to one of them.', 'Pass to anyone who kept their hand down.'],
+    '[TRUTH_RESULT]': ['Pass to them.', 'Pass to anyone but them.'],
+    '[WHOLESOME_RESULT]': ['then pass to them', 'then pass to anyone except them'],
+    '[IMPRESSION_RESULT]': ['Whoever it is gets the bomb.', 'First to guess who it is gets the bomb.', 'First to guess who it is picks who gets the bomb.'],
+    '[SLOW_RESULT]': ['Last one to do it gets the bomb.', 'First one to do it picks who gets the bomb.'],
+    '[RACE_RESULT]': ['gets the bomb', 'picks who gets the bomb'],
+    '[SONG_KIND]': ['Bollywood', 'sad', 'romantic', 'wedding', 'cartoon theme', 'devotional'],
+    '[SOUND]': ['villain laugh', 'baby cry', 'crow impression', 'auto-rickshaw horn', 'TV-serial dramatic gasp', 'pressure cooker whistle'],
+    '[VOICE]': ['news anchor', 'cricket commentator', 'wedding DJ', 'robot', 'Bollywood villain', 'strict teacher'],
+    '[REPS]': ['5', '10'],
+    '[EXERCISE]': ['squats', 'jumping jacks', 'spins on the spot'],
+    '[DESCRIBES]': ['best', 'least'],
+    '[FEW]': ['2', '3'],
+    '[GALLERY]': ['last photo', 'last screenshot', '10th most recent photo'],
+    '[PHONE_STAT]': ['screen time for today', 'most-used app this week', 'last 3 calls'],
+    '[APP_KIND]': ['most embarrassing app', 'most-used app', 'oldest app'],
+    '[LAST_MESSAGE]': ['last sent message', 'last message from your mom', 'last message in your family group'],
+    '[SEARCH]': ['Google search', 'YouTube search', 'Instagram search'],
+    '[SECONDS]': ['3', '5'],
+    '[HELP]': ['hide a body', 'fake an alibi', 'get out of jail'],
+    '[LEND]': ['money', 'your phone', 'your bike'],
+    '[CHAIN_TOPIC]': ['country', 'Indian city', 'fruit', 'car brand', 'animal', 'sweet'],
+    '[DIGIT]': ['3', '4', '7'],
+    '[BODY_PART]': ['nose', 'left ear', 'head', 'right knee', 'elbow'],
+    '[MOVE]': ['move', 'laugh', 'speak', 'blink'],
+    '[POSE]': ['stand up', 'raise both hands', 'put a finger on your nose', 'cross your arms'],
+    '[RHYME]': ['cat', 'day', 'go', 'ring', 'me'],
+    '[MEMORY_KIND]': ['most embarrassing moment', 'funniest moment', 'biggest adventure', 'worst trip'],
+    '[OWED]': ['money', 'a favour', 'an apology', 'a treat'],
+    '[NEWS]': ['big news', 'bad news', 'juicy gossip'],
+    '[STORY_KIND]': ['best', 'most embarrassing', 'funniest'],
+    '[WORST]': ['worst', 'most dramatic', 'most broke'],
+    '[SECRET]': ['darkest secret', 'most embarrassing secret', 'secret crush'],
+    '[JOURNEY]': ['long train journey', 'road trip', 'long flight', 'power cut'],
+    '[CONTEST]': ['quiz', 'dance battle', 'game of antakshari', 'treasure hunt'],
+    '[FEATURE]': ['laugh', 'smile', 'handwriting', 'voice'],
+    '[ROLE]': ['teacher', 'doctor', 'lawyer', 'wedding planner', 'prime minister'],
+    '[STEAL]': ['style', 'shoes', 'confidence', 'phone'],
+    '[NEED]': ['cheering up', 'advice', 'money', 'a ride at 2AM'],
+    '[TRUST_TASK]': ['cook for your wedding', 'pick your outfit', 'plan your birthday', 'look after your pet'],
+    '[DEAL]': ['pass it back to you next time', 'never pass it to you again'],
+    '[ALLY]': ['target', 'protect'],
+    '[LAUGH]': ['loudest', 'longest'],
+    '[EVER_NEVER]': ['never', 'most often'],
+    '[ARGUE]': ['start an argument about', 'defend to the death'],
+    '[WIN_LOSE]': ['win', 'lose'],
 };
 
 
@@ -689,12 +848,14 @@ export const instructions: Instruction[] = [
         id: 's3',
         text: 'Pass to the person you have known the longest.',
         category: 'social',
+        needs: ['knows'],
     },
 
     {
         id: 's4',
         text: '[OTHER_PLAYERS], pass to the person you think is most likely to [FIRST_LAST] go to bed tonight.',
         category: 'social',
+        needs: ['knows'],
     },
 
     {
@@ -707,6 +868,8 @@ export const instructions: Instruction[] = [
         id: 's6',
         text: 'Pass to whoever you think is the [QUALITY] liar in the group.',
         category: 'social',
+        spice: 'cheeky',
+        needs: ['knows'],
         fallback: 'tellALie'
     },
 
@@ -727,6 +890,7 @@ export const instructions: Instruction[] = [
         id: 's9',
         text: 'Pass to whoever you think has the [QUANTITY] number of unread messages on their phone [OTHER_PLAYERS].',
         category: 'social',
+        needs: ['knows'],
     },
 
     {
@@ -745,6 +909,7 @@ export const instructions: Instruction[] = [
         id: 's12',
         text: 'Pass to whoever you think is the [QUALITY] at keeping secrets [OTHER_PLAYERS].',
         category: 'social',
+        needs: ['knows'],
         fallback: 'cannotDecideForLife'
     },
 
@@ -752,6 +917,7 @@ export const instructions: Instruction[] = [
         id: 's13',
         text: 'Pass to the person you would trust the [QUANTITY] with your phone password.',
         category: 'social',
+        needs: ['close'],
         fallback: 'cannotDecideForLife'
     },
 
@@ -759,42 +925,49 @@ export const instructions: Instruction[] = [
         id: 's14',
         text: 'Pass to the person who is the most likely to call you at 3AM in an emergency.',
         category: 'social',
+        needs: ['close'],
     },
 
     {
         id: 's15',
         text: 'Pass to the person you are most likely to call in an emergency.',
         category: 'social',
+        needs: ['close'],
     },
 
     {
         id: 's16',
         text: 'Pass to the person who is [DIFFICULTY] to surprise [OTHER_PLAYERS].',
         category: 'social',
+        needs: ['knows'],
     },
 
     {
         id: 's17',
         text: 'Pass to whoever gives the [QUALITY] advice [OTHER_PLAYERS].',
         category: 'social',
+        needs: ['knows'],
     },
 
     {
         id: 's18',
         text: 'Pass to whoever always arrives [WAITING_TIME] to gatherings [OTHER_PLAYERS].',
         category: 'social',
+        needs: ['knows'],
     },
 
     {
         id: 's19',
         text: '[OTHER_PLAYERS], pass to the person who overthinks things the [QUANTITY] in the group.',
         category: 'social',
+        needs: ['knows'],
     },
 
     {
         id: 's20',
         text: 'Pass to the person who remembers everyone\'s birthday [OTHER_PLAYERS].',
         category: 'social',
+        needs: ['close'],
         fallback: 'rememberBirthday'
     },
 
@@ -802,12 +975,14 @@ export const instructions: Instruction[] = [
         id: 's21',
         text: 'Pass to whoever texts back the [SPEED] [OTHER_PLAYERS].',
         category: 'social',
+        needs: ['knows'],
     },
 
     {
         id: 's22',
         text: 'Pass to whoever you would trust to plan a trip.',
         category: 'social',
+        needs: ['knows'],
     },
 
     {
@@ -826,30 +1001,35 @@ export const instructions: Instruction[] = [
         id: 's25',
         text: 'Pass to whoever gives the [QUALITY] compliments.',
         category: 'social',
+        needs: ['knows'],
     },
 
     {
         id: 's26',
         text: '[OTHER_PLAYERS], pass to the player whose birthday is coming up next.',
         category: 'social',
+        needs: ['close'],
     },
 
     {
         id: 's27',
         text: '[OTHER_PLAYERS], pass to the player whose birthday was most recent.',
         category: 'social',
+        needs: ['close'],
     },
 
     {
         id: 's28',
         text: 'Pass to someone whose birthday is [PROXIMITY] yours.',
         category: 'social',
+        needs: ['close'],
     },
 
     {
         id: 's29',
         text: 'Pass to someone whose birthday was last celebrated [OTHER_PLAYERS].',
         category: 'social',
+        needs: ['close'],
         fallback: 'rememberBirthday'
     },
 
@@ -962,6 +1142,7 @@ export const instructions: Instruction[] = [
         id: 'j2',
         text: 'Pass to whoever you think is the [QUANTITY] likely to lie about their age [OTHER_PLAYERS].',
         category: 'judgement',
+        spice: 'cheeky',
     },
 
     {
@@ -1006,6 +1187,7 @@ export const instructions: Instruction[] = [
         id: 'j10',
         text: 'Pass to whoever you think would win an argument even when they are completely wrong',
         category: 'judgement',
+        needs: ['knows'],
         fallback: 'cantDecide'
     },
 
@@ -1025,6 +1207,7 @@ export const instructions: Instruction[] = [
         id: 'j13',
         text: 'Pass to the person you think overreacts the [QUANTITY]',
         category: 'judgement',
+        needs: ['knows'],
     },
 
     {
@@ -1069,12 +1252,14 @@ export const instructions: Instruction[] = [
         id: 'j20',
         text: 'Pass to whoever you think would betray you for ₹500',
         category: 'judgement',
+        spice: 'savage',
     },
 
     {
         id: 'j21',
         text: 'Pass to whoever you think could talk their way out of getting arrested',
         category: 'judgement',
+        spice: 'savage',
         fallback: 'arrested'
     },
 
@@ -1082,6 +1267,7 @@ export const instructions: Instruction[] = [
         id: 'j22',
         text: 'Pass to whoever you think would be the [DIFFICULTY] person to scam',
         category: 'judgement',
+        spice: 'cheeky',
         fallback: 'canScam'
     },
 
@@ -1089,6 +1275,7 @@ export const instructions: Instruction[] = [
         id: 'j23',
         text: 'Pass to whoever you think would be the [DIFFICULTY] person to read',
         category: 'judgement',
+        needs: ['knows'],
         fallback: 'nameFallback'
     },
 
@@ -1103,6 +1290,7 @@ export const instructions: Instruction[] = [
         id: 'j25',
         text: 'Pass to someone whose [FIRST_LAST] letter in their name is a [LETTER_TYPE] [OTHER_PLAYERS]',
         category: 'judgement',
+        needs: ['names'],
         fallback: 'nameFallback',
     },
 
@@ -1110,6 +1298,7 @@ export const instructions: Instruction[] = [
         id: 'j26',
         text: 'Pass to someone whose first letter in their name is [FIRST_ALPHABET] [OTHER_PLAYERS]',
         category: 'judgement',
+        needs: ['names'],
         fallback: 'nameFallback',
     },
 
@@ -1117,31 +1306,14 @@ export const instructions: Instruction[] = [
         id: 'j27',
         text: 'Pass to someone whose last letter in their name is [LAST_ALPHABET] [OTHER_PLAYERS]',
         category: 'judgement',
+        needs: ['names'],
         fallback: 'nameFallback',
     },
 
 
 
-    {
-        id: 'j28',
-        text: 'Pass to someone whose name has an [PARITY] number of letters [OTHER_PLAYERS]',
-        category: 'judgement',
-        fallback: 'nameFallback',
-    },
 
-    {
-        id: 'j29',
-        text: 'Pass to someone whose name contains an [PARITY] number of [LETTER_TYPES] [OTHER_PLAYERS]',
-        category: 'judgement',
-        fallback: 'nameFallback',
-    },
 
-    {
-        id: 'j30',
-        text: 'Pass to someone whose name has [QUANTITY_REL] vowels than consonants [OTHER_PLAYERS]',
-        category: 'judgement',
-        fallback: 'hostDefusal',
-    },
 
     {
         id: 'j31',
@@ -1150,12 +1322,6 @@ export const instructions: Instruction[] = [
         fallback: 'orderFallback',
     },
 
-    {
-        id: 'j32',
-        text: 'Pass to someone whose name contains [LETTER_COUNT] [OTHER_PLAYERS]',
-        category: 'judgement',
-        fallback: 'nameFallback',
-    },
 
     {
         id: 'j33',
@@ -1200,19 +1366,23 @@ export const instructions: Instruction[] = [
         id: 'c5',
         text: 'Pass to the biggest [PERSONA] in the group [OTHER_PLAYERS]',
         category: 'chaos',
+        needs: ['knows'],
     },
 
     {
         id: 'c6',
         text: 'Pass to someone who is [RELATIONSHIP_STATUS] [OTHER_PLAYERS]',
         category: 'chaos',
+        spice: 'cheeky',
+        needs: ['notCouples'],
         fallback: 'likelyChangeStatus',
     },
 
     {
         id: 'c7',
-        text: 'Pass to someone who does not like [INTEREST] [OTHER_PLAYERS]',
+        text: 'Pass to someone who does not like [TOPIC] [OTHER_PLAYERS]',
         category: 'chaos',
+        kind: 'taste',
         fallback: 'oppositeInterest',
     },
 
@@ -1226,12 +1396,14 @@ export const instructions: Instruction[] = [
         id: 'c9',
         text: 'Pass to whoever wakes up [RELATIVE_TIME] [OTHER_PLAYERS]',
         category: 'chaos',
+        needs: ['close'],
     },
 
     {
         id: 'c10',
-        text: 'Pass to someone who is a fan of [GENRE] [OTHER_PLAYERS]',
+        text: 'Pass to someone who is a fan of [TOPIC] [OTHER_PLAYERS]',
         category: 'chaos',
+        kind: 'taste',
         fallback: 'genreFan',
     },
 
@@ -1246,6 +1418,8 @@ export const instructions: Instruction[] = [
         id: 'c12',
         text: 'Pass to someone in the group who snores in their sleep [OTHER_PLAYERS]',
         category: 'chaos',
+        spice: 'cheeky',
+        needs: ['close'],
         fallback: 'anyone',
     },
 
@@ -1267,6 +1441,7 @@ export const instructions: Instruction[] = [
         id: 'c15',
         text: 'Pass to the last person who used the toilet [OTHER_PLAYERS]',
         category: 'chaos',
+        spice: 'cheeky',
         fallback: 'anyone',
     },
 
@@ -1417,6 +1592,7 @@ export const instructions: Instruction[] = [
         id: 'c38',
         text: 'Pass to someone who likes anime least',
         category: 'chaos',
+        tastes: ['anime'],
         fallback: 'animeTest',
     },
 
@@ -1424,6 +1600,7 @@ export const instructions: Instruction[] = [
         id: 'c39',
         text: 'Pass to someone who does not like pets',
         category: 'chaos',
+        tastes: ['pets'],
         fallback: 'worstPetOwner',
     },
 
@@ -1452,6 +1629,7 @@ export const instructions: Instruction[] = [
         id: 'c43',
         text: 'Pass to whoever you have felt replies to your messages the [SPEED]',
         category: 'chaos',
+        needs: ['knows'],
         fallback: 'cantDecide',
     },
 
@@ -1459,6 +1637,7 @@ export const instructions: Instruction[] = [
         id: 'c44',
         text: 'Pass to someone who responds [SPEED] to your missed call',
         category: 'chaos',
+        needs: ['knows'],
         fallback: 'missedCall',
     },
 
@@ -1473,6 +1652,7 @@ export const instructions: Instruction[] = [
         id: 'c46',
         text: 'Everyone raise a hand. Pass to the person who raises theirs [FIRST_LAST]',
         category: 'chaos',
+        kind: 'race',
         fallback: 'tieChoose',
     },
 
@@ -1480,6 +1660,7 @@ export const instructions: Instruction[] = [
         id: 'c47',
         text: 'Say "3, 2, 1". Pass to whoever says "GO" the [FIRST_LAST]',
         category: 'chaos',
+        kind: 'race',
         fallback: 'anyone',
     },
 
@@ -1487,6 +1668,7 @@ export const instructions: Instruction[] = [
         id: 'c48',
         text: 'Think of a random number. Pass to whoever guesses [PROXIMITY] it',
         category: 'chaos',
+        kind: 'race',
         fallback: 'confidentGuess',
     },
 
@@ -1494,9 +1676,702 @@ export const instructions: Instruction[] = [
         id: 'c49',
         text: 'Tell everyone to [TASKS]. [SPEED] to do it, gets the bomb ',
         category: 'chaos',
+        kind: 'race',
         fallback: 'confidentGuess',
     },
 
+
+    // ═══════════════════════════════════════════════════════════
+    // PARTY: votes, never have I ever, pay to choose, truth or dare,
+    // races, shared history, wholesome, revenge, tastes
+    // ═══════════════════════════════════════════════════════════
+
+    {
+        id: 'v1',
+        text: 'On 3, everyone points at who is [LIKELY] to cry at a wedding. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v2',
+        text: 'On 3, everyone points at who is [LIKELY] to get lost even with Google Maps on. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v3',
+        text: 'On 3, everyone points at who is [LIKELY] to sleep through the alarm on an important day. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v4',
+        text: 'On 3, everyone points at who is [LIKELY] to fight a shopkeeper over ₹10. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v5',
+        text: 'On 3, everyone points at who is [LIKELY] to become a YouTuber. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v6',
+        text: 'On 3, everyone points at who is [LIKELY] to eat the last piece without asking. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v7',
+        text: 'On 3, everyone points at the [QUALITY] cook in the room. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v8',
+        text: 'On 3, everyone points at who is [LIKELY] to lie in this game. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v9',
+        text: 'On 3, everyone points at who is [LIKELY] to survive a zombie movie. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v10',
+        text: 'On 3, everyone points at who is [LIKELY] to get married first. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        needs: ['knows'],
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v11',
+        text: 'On 3, everyone points at who is [LIKELY] to get scolded at home tonight. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        spice: 'cheeky',
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v12',
+        text: 'On 3, everyone points at who is [LIKELY] to have a secret second Instagram account. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        spice: 'cheeky',
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v13',
+        text: 'On 3, everyone points at who is [LIKELY] to send a message they regret tonight. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        spice: 'cheeky',
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v14',
+        text: 'On 3, everyone points at who is [LIKELY] to flirt their way out of a traffic fine. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        spice: 'cheeky',
+        needs: ['knows'],
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v15',
+        text: 'On 3, everyone points at who is [LIKELY] to text their ex tonight. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        spice: 'savage',
+        fallback: 'voteTie',
+    },
+    {
+        id: 'v16',
+        text: 'On 3, everyone points at who is [LIKELY] to get caught lying to their partner. [VOTE_RESULT]',
+        category: 'judgement',
+        kind: 'vote',
+        spice: 'savage',
+        needs: ['knows'],
+        fallback: 'voteTie',
+    },
+    {
+        id: 'n1',
+        text: 'Everyone who has ever fallen asleep in a class or meeting, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n2',
+        text: 'Everyone who has ever pretended to be on a call to avoid someone, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n3',
+        text: 'Everyone who has ever eaten food that fell on the floor, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n4',
+        text: 'Everyone who has ever said "5 minutes away" while still at home, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n5',
+        text: 'Everyone who has ever laughed at a joke they did not understand, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n6',
+        text: 'Everyone who has ever cried during a movie, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n7',
+        text: 'Everyone who has ever sent a message to the wrong person, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n8',
+        text: 'Everyone who has ever forgotten a close friend\'s birthday, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n9',
+        text: 'Everyone who has ever lied to their parents about where they were, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        spice: 'cheeky',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n10',
+        text: 'Everyone who has ever bunked class or work and lied about why, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        spice: 'cheeky',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n11',
+        text: 'Everyone who has ever read someone else\'s messages without asking, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        spice: 'cheeky',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n12',
+        text: 'Everyone who has ever blamed a fart on someone else, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        spice: 'cheeky',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n13',
+        text: 'Everyone who has ever ghosted someone, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        spice: 'cheeky',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n14',
+        text: 'Everyone who has ever checked an ex\'s Instagram this month, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        spice: 'savage',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n15',
+        text: 'Everyone who has ever had a crush on someone in this room, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        spice: 'savage',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'n16',
+        text: 'Everyone who has ever been caught in a lie by someone in this room, raise a hand. [HAND_RESULT]',
+        category: 'social',
+        kind: 'confess',
+        spice: 'savage',
+        fallback: 'nobodyConfesses',
+    },
+    {
+        id: 'p1',
+        text: 'Do a 3-second impression of someone here. [IMPRESSION_RESULT]',
+        category: 'chaos',
+        kind: 'dare',
+        fallback: 'refuseDare',
+    },
+    {
+        id: 'p2',
+        text: 'Sing one line of a [SONG_KIND] song, then pass to anyone you like.',
+        category: 'chaos',
+        kind: 'dare',
+        fallback: 'refuseDare',
+    },
+    {
+        id: 'p3',
+        text: 'Do your best [SOUND], then pass to anyone you like.',
+        category: 'chaos',
+        kind: 'dare',
+        fallback: 'refuseDare',
+    },
+    {
+        id: 'p4',
+        text: 'Talk like a [VOICE] until you pass. Pass to anyone you like.',
+        category: 'chaos',
+        kind: 'dare',
+        fallback: 'refuseDare',
+    },
+    {
+        id: 'p5',
+        text: 'Do [REPS] [EXERCISE], then pass to anyone you like.',
+        category: 'chaos',
+        kind: 'dare',
+        fallback: 'refuseDare',
+    },
+    {
+        id: 'p6',
+        text: 'Show everyone the last emoji you used. Pass to whoever it describes [DESCRIBES].',
+        category: 'chaos',
+        kind: 'dare',
+        fallback: 'refuseDare',
+    },
+    {
+        id: 'p7',
+        text: 'Describe the person on your [RL_DIRECTION] in [FEW] words, then pass to anyone you like.',
+        category: 'chaos',
+        kind: 'dare',
+        fallback: 'refuseDare',
+    },
+    {
+        id: 'p8',
+        text: 'Show everyone the [GALLERY] in your gallery, then pass to anyone you like.',
+        category: 'chaos',
+        kind: 'dare',
+        spice: 'cheeky',
+        fallback: 'refuseDare',
+    },
+    {
+        id: 'p9',
+        text: 'Show everyone your [PHONE_STAT], then pass to anyone you like.',
+        category: 'chaos',
+        kind: 'dare',
+        spice: 'cheeky',
+        fallback: 'refuseDare',
+    },
+    {
+        id: 'p10',
+        text: 'Show everyone the [APP_KIND] on your phone, then pass to anyone you like.',
+        category: 'chaos',
+        kind: 'dare',
+        spice: 'cheeky',
+        fallback: 'refuseDare',
+    },
+    {
+        id: 'p11',
+        text: 'Read your [LAST_MESSAGE] out loud, then pass to anyone you like.',
+        category: 'chaos',
+        kind: 'dare',
+        spice: 'savage',
+        fallback: 'refuseDare',
+    },
+    {
+        id: 'p12',
+        text: 'Show everyone your last [SEARCH], then pass to anyone you like.',
+        category: 'chaos',
+        kind: 'dare',
+        spice: 'savage',
+        fallback: 'refuseDare',
+    },
+    {
+        id: 'td1',
+        text: 'TRUTH: who here would you swap lives with for a day? [TRUTH_RESULT]\nDARE: sing one line of a [SONG_KIND] song, then pass to anyone.',
+        category: 'chaos',
+        kind: 'choice',
+        fallback: 'refuseBoth',
+    },
+    {
+        id: 'td2',
+        text: 'TRUTH: who here did you get the wrong first impression of? [TRUTH_RESULT]\nDARE: dance for [SECONDS] seconds, then pass to anyone.',
+        category: 'chaos',
+        kind: 'choice',
+        needs: ['knows'],
+        fallback: 'refuseBoth',
+    },
+    {
+        id: 'td3',
+        text: 'TRUTH: who here would you pick as your partner on a reality show? [TRUTH_RESULT]\nDARE: talk like a [VOICE] until you pass, then pass to anyone.',
+        category: 'chaos',
+        kind: 'choice',
+        fallback: 'refuseBoth',
+    },
+    {
+        id: 'td4',
+        text: 'TRUTH: who here would you call to help you [HELP]? [TRUTH_RESULT]\nDARE: let the group choose who gets the bomb.',
+        category: 'chaos',
+        kind: 'choice',
+        spice: 'cheeky',
+        fallback: 'refuseBoth',
+    },
+    {
+        id: 'td5',
+        text: 'TRUTH: who here would you never lend [LEND] to? [TRUTH_RESULT]\nDARE: let the person on your [RL_DIRECTION] choose who you pass to.',
+        category: 'chaos',
+        kind: 'choice',
+        spice: 'cheeky',
+        fallback: 'refuseBoth',
+    },
+    {
+        id: 'td6',
+        text: 'TRUTH: who here has the most secrets? [TRUTH_RESULT]\nDARE: show everyone the [GALLERY] in your gallery, then pass to anyone.',
+        category: 'chaos',
+        kind: 'choice',
+        spice: 'cheeky',
+        fallback: 'refuseBoth',
+    },
+    {
+        id: 'td7',
+        text: 'TRUTH: who here annoys you the [QUANTITY]? [TRUTH_RESULT]\nDARE: read your [LAST_MESSAGE] out loud, then pass to anyone.',
+        category: 'chaos',
+        kind: 'choice',
+        spice: 'savage',
+        fallback: 'refuseBoth',
+    },
+    {
+        id: 'td8',
+        text: 'TRUTH: who here would you date if you had to? [TRUTH_RESULT]\nDARE: let the person on your [RL_DIRECTION] read out the names of your last 3 chats, then pass to anyone.',
+        category: 'chaos',
+        kind: 'choice',
+        spice: 'savage',
+        fallback: 'refuseBoth',
+    },
+    {
+        id: 'r1',
+        text: 'Going [RL_DIRECTION] from you, everyone names a [CHAIN_TOPIC]. First to freeze or repeat one gets the bomb.',
+        category: 'chaos',
+        kind: 'race',
+        fallback: 'raceFreeze',
+    },
+    {
+        id: 'r2',
+        text: 'Going [RL_DIRECTION] from you, everyone names a [TOPIC_THING]. First to freeze or repeat one gets the bomb.',
+        category: 'chaos',
+        kind: 'race',
+        fallback: 'raceFreeze',
+    },
+    {
+        id: 'r3',
+        text: 'Going [RL_DIRECTION] from you, count to 20. Say "BOMB" instead of every number with a [DIGIT] in it. First mistake gets the bomb.',
+        category: 'chaos',
+        kind: 'race',
+        fallback: 'raceFreeze',
+    },
+    {
+        id: 'r4',
+        text: 'Everyone touch something [COLOUR]! [SLOW_RESULT]',
+        category: 'chaos',
+        kind: 'race',
+        fallback: 'sameTime',
+    },
+    {
+        id: 'r5',
+        text: 'Everyone touch your [BODY_PART]! [SLOW_RESULT]',
+        category: 'chaos',
+        kind: 'race',
+        fallback: 'sameTime',
+    },
+    {
+        id: 'r6',
+        text: 'Everyone freeze! First person to [MOVE] gets the bomb.',
+        category: 'chaos',
+        kind: 'race',
+        fallback: 'sameTime',
+    },
+    {
+        id: 'r7',
+        text: 'Everyone [POSE]! [SLOW_RESULT]',
+        category: 'chaos',
+        kind: 'race',
+        fallback: 'sameTime',
+    },
+    {
+        id: 'r8',
+        text: 'Hum a [SONG_KIND] song. First person to name it [RACE_RESULT].',
+        category: 'chaos',
+        kind: 'race',
+        fallback: 'nobodyKnows',
+    },
+    {
+        id: 'r9',
+        text: 'Rock, paper, scissors with the person on your [RL_DIRECTION]. If they lose, they get the bomb. If you lose, they choose who gets it.',
+        category: 'chaos',
+        kind: 'race',
+        fallback: 'sameTime',
+    },
+    {
+        id: 'r10',
+        text: 'Staring contest with the person on your [RL_DIRECTION]. If they blink first, they get the bomb. If you do, they choose who gets it.',
+        category: 'chaos',
+        kind: 'race',
+        fallback: 'sameTime',
+    },
+    {
+        id: 'r11',
+        text: 'Going [RL_DIRECTION] from you, everyone says a word that rhymes with "[RHYME]". First to freeze or repeat one gets the bomb.',
+        category: 'chaos',
+        kind: 'race',
+        fallback: 'raceFreeze',
+    },
+    {
+        id: 'h1',
+        text: 'Pass to the person you have had your [MEMORY_KIND] with. Name it in 5 words.',
+        category: 'social',
+        kind: 'story',
+        needs: ['close'],
+        fallback: 'storyTime',
+    },
+    {
+        id: 'h2',
+        text: 'Pass to whoever owes you [OWED].',
+        category: 'social',
+        kind: 'story',
+        needs: ['close'],
+        fallback: 'storyTime',
+    },
+    {
+        id: 'h3',
+        text: 'Pass to the person you would call first with [NEWS].',
+        category: 'social',
+        kind: 'story',
+        needs: ['close'],
+        fallback: 'storyTime',
+    },
+    {
+        id: 'h4',
+        text: 'Pass to the person you have travelled with the [QUANTITY].',
+        category: 'social',
+        kind: 'story',
+        needs: ['close'],
+        fallback: 'storyTime',
+    },
+    {
+        id: 'h5',
+        text: 'Pass to whoever has the [QUANTITY] photos of you on their phone.',
+        category: 'social',
+        kind: 'story',
+        needs: ['close'],
+        fallback: 'storyTime',
+    },
+    {
+        id: 'h6',
+        text: 'Pass to whoever has the [STORY_KIND] story about you. They get 5 seconds to tell it.',
+        category: 'social',
+        kind: 'story',
+        spice: 'cheeky',
+        needs: ['close'],
+        fallback: 'storyTime',
+    },
+    {
+        id: 'h7',
+        text: 'Pass to the person who has seen you at your [WORST].',
+        category: 'social',
+        kind: 'story',
+        spice: 'cheeky',
+        needs: ['close'],
+        fallback: 'storyTime',
+    },
+    {
+        id: 'h8',
+        text: 'Pass to the person you have had the biggest fight with. Say what it was about in [FEW] words.',
+        category: 'social',
+        kind: 'story',
+        spice: 'cheeky',
+        needs: ['close'],
+        fallback: 'storyTime',
+    },
+    {
+        id: 'h9',
+        text: 'Pass to the person who knows your [SECRET].',
+        category: 'social',
+        kind: 'story',
+        spice: 'savage',
+        needs: ['close'],
+        fallback: 'storyTime',
+    },
+    {
+        id: 'w1',
+        text: 'Give someone a real compliment, [WHOLESOME_RESULT].',
+        category: 'social',
+        kind: 'wholesome',
+        fallback: 'anyone',
+    },
+    {
+        id: 'w2',
+        text: 'Pass to whoever you would want next to you on a [JOURNEY].',
+        category: 'social',
+        kind: 'wholesome',
+        fallback: 'anyone',
+    },
+    {
+        id: 'w3',
+        text: 'Pass to the person you would want on your team in a [CONTEST].',
+        category: 'social',
+        kind: 'wholesome',
+        fallback: 'anyone',
+    },
+    {
+        id: 'w4',
+        text: 'Thank someone here for something, [WHOLESOME_RESULT].',
+        category: 'social',
+        kind: 'wholesome',
+        fallback: 'anyone',
+    },
+    {
+        id: 'w5',
+        text: 'Pass to whoever has the best [FEATURE] in the room.',
+        category: 'social',
+        kind: 'wholesome',
+        fallback: 'anyone',
+    },
+    {
+        id: 'w6',
+        text: 'Pass to whoever would make the best [ROLE].',
+        category: 'social',
+        kind: 'wholesome',
+        fallback: 'anyone',
+    },
+    {
+        id: 'w7',
+        text: 'Pass to the person whose [STEAL] you would steal.',
+        category: 'social',
+        kind: 'wholesome',
+        fallback: 'anyone',
+    },
+    {
+        id: 'w8',
+        text: 'Pass to whoever you would call when you need [NEED].',
+        category: 'social',
+        kind: 'wholesome',
+        needs: ['knows'],
+        fallback: 'anyone',
+    },
+    {
+        id: 'w9',
+        text: 'Pass to whoever you would trust to [TRUST_TASK].',
+        category: 'social',
+        kind: 'wholesome',
+        fallback: 'anyone',
+    },
+    {
+        id: 'rv1',
+        text: 'Pass to whoever has hurt you the [QUANTITY] this game.',
+        category: 'judgement',
+        kind: 'revenge',
+        fallback: 'noHistory',
+    },
+    {
+        id: 'rv2',
+        text: 'Make a deal out loud: pass to someone who promises to [DEAL]. Breaking the deal is allowed.',
+        category: 'judgement',
+        kind: 'revenge',
+        fallback: 'noHistory',
+    },
+    {
+        id: 'rv3',
+        text: 'Form an alliance: pass to someone and name one player you will both [ALLY].',
+        category: 'judgement',
+        kind: 'revenge',
+        fallback: 'noHistory',
+    },
+    {
+        id: 'rv4',
+        text: 'Pass to whoever laughed the [LAUGH] the last time you lost a life.',
+        category: 'judgement',
+        kind: 'revenge',
+        fallback: 'noHistory',
+    },
+    {
+        id: 'rv5',
+        text: 'Pass to whoever is doing the [QUALITY] this game.',
+        category: 'judgement',
+        kind: 'revenge',
+        fallback: 'noHistory',
+    },
+    {
+        id: 'rv6',
+        text: 'Pass to someone who has [EVER_NEVER] passed the bomb to you. Make it personal.',
+        category: 'judgement',
+        kind: 'revenge',
+        fallback: 'noHistory',
+    },
+    {
+        id: 't1',
+        text: 'Pass to whoever knows the [QUANTITY] about [TOPIC].',
+        category: 'judgement',
+        kind: 'taste',
+        fallback: 'topicNobody',
+    },
+    {
+        id: 't2',
+        text: 'Pass to whoever would [ARGUE] [TOPIC].',
+        category: 'judgement',
+        kind: 'taste',
+        fallback: 'topicNobody',
+    },
+    {
+        id: 't3',
+        text: 'Pass to whoever would [WIN_LOSE] a [TOPIC] quiz.',
+        category: 'judgement',
+        kind: 'taste',
+        fallback: 'topicNobody',
+    },
+    {
+        id: 't4',
+        text: 'Pass to whoever cares the [QUANTITY] about [TOPIC].',
+        category: 'judgement',
+        kind: 'taste',
+        fallback: 'topicNobody',
+    },
+    {
+        id: 't5',
+        text: 'Name a [TOPIC_THING] in [SECONDS] seconds, then pass to anyone you like. Can\'t? Pass to whoever can.',
+        category: 'chaos',
+        kind: 'taste',
+        fallback: 'refuseDare',
+    },
 
 ];
 
@@ -1563,6 +2438,12 @@ export const instructionAnswerTypes: Record<string, InstructionAnswerType> = {
 // Instructions that need SOME history to make sense, but stay honor-system
 // (no answer validation — just excluded from the pool too early).
 export const instructionEligibilityGates: Record<string, 'requires-pass' | 'requires-multi-round'> = {
+    rv1: 'requires-multi-round',
+    rv2: 'requires-multi-round',
+    rv3: 'requires-multi-round',
+    rv4: 'requires-multi-round',
+    rv5: 'requires-multi-round',
+    rv6: 'requires-multi-round',
     j4: 'requires-pass',
     m2: 'requires-pass',
     m5: 'requires-pass',
@@ -1583,6 +2464,10 @@ export const isInstructionEligible = (
 
     const gate = instructionEligibilityGates[instruction.id];
     if (gate === 'requires-pass' && ctx.passHistoryLength === 0) return false;
+    if (gate === 'requires-multi-round' && ctx.roundNumber < 2) return false;
+
+    // Group fit + escalation (spicier ones unlock in later rounds).
+    if (!fitsGroup(instruction, ctx.profile ?? DEFAULT_GROUP_PROFILE, ctx.roundNumber)) return false;
 
     const answerType = instructionAnswerTypes[instruction.id];
     if (!answerType) return true; // no gate, no answer type → always eligible
@@ -1779,18 +2664,29 @@ export const getRandomInstruction = (
     }
     const pool = available.length > 0 ? available : instructions.filter((i) => !ctx || isInstructionEligible(i, ctx));
     const finalPool = pool.length > 0 ? pool : instructions;
-    const chosen = finalPool[Math.floor(Math.random() * finalPool.length)];
+    const chosen = pickWeighted(finalPool);
+    const profile = ctx?.profile ?? DEFAULT_GROUP_PROFILE;
 
     // Resolve any [PLACEHOLDER] tokens once, here, so every downstream
     // consumer (game.ts) just uses `.text` as-is and gets the final,
     // human-readable instruction — id/category stay untouched so
     // eligibility and answer-type lookups (which key off `.id`) are
     // unaffected.
-    const [text, fallbackText] = resolveTexts([
-        chosen.text,
-        chosen.fallback ? fallbacks[chosen.fallback] : '',
-    ]);
+    const [text, fallbackText] = resolveTexts(
+        fillTopic([chosen.text, chosen.fallback ? fallbacks[chosen.fallback] : ''], profile)
+    );
     return { ...chosen, text, fallbackText };
+};
+
+// Votes and races come up more often than quiet solo decisions.
+const pickWeighted = (pool: Instruction[]): Instruction => {
+    const w = pool.map((i) => KIND_WEIGHT[i.kind ?? 'plain']);
+    let r = Math.random() * w.reduce((a, b) => a + b, 0);
+    for (let k = 0; k < pool.length; k++) {
+        r -= w[k];
+        if (r < 0) return pool[k];
+    }
+    return pool[pool.length - 1];
 };
 
 export const getRandomPersonality = (

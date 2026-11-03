@@ -40,6 +40,10 @@ export default function GroupLobbyScreen({ navigation, route }: Props) {
       navigation.replace("QuizBoardFlow", { groupId, playerId });
     } else if (group?.currentGame === "card-clash") {
       navigation.replace("ClashFlow", { groupId, playerId });
+    } else if (group?.currentGame === "clash-holdem") {
+      navigation.replace("HoldemFlow", { groupId, playerId });
+    } else if (group?.currentGame === "court-of-thieves") {
+      navigation.replace("CotFlow", { groupId, playerId });
     }
   }, [group?.currentGame, groupId, playerId, navigation]);
 

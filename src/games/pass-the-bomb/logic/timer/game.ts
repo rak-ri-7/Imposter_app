@@ -163,6 +163,7 @@ const buildEligibilityContext = (
     lastPassedTo: gameState.lastPassedTo,
     wireCutters: gameState.wireCutters ?? [],
     passCounts: gameState.passCounts ?? {},
+    profile: gameState.profile,
     alleyReceipts: gameState.alleyReceipts ?? [],
     settledBets: (gameState.matchBets ?? [])
         .filter((b) => (b.status === 'won' || b.status === 'lost') && b.settledRound !== undefined)
@@ -498,6 +499,7 @@ export const startBombGame = async (
         lastPassedTo: {},
         wireCutters: [],
         passCounts: {},
+        profile: group.bombProfile,
     };
     const texts: Record<string, string> = {};
     const ids: Record<string, string> = {};
@@ -522,6 +524,8 @@ export const startBombGame = async (
             : '';
 
     const gameState: BombGameState = {
+        // Firestore refuses undefined: only copy the setup answers if there are any.
+        ...(group.bombProfile ? { profile: group.bombProfile } : {}),
         phase: 'reveal',
         revealEndsAt: Date.now() + REVEAL_DURATION_MS,
         currentHolderId: startingHolder,
@@ -2175,6 +2179,7 @@ const advanceRound = async (staleGroup: Group): Promise<void> => {
         lastPassedTo: gameState.lastPassedTo ?? {},
         wireCutters: gameState.wireCutters ?? [],
         passCounts: gameState.passCounts ?? {},
+        profile: gameState.profile,
     };
     const texts: Record<string, string> = {};
     const ids: Record<string, string> = {};

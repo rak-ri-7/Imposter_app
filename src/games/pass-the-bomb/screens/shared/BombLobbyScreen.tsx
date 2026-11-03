@@ -10,11 +10,12 @@ import {
   Switch,
   TextInput,
 } from "react-native";
-import { Group, BombTimerMode } from "../../../../shared/types";
+import { Group, BombTimerMode, BombGroupProfile } from "../../../../shared/types";
 import { startBombGame } from "../../logic/timer/game";
 import BombCollectionModal, { collectionCount } from "../timer/BombCollectionModal";
 import { ALL_QUIRK_VARIANTS } from "../../logic/timer/bombQuirks";
-import { setBombLobby } from "../../../../shared/firebase/groups";
+import { setBombLobby, setBombProfile } from "../../../../shared/firebase/groups";
+import BombGroupSetup, { profileSummary } from "./BombGroupSetup";
 import {
   startPassGame,
   PASS_STACK_DEFAULT,
@@ -72,6 +73,9 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
   );
   const [strictMemoryMode, setStrictMemoryMode] = useState(true); // default ON
   const isHost = group.hostId === playerId;
+  // 👥 Group setup (timer mode). startAfterSetup: opened by "Light the Fuse".
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [startAfterSetup, setStartAfterSetup] = useState(false);
 
   // The host's choices are shared so everyone else can read the rules for the
   // chosen mode. Cleared when the host opens the lobby: nothing pre-selected.
@@ -140,17 +144,40 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
     if (!gameMode) {
       return Alert.alert("Pick a game mode first!");
     }
+    // First timer game for this group: ask the 3 setup questions first.
+    if (gameMode === "timer" && !group.bombProfile) {
+      setStartAfterSetup(true);
+      setSetupOpen(true);
+      return;
+    }
+    await launch(group);
+  };
+
+  const onSetupDone = async (profile: BombGroupProfile) => {
+    setSetupOpen(false);
+    try {
+      await setBombProfile(group.id, profile);
+    } catch {
+      return Alert.alert("Couldn't save the setup", "Check your connection and try again.");
+    }
+    if (startAfterSetup) {
+      setStartAfterSetup(false);
+      await launch({ ...group, bombProfile: profile });
+    }
+  };
+
+  const launch = async (g: Group) => {
     setLoading(true);
     try {
       if (gameMode === "pass") {
         await startPassGame(
-          group,
+          g,
           passStack,
           teamsAvailable && passAsTeams,
           hiddenPasses,
         );
       } else {
-        await startBombGame(group, timerMode, seatingOrder, strictMemoryMode);
+        await startBombGame(g, timerMode, seatingOrder, strictMemoryMode);
       }
       setBombLobby(group.id, null); // game's running — the lobby choice is done with
     } finally {
@@ -253,6 +280,15 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
         group={group}
         visible={showCollection}
         onClose={() => setShowCollection(false)}
+      />
+      <BombGroupSetup
+        visible={setupOpen}
+        initial={group.bombProfile}
+        onCancel={() => {
+          setSetupOpen(false);
+          setStartAfterSetup(false);
+        }}
+        onDone={onSetupDone}
       />
       <Text style={styles.title}>💣 Pass the Bomb</Text>
       <Text style={styles.subtitle}>Social deduction under pressure</Text>
@@ -384,6 +420,27 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
         {isHost && gameMode === "timer" && (
           <>
             {timerRules}
+
+            <Text style={styles.sectionLabel}>GROUP VIBE</Text>
+            <TouchableOpacity
+              style={styles.vibeCard}
+              onPress={() => {
+                setStartAfterSetup(false);
+                setSetupOpen(true);
+              }}
+            >
+              <View style={styles.vibeMid}>
+                <Text style={styles.vibeText}>
+                  {group.bombProfile ? profileSummary(group.bombProfile) : "Not set up yet"}
+                </Text>
+                <Text style={styles.vibeSub}>
+                  {group.bombProfile
+                    ? "Same crowd? Just light the fuse."
+                    : "3 quick questions so the instructions fit your group"}
+                </Text>
+              </View>
+              <Text style={styles.vibeEdit}>{group.bombProfile ? "Edit" : "Set up"}</Text>
+            </TouchableOpacity>
 
             <Text style={styles.sectionLabel}>TIMER MODE</Text>
             <View style={styles.timerModes}>
@@ -517,6 +574,14 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
                 ? `🔁 Pass Mode · ${shownBudget} passes${shownTeams ? " · teams" : ""}${shownHidden ? " · 🔒 hidden" : ""}`
                 : "⏱️ Timer Mode"}
             </Text>
+            {shownMode === "timer" && group.bombProfile && (
+              <View style={styles.vibeCard}>
+                <View style={styles.vibeMid}>
+                  <Text style={styles.vibeText}>{profileSummary(group.bombProfile)}</Text>
+                  <Text style={styles.vibeSub}>Group vibe</Text>
+                </View>
+              </View>
+            )}
             {shownMode === "pass" ? passRules : timerRules}
           </>
         )}
@@ -637,6 +702,21 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 24,
   },
+  vibeCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#1A120D",
+    borderWidth: 1,
+    borderColor: "#FF4500",
+    borderRadius: 12,
+    padding: 14,
+    marginBottom: 18,
+  },
+  vibeMid: { flex: 1 },
+  vibeText: { color: "#fff", fontSize: 15, fontWeight: "800" },
+  vibeSub: { color: "#999", fontSize: 12, marginTop: 3 },
+  vibeEdit: { color: "#FF8A50", fontSize: 14, fontWeight: "900" },
   sectionLabel: {
     color: "#888",
     fontSize: 11,

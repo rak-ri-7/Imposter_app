@@ -14,7 +14,7 @@ import {
 } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
 import { db, auth } from './config';
-import { GameType, Group, Player, emptyImposterState, Team } from '../types';
+import { BombGroupProfile, GameType, Group, Player, emptyImposterState, Team } from '../types';
 import { getDoc } from 'firebase/firestore';
 
 const generateGroupCode = (): string => {
@@ -318,6 +318,11 @@ export const claimHostIfStale = async (
 
 // The host's lobby choices for Pass the Bomb, shared so every player can
 // read the rules for the mode being set up. null clears it.
+// 💣 Remember the group's Pass the Bomb setup answers.
+export const setBombProfile = async (groupId: string, profile: BombGroupProfile): Promise<void> => {
+    await updateDoc(doc(db, 'groups', groupId), { bombProfile: { ...profile, setAt: Date.now() } });
+};
+
 export const setBombLobby = async (
     groupId: string,
     settings: { mode: 'timer' | 'pass' | null; passBudget: number; passAsTeams: boolean; hiddenPasses?: boolean } | null
@@ -327,4 +332,4 @@ export const setBombLobby = async (
     } catch {
         // cosmetic only — the next change re-sends it
     }
-};
+};
