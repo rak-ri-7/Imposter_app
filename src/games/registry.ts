@@ -14,6 +14,15 @@ export type GameDefinition = {
 
 export const games: GameDefinition[] = [
     {
+        id: 'match-the-following',
+        name: 'Match the Following',
+        emoji: '✏️',
+        description: 'Draw lines between friends and what they’d do',
+        minPlayers: 3,
+        available: true,
+        modes: ['online'],
+    },
+    {
         id: 'court-of-thieves',
         name: 'Court of Thieves',
         emoji: '⚖️',

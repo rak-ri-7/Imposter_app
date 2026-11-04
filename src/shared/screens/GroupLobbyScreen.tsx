@@ -44,6 +44,8 @@ export default function GroupLobbyScreen({ navigation, route }: Props) {
       navigation.replace("HoldemFlow", { groupId, playerId });
     } else if (group?.currentGame === "court-of-thieves") {
       navigation.replace("CotFlow", { groupId, playerId });
+    } else if (group?.currentGame === "match-the-following") {
+      navigation.replace("MtfFlow", { groupId, playerId });
     }
   }, [group?.currentGame, groupId, playerId, navigation]);
 

@@ -1,5 +1,6 @@
 // Host picks the deck, how many hands, and the mode (Dealer's choice / Draw / Scratch).
 import { useState } from "react";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Alert } from "react-native";
 import type { Group, HoldemGameState } from "../../../shared/types";
 import { DECKS } from "../../card-clash/data/decks";
@@ -32,6 +33,7 @@ const RULES = [
 
 export default function HoldemLobbyScreen({ group, playerId }: Props) {
   const isHost = group.hostId === playerId;
+  const insets = useSafeAreaInsets();
   const [deck, setDeck] = useState<ClashDeckId>("countries");
   const [hands, setHands] = useState<number>(DEFAULT_HANDS);
   const [mode, setMode] = useState<HoldemGameState["modeSetting"]>("choice");
@@ -49,7 +51,7 @@ export default function HoldemLobbyScreen({ group, playerId }: Props) {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 40 }]}>
       <Text style={styles.title}>💰 Clash Hold'em</Text>
       <Text style={styles.sub}>{group.players.length} players · {START_CHIPS} chips each</Text>
 

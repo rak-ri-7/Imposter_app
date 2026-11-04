@@ -1,5 +1,6 @@
 // Game over: most chips wins, then everyone by chips (busted players by how long they lasted).
 import { useState } from "react";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet } from "react-native";
 import type { Group, HoldemGameState } from "../../../shared/types";
 import { rankMedal } from "../../../shared/utils/ranking";
@@ -11,6 +12,7 @@ type Props = { group: Group; gs: HoldemGameState; playerId: string };
 
 export default function HoldemOverScreen({ group, gs, playerId }: Props) {
   const isHost = group.hostId === playerId;
+  const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
   const rows = holdemStandings(gs, group.players);
   const nameOf = (id: string) =>
@@ -19,7 +21,7 @@ export default function HoldemOverScreen({ group, gs, playerId }: Props) {
   const played = handsPlayed(gs);
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 40 }]}>
       <Text style={styles.trophy}>💰</Text>
       <Text style={styles.title}>
         {champ ? `${nameOf(champ.playerId)} ${champ.playerId === playerId ? "win" : "wins"}!` : "Game over"}

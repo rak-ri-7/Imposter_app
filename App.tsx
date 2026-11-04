@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { NavigationContainer } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { PaperProvider } from "react-native-paper";
+import { SafeAreaProvider } from "react-native-safe-area-context";
 import HomeScreen from "./src/shared/screens/HomeScreen";
 import GroupLobbyScreen from "./src/shared/screens/GroupLobbyScreen";
 import GameMenuScreen from "./src/shared/screens/GameMenuScreen";
@@ -17,6 +18,7 @@ import QuizBoardFlowScreen from "./src/games/quiz-board/QuizBoardFlowScreen";
 import ClashFlowScreen from "./src/games/card-clash/ClashFlowScreen";
 import HoldemFlowScreen from "./src/games/clash-holdem/HoldemFlowScreen";
 import CotFlowScreen from "./src/games/court-of-thieves/CotFlowScreen";
+import MtfFlowScreen from "./src/games/match-the-following/MtfFlowScreen";
 import { preloadSounds } from "./src/shared/audio/sounds";
 
 export type RootStackParamList = {
@@ -34,6 +36,7 @@ export type RootStackParamList = {
   ClashFlow: { groupId: string; playerId: string };
   HoldemFlow: { groupId: string; playerId: string };
   CotFlow: { groupId: string; playerId: string };
+  MtfFlow: { groupId: string; playerId: string };
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -58,6 +61,7 @@ export default function App() {
   }, []);
 
   return (
+    <SafeAreaProvider>
     <PaperProvider>
       <NavigationContainer linking={linking}>
         <Stack.Navigator
@@ -89,8 +93,10 @@ export default function App() {
           <Stack.Screen name="ClashFlow" component={ClashFlowScreen} />
           <Stack.Screen name="HoldemFlow" component={HoldemFlowScreen} />
           <Stack.Screen name="CotFlow" component={CotFlowScreen} />
+          <Stack.Screen name="MtfFlow" component={MtfFlowScreen} />
         </Stack.Navigator>
       </NavigationContainer>
     </PaperProvider>
+    </SafeAreaProvider>
   );
 }

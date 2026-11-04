@@ -104,6 +104,8 @@ export default function GameMenuScreen({ navigation, route }: Props) {
       navigation.replace("HoldemFlow", { groupId, playerId });
     } else if (group?.currentGame === "court-of-thieves") {
       navigation.replace("CotFlow", { groupId, playerId });
+    } else if (group?.currentGame === "match-the-following") {
+      navigation.replace("MtfFlow", { groupId, playerId });
     }
   }, [group?.currentGame]);
 
@@ -137,7 +139,8 @@ export default function GameMenuScreen({ navigation, route }: Props) {
       gameId === "quiz-board" ||
       gameId === "card-clash" ||
       gameId === "clash-holdem" ||
-      gameId === "court-of-thieves"
+      gameId === "court-of-thieves" ||
+      gameId === "match-the-following"
     ) {
       // online only — let host pick who's actually playing, then go straight in
       setPendingGameId(gameId);

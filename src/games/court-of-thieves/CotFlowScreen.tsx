@@ -79,7 +79,8 @@ export default function CotFlowScreen({ navigation, route }: Props) {
     else if (phase === "outage") due = (gs.lightsAt ?? 0) + RESOLVE_AFTER_MS;
     if (!due) return;
     // The person this phase waits for has left: go on now.
-    if (group && actorGone(gs, group.players.map((p) => p.id))) due = 0;
+    // (From now, so the host still goes first and the others keep their backup delay.)
+    if (group && actorGone(gs, group.players.map((p) => p.id))) due = Math.min(due, getServerNow());
     const fireAt = due + (isHost ? 0 : BACKUP_GRACE_MS);
     let lastTry = 0;
     const check = () => {
