@@ -7,7 +7,7 @@ import type { CotGameState, CotSpeaker, Group } from "../../../shared/types";
 import { JUDGE_REWARD } from "../logic/engine";
 import { cotDecide, cotEndTurn } from "../logic/game";
 import { CT, seatColor } from "../theme";
-import { useServerNow } from "../useServerNow";
+import { useServerNow } from "../../../shared/hooks/useServerNow";
 
 type Props = { group: Group; gs: CotGameState; playerId: string };
 

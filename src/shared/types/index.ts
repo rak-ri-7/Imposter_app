@@ -8,7 +8,7 @@ export type Player = {
     isReady: boolean;
 };
 
-export type GameType = 'imposter' | 'stop-the-timer' | 'pass-the-bomb' | 'quiz-board' | 'card-clash' | 'clash-holdem' | 'court-of-thieves' | 'match-the-following';
+export type GameType = 'imposter' | 'stop-the-timer' | 'pass-the-bomb' | 'quiz-board' | 'card-clash' | 'clash-holdem' | 'court-of-thieves' | 'match-the-following' | 'roof-race';
 
 export type ImposterSettings = {
     imposterCount: number;
@@ -59,9 +59,16 @@ export type Group = {
     gameScores?: Partial<Record<GameType, Record<string, number>>>;
     currentGame: GameType | 'menu';
     status: GameStatus;
-    gameState: ImposterGameState | TimerGameState | BombGameState | PassGameState | QuizBoardGameState | ClashGameState | HoldemGameState | CotGameState | MtfGameState;
+    gameState: ImposterGameState | TimerGameState | BombGameState | PassGameState | QuizBoardGameState | ClashGameState | HoldemGameState | CotGameState | MtfGameState | RrfGameState;
     createdAt?: number;
     teams?: Team[];
+    // 🏛️ Race Before the Roof Falls: the lobby's settings (teams come from `teams`).
+    rrfLobby?: { expeditions: number };
+    // Server time of the last write to the race game (a floor for phones' clocks).
+    rrfAt?: Timestamp;
+    // What each key-holder has placed so far, for their explorers to follow.
+    // Kept out of gameState so a tap is a tiny write, not a transaction.
+    rrfDrafts?: Partial<Record<RrfTeamId, { key: string; tiles: string[] }>>;
     teamsEnabled?: boolean;
     benchedPlayers?: Player[];
     hostHeartbeatAt?: number
@@ -1049,6 +1056,102 @@ export type MtfGameState = {
     last?: MtfRoundResult;
     history?: MtfRoundResult[];
     seq: number;
+    endedEarly?: boolean;
+    pointsAwarded?: boolean;
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// 🏛️ Race Before the Roof Falls: two teams race through three doors of a
+// crumbling ruin. At each door one key-holder works the lock while the
+// explorers read the clues. The first team to open the vault and get every
+// hand on the treasure wins the expedition.
+// ═══════════════════════════════════════════════════════════════════
+export type RrfTeamId = 'tiger' | 'cobra';
+export type RrfPhase = 'intro' | 'run' | 'seal' | 'finalClaim' | 'expeditionEnd' | 'over';
+// Where one team is during the run.
+export type RrfStage = 'door' | 'falling' | 'between' | 'vault' | 'buried';
+
+// A tile on the key-holder's screen: an emoji, a letter or a numbered symbol.
+export type RrfItem = { id: string; label: string; kind?: string; value?: number };
+export type RrfClue = { text: string; decoy?: boolean };
+export type RrfPuzzle = {
+    type: 'gate' | 'crossing' | 'vault';
+    items: RrfItem[];          // shown to the key-holder, in this (shuffled) order
+    clues: RrfClue[];          // shared out across the explorers' pages
+    answer: string[];          // item ids in order (gate, vault) or digits (crossing)
+    keyClue: number;           // the clue the 🔦 torch lights up
+};
+
+export type RrfSealTile = { id: string; emoji: string; clue: string; owner: string };
+export type RrfSeal = {
+    tiles: RrfSealTile[];
+    answer: string[];                       // tile ids, first to last
+    placed: Record<string, number>;         // tile id -> slot
+    lockedUntil: number;                    // after a wrong push
+    wrong: number;
+};
+
+export type RrfTeam = {
+    id: RrfTeamId;
+    members: string[];
+    keyTurn: number;                        // whose turn with the key next (keeps turning across expeditions)
+    score: number;                          // over the whole game
+    // This expedition:
+    stage: RrfStage;
+    door: number;                           // 0 Gate, 1 Crossing, 2 Vault
+    doorStartedAt: number;
+    doorEndsAt: number;
+    stageEndsAt: number;                    // rope window / pause between doors
+    keyHolder: string;
+    puzzle: RrfPuzzle | null;
+    pages: Record<string, number[]>;        // explorer -> clue indexes
+    draft: string[];                        // what the key-holder has placed so far
+    torch: boolean;
+    gems: number;
+    strikes: number;
+    doorStrikes: number;
+    ropeUsed: boolean;
+    retry: boolean;                         // this door is a retry after the rope: no gems
+    frozenUntil: number;                    // shaken by a tremor
+    tremorQueued: boolean;                  // a tremor waiting for this team's next door
+    tremorSentAfter: number;                // door index after which this team last sent one (-1 none)
+    tremorProposal: { by: string; at: number } | null;
+    interruptUsed: boolean;
+    doorLog: { door: number; gems: number; how: 'opened' | 'rope' }[];
+    seal: RrfSeal | null;
+};
+
+export type RrfHold = { kind: 'claim' | 'interrupt'; at: number };
+export type RrfResult = {
+    expedition: number;
+    scenario: string;
+    winner: RrfTeamId | null;
+    how: 'claim' | 'steal' | 'seal-timeout' | 'none';
+    gems: Record<RrfTeamId, number>;
+    interruptedBy: RrfTeamId | null;
+};
+export type RrfStats = { opened: number; clean: number; ropes: number; strikes: number };
+
+export type RrfGameState = {
+    game: 'roof-race';
+    phase: RrfPhase;
+    seq: number;
+    expedition: number;                     // 1-based
+    expeditionsTotal: number;
+    scenario: string;
+    usedScenarios: string[];
+    phaseEndsAt: number;
+    teams: Record<RrfTeamId, RrfTeam>;
+    holds: Record<string, RrfHold>;
+    interruptedBy: RrfTeamId | null;
+    sealWinner: RrfTeamId | null;
+    unguarded: boolean;
+    results: RrfResult[];
+    stats: Record<string, RrfStats>;
+    // A seal winner let go mid-hold: unless `pid` grabs again by `at`, the chest is unguarded.
+    fumble?: { pid: string; at: number } | null;
+    // The session teams playing as Tiger and Cobra (their own names and colours).
+    sides?: Record<RrfTeamId, { name: string; color: string }>;
     endedEarly?: boolean;
     pointsAwarded?: boolean;
 };

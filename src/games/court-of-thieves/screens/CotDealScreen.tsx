@@ -18,7 +18,7 @@ import {
 import { TEMPLATES, fillTemplate, type CotTemplate } from "../logic/templates";
 import { cotReply, cotRespond, cotSend } from "../logic/game";
 import { CT, rupees, seatColor } from "../theme";
-import { useServerNow } from "../useServerNow";
+import { useServerNow } from "../../../shared/hooks/useServerNow";
 
 type Props = { group: Group; gs: CotGameState; playerId: string };
 

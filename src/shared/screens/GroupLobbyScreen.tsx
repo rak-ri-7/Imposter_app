@@ -46,6 +46,8 @@ export default function GroupLobbyScreen({ navigation, route }: Props) {
       navigation.replace("CotFlow", { groupId, playerId });
     } else if (group?.currentGame === "match-the-following") {
       navigation.replace("MtfFlow", { groupId, playerId });
+    } else if (group?.currentGame === "roof-race") {
+      navigation.replace("RrfFlow", { groupId, playerId });
     }
   }, [group?.currentGame, groupId, playerId, navigation]);
 

@@ -23,6 +23,7 @@ import {
   setActivePlayersForGame,
 } from "../firebase/groups";
 import { games } from "../../games/registry";
+import { fromSessionTeams } from "../../games/roof-race/logic/engine";
 import { clearSession } from "../utils/session";
 import { BackHandler } from "react-native";
 import PlayerSelectModal from "../components/PlayerSelectModal";
@@ -106,6 +107,8 @@ export default function GameMenuScreen({ navigation, route }: Props) {
       navigation.replace("CotFlow", { groupId, playerId });
     } else if (group?.currentGame === "match-the-following") {
       navigation.replace("MtfFlow", { groupId, playerId });
+    } else if (group?.currentGame === "roof-race") {
+      navigation.replace("RrfFlow", { groupId, playerId });
     }
   }, [group?.currentGame]);
 
@@ -130,6 +133,16 @@ export default function GameMenuScreen({ navigation, route }: Props) {
     if (group.players.length < gameDef.minPlayers) {
       return Alert.alert(`Needs ${gameDef.minPlayers}+ players`);
     }
+    if (gameId === "roof-race") {
+      // Played by the session's teams: exactly 2 of them, set up first.
+      const fit = fromSessionTeams(group.teamsEnabled, group.teams, group.players.map((p) => p.id));
+      if (!fit.ok) {
+        return Alert.alert("Two teams needed", fit.problem, [
+          { text: "Cancel", style: "cancel" },
+          { text: "👥 Set up teams", onPress: () => navigation.navigate("TeamSetup", { groupId, playerId }) },
+        ]);
+      }
+    }
     if (gameId === "imposter") {
       // show mode modal for imposter since it supports pass the phone
       setShowModeModal(true);
@@ -140,7 +153,8 @@ export default function GameMenuScreen({ navigation, route }: Props) {
       gameId === "card-clash" ||
       gameId === "clash-holdem" ||
       gameId === "court-of-thieves" ||
-      gameId === "match-the-following"
+      gameId === "match-the-following" ||
+      gameId === "roof-race"
     ) {
       // online only — let host pick who's actually playing, then go straight in
       setPendingGameId(gameId);

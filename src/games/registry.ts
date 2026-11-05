@@ -14,6 +14,15 @@ export type GameDefinition = {
 
 export const games: GameDefinition[] = [
     {
+        id: 'roof-race',
+        name: 'Race Before the Roof Falls',
+        emoji: '🏛️',
+        description: 'Two teams, three doors, one crumbling ruin',
+        minPlayers: 4,
+        available: true,
+        modes: ['online'],
+    },
+    {
         id: 'match-the-following',
         name: 'Match the Following',
         emoji: '✏️',

@@ -22,7 +22,7 @@ import {
 import { cotHeistAct } from "../logic/game";
 import Room, { type RoomLook } from "../components/Room";
 import { CT, rupees, seatColor } from "../theme";
-import { useServerNow } from "../useServerNow";
+import { useServerNow } from "../../../shared/hooks/useServerNow";
 
 type Props = { group: Group; gs: CotGameState; playerId: string };
 

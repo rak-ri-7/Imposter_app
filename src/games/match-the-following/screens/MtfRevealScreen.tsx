@@ -10,7 +10,7 @@ import { mtfToRoundEnd } from "../logic/game";
 import MatchBoard from "../components/MatchBoard";
 import Paper from "../components/Paper";
 import { HAND, MF, penOf } from "../theme";
-import { useServerNow } from "../useServerNow";
+import { useServerNow } from "../../../shared/hooks/useServerNow";
 
 type Props = { group: Group; gs: MtfGameState; playerId: string };
 

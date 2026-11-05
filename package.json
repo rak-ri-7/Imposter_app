@@ -8,7 +8,8 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "test:cot": "npx tsx tests/court-of-thieves.test.ts",
-    "test:mtf": "npx tsx tests/match-the-following.test.ts"
+    "test:mtf": "npx tsx tests/match-the-following.test.ts",
+    "test:rrf": "npx tsx tests/roof-race.test.ts"
   },
   "expo": {
     "name": "What Game Are We Playing Today?",

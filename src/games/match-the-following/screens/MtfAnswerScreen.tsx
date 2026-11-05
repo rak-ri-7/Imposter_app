@@ -8,7 +8,7 @@ import { MAX_CHARS } from "../logic/engine";
 import { mtfAnswer } from "../logic/game";
 import Paper, { clock } from "../components/Paper";
 import { HAND, MF } from "../theme";
-import { useServerNow } from "../useServerNow";
+import { useServerNow } from "../../../shared/hooks/useServerNow";
 
 type Props = { group: Group; gs: MtfGameState; playerId: string };
 

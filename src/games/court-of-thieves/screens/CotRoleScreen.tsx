@@ -6,7 +6,7 @@ import { View, Text, StyleSheet, Pressable } from "react-native";
 import type { CotGameState, Group } from "../../../shared/types";
 import { ROLE_INFO, total } from "../logic/engine";
 import { CT, rupees, seatColor } from "../theme";
-import { useServerNow } from "../useServerNow";
+import { useServerNow } from "../../../shared/hooks/useServerNow";
 
 type Props = { group: Group; gs: CotGameState; playerId: string };
 
