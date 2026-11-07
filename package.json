@@ -9,7 +9,9 @@
     "web": "expo start --web",
     "test:cot": "npx tsx tests/court-of-thieves.test.ts",
     "test:mtf": "npx tsx tests/match-the-following.test.ts",
-    "test:rrf": "npx tsx tests/roof-race.test.ts"
+    "test:rrf": "npx tsx tests/roof-race.test.ts",
+    "backup": "node tools/firestore-backup.mjs",
+    "restore": "node tools/firestore-restore.mjs"
   },
   "expo": {
     "name": "What Game Are We Playing Today?",
@@ -49,6 +51,7 @@
     "@react-navigation/native-stack": "^7.15.1",
     "expo": "^57.0.20",
     "expo-audio": "~57.0.5",
+    "expo-font": "~57.0.4",
     "expo-status-bar": "~57.0.1",
     "firebase": "^12.13.0",
     "react": "19.2.3",
@@ -61,7 +64,8 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.10",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "firebase-admin": "^13.10.0"
   },
   "private": true
 }

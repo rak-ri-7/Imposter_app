@@ -14,6 +14,8 @@ import { RootStackParamList } from "../../../App";
 import { useGroup } from "../hooks/useGroup";
 import { saveTeams } from "../firebase/groups";
 import { Team } from "../types";
+import { display } from "../theme/fonts";
+import BackLink from "../components/BackLink";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "TeamSetup">;
@@ -55,24 +57,26 @@ export default function TeamSetupScreen({ navigation, route }: Props) {
     (p) => !assignedPlayerIds.includes(p.id),
   );
 
-  const randomizeTeams = () => {
-    const shuffled = [...group.players].sort(() => Math.random() - 0.5);
-    const half = Math.ceil(shuffled.length / 2);
-    const newTeams: Team[] = [
-      {
-        id: generateTeamId(),
-        name: "Team A",
-        playerIds: shuffled.slice(0, half).map((p) => p.id),
-        color: TEAM_COLORS[0],
-      },
-      {
-        id: generateTeamId(),
-        name: "Team B",
-        playerIds: shuffled.slice(half).map((p) => p.id),
-        color: TEAM_COLORS[1],
-      },
-    ];
-    setTeams(newTeams);
+  // Deal everyone into the current teams at random, as evenly as possible
+  // (team names and colours stay). Players set to watch keep watching.
+  const randomizeTeams = (count = teams.length) => {
+    const watchers = new Set(unassignedPlayers.map((p) => p.id));
+    const nobodyPlaced = watchers.size === group.players.length;
+    const pool = group.players.filter((p) => mode === "pick" || nobodyPlaced || !watchers.has(p.id));
+    const shuffled = [...pool];
+    for (let i = shuffled.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+    }
+    const base = Array.from({ length: count }, (_, i) =>
+      teams[i] ?? { id: generateTeamId(), name: TEAM_NAMES[i], color: TEAM_COLORS[i], playerIds: [] },
+    );
+    setTeams(
+      base.map((t, i) => ({
+        ...t,
+        playerIds: shuffled.filter((_, k) => k % count === i).map((p) => p.id),
+      })),
+    );
     setMode("manual");
   };
 
@@ -120,23 +124,7 @@ export default function TeamSetupScreen({ navigation, route }: Props) {
     setTeams((prev) => prev.filter((t) => t.id !== teamId));
   };
 
-  const handleConfirm = async () => {
-    const allAssigned = group.players.every((p) =>
-      teams.some((t) => t.playerIds.includes(p.id)),
-    );
-    if (!allAssigned) {
-      return Alert.alert(
-        "Unassigned players",
-        "All players must be in a team before confirming.",
-      );
-    }
-    const emptyTeams = teams.filter((t) => t.playerIds.length === 0);
-    if (emptyTeams.length > 0) {
-      return Alert.alert(
-        "Empty teams",
-        "Remove empty teams before confirming.",
-      );
-    }
+  const save = async () => {
     setLoading(true);
     try {
       await saveTeams(groupId, teams);
@@ -146,34 +134,56 @@ export default function TeamSetupScreen({ navigation, route }: Props) {
     }
   };
 
+  const handleConfirm = () => {
+    const emptyTeams = teams.filter((t) => t.playerIds.length === 0);
+    if (emptyTeams.length > 0) {
+      return Alert.alert(
+        "Empty team",
+        `${emptyTeams.map((t) => t.name).join(", ")} has nobody in it. Add players or remove the team.`,
+      );
+    }
+    // Players left off every team watch team games (that's allowed).
+    if (unassignedPlayers.length > 0) {
+      const names = unassignedPlayers.map((p) => p.name).join(", ");
+      return Alert.alert(
+        "Some players aren't on a team",
+        `${names} will watch team games, and their points won't count toward a team. Save anyway?`,
+        [
+          { text: "Go back", style: "cancel" },
+          { text: "Save", onPress: save },
+        ],
+      );
+    }
+    save();
+  };
+
   const getPlayerName = (id: string) =>
     group.players.find((p) => p.id === id)?.name ?? "Unknown";
 
   if (mode === "pick") {
     return (
       <View style={styles.container}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.goBack()}
-        >
-          <Text style={styles.backText}>← Back</Text>
-        </TouchableOpacity>
+        <BackLink onPress={() => navigation.goBack()} />
 
         <Text style={styles.title}>👥 Play as Teams</Text>
         <Text style={styles.subtitle}>How do you want to form teams?</Text>
 
+        <Text style={styles.usedFor}>
+          Teams are used by 🏛️ Race Before the Roof Falls! (2 teams), and as an
+          option in 💣 That Old Bomb Story (Pass mode), 📺 Quiz Board and ⏱️ Stop
+          the Timer. In every game, points also add up to team totals on the
+          leaderboard.
+        </Text>
+
         <View style={styles.pickBox}>
           <TouchableOpacity
             style={styles.pickBtn}
-            onPress={() => {
-              randomizeTeams();
-              setMode("manual");
-            }}
+            onPress={() => randomizeTeams(teams.length)}
           >
             <Text style={styles.pickEmoji}>🎲</Text>
             <Text style={styles.pickName}>Randomize</Text>
             <Text style={styles.pickDesc}>
-              App splits players into 2 random teams
+              App splits everyone into 2 random teams. Change the number after.
             </Text>
           </TouchableOpacity>
 
@@ -194,19 +204,32 @@ export default function TeamSetupScreen({ navigation, route }: Props) {
 
   return (
     <View style={styles.container}>
-      <TouchableOpacity style={styles.backBtn} onPress={() => setMode("pick")}>
-        <Text style={styles.backText}>← Back</Text>
-      </TouchableOpacity>
+      <BackLink onPress={() => setMode("pick")} />
 
       <Text style={styles.title}>👥 Set Up Teams</Text>
       <Text style={styles.subtitle}>
-        Tap a player to move them between teams
+        Tap a team button to move someone. ✕ takes them off a team to watch.
       </Text>
+
+      <View style={styles.toolRow}>
+        <Text style={styles.toolLabel}>🎲 Shuffle into</Text>
+        {[2, 3, 4].map((n) => (
+          <TouchableOpacity
+            key={n}
+            style={[styles.toolBtn, teams.length === n && styles.toolBtnOn]}
+            onPress={() => randomizeTeams(n)}
+          >
+            <Text style={[styles.toolText, teams.length === n && styles.toolTextOn]}>
+              {n} teams
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
 
       <ScrollView showsVerticalScrollIndicator={false}>
         {unassignedPlayers.length > 0 && (
           <View style={styles.unassignedBox}>
-            <Text style={styles.unassignedLabel}>UNASSIGNED</Text>
+            <Text style={styles.unassignedLabel}>NOT ON A TEAM · WATCHING</Text>
             <View style={styles.playerChips}>
               {unassignedPlayers.map((player) => (
                 <View key={player.id} style={styles.unassignedChip}>
@@ -305,7 +328,7 @@ const styles = StyleSheet.create({
   backText: { color: "#888", fontSize: 14 },
   title: {
     fontSize: 24,
-    fontWeight: "bold",
+    ...display,
     color: "#1A1A2E",
     textAlign: "center",
     marginBottom: 4,
@@ -317,6 +340,30 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   pickBox: { gap: 12, marginTop: 20 },
+  usedFor: {
+    color: "#666",
+    fontSize: 13,
+    lineHeight: 19,
+    textAlign: "center",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#EAEAEE",
+    padding: 12,
+  },
+  toolRow: { flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 14, justifyContent: "center" },
+  toolLabel: { color: "#888", fontSize: 13, fontWeight: "700" },
+  toolBtn: {
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E2E2EA",
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+  },
+  toolBtnOn: { backgroundColor: "#1A1A2E", borderColor: "#1A1A2E" },
+  toolText: { color: "#1A1A2E", fontSize: 13, fontWeight: "700" },
+  toolTextOn: { color: "#fff" },
   pickBtn: {
     backgroundColor: "#fff",
     borderRadius: 16,
@@ -416,11 +463,11 @@ const styles = StyleSheet.create({
   },
   addTeamText: { color: "#888", fontSize: 14 },
   confirmBtn: {
-    backgroundColor: "#E63946",
+    backgroundColor: "#C9A45C", // the one "go" button: gold, like Play and Continue
     borderRadius: 14,
     padding: 18,
     alignItems: "center",
     marginTop: 8,
   },
-  confirmBtnText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
+  confirmBtnText: { color: "#121110", fontSize: 18, ...display },
 });

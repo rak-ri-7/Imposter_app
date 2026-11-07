@@ -4,7 +4,7 @@
 import { View, Text, StyleSheet } from 'react-native';
 import type { Group, RrfGameState, RrfTeam } from '../../../shared/types';
 import { TREMOR_COST, TREMOR_MS, here, rivalOf, tremorProblem } from '../logic/engine';
-import { rrfAnswerTremor, rrfProposeTremor } from '../logic/game';
+import { presentOf, rrfAnswerTremor, rrfProposeTremor } from '../logic/game';
 import { scenarioById } from '../data/scenarios';
 import Ruin, { TimerPill } from '../components/Ruin';
 import { DoorPath, GhostButton, GoldButton, RivalStrip } from '../components/Bits';
@@ -17,7 +17,7 @@ type Props = { group: Group; gs: RrfGameState; playerId: string; team: RrfTeam }
 export default function RrfBetweenScreen({ group, gs, playerId, team }: Props) {
     const now = useServerNow();
     const sc = scenarioById(gs.scenario);
-    const present = group.players.map((p) => p.id);
+    const present = presentOf(group);
     const nameOf = (id: string) => (id === playerId ? 'You' : group.players.find((p) => p.id === id)?.name ?? 'Someone');
     const rival = gs.teams[rivalOf(team.id)];
     const R = TEAM[rival.id];

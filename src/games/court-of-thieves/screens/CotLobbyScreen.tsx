@@ -5,6 +5,7 @@ import type { Group } from "../../../shared/types";
 import { DEAL_OPTIONS, DEFAULT_DEAL_MS, DEFAULT_ROUNDS, MAX_PARTNERS, MIN_PLAYERS, PAYDAY, ROUND_OPTIONS } from "../logic/engine";
 import { startCot } from "../logic/game";
 import { CT } from "../theme";
+import HowToPlay from "../../../shared/components/HowToPlay";
 
 type Props = { group: Group; playerId: string };
 
@@ -45,6 +46,7 @@ export default function CotLobbyScreen({ group, playerId }: Props) {
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
       <Text style={styles.title}>⚖️ Court of Thieves</Text>
       <Text style={styles.sub}>{group.players.length} players · the heist, the deals, the court</Text>
+      <HowToPlay game="court-of-thieves" details={RULES} theme={{ text: CT.text, muted: CT.textMuted, accent: CT.gold, sheet: CT.bg, panel: CT.panel, sheetText: CT.text, sheetMuted: CT.textMuted }} />
 
       <Text style={styles.label}>ROUNDS</Text>
       <View style={styles.row}>
@@ -71,14 +73,6 @@ export default function CotLobbyScreen({ group, playerId }: Props) {
         })}
       </View>
 
-      <Text style={styles.label}>HOW IT WORKS</Text>
-      <View style={styles.rules}>
-        {RULES.map((r, i) => (
-          <Text key={i} style={styles.rule}>
-            • {r}
-          </Text>
-        ))}
-      </View>
       <Text style={styles.tip}>Tip: hold your phone close. Your screen gives you away during the blackout.</Text>
 
       {isHost ? (

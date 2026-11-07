@@ -1,0 +1,44 @@
+rules_version = '2';
+
+// Firestore security rules for What Game Are We Playing Today?
+// Paste all of this into Firebase console → Firestore Database → Rules,
+// replacing what's there, and click Publish. (Or from the hosting folder:
+// firebase deploy --only firestore:rules)
+//
+// Everyone signs in anonymously when the app opens, so "signedIn" just
+// means "a real copy of the app".
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+
+    // Groups: players create, join, play and leave through the group doc.
+    match /groups/{groupId} {
+      allow read, create, update, delete: if signedIn();
+
+      // Who's here: each phone writes only its own check-in.
+      match /presence/{playerId} {
+        allow read: if signedIn();
+        allow write: if signedIn() && request.auth.uid == playerId;
+      }
+
+      // 💬 Group chat: post only as yourself, up to 300 characters.
+      // The host can remove messages.
+      match /messages/{messageId} {
+        allow read: if signedIn();
+        allow create: if signedIn()
+          && request.resource.data.playerId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 300;
+        allow delete: if signedIn()
+          && get(/databases/$(database)/documents/groups/$(groupId)).data.hostId == request.auth.uid;
+      }
+    }
+
+    // All-time board: everyone can read, each phone writes only its own.
+    match /profiles/{uid} {
+      allow read: if signedIn();
+      allow write: if signedIn() && request.auth.uid == uid;
+    }
+  }
+}

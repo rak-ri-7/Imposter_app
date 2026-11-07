@@ -18,8 +18,10 @@ import {
   randomCategories,
 } from "../logic/board";
 import { startQuizBoard } from "../logic/game";
+import { sessionTeamSides } from "../../../shared/utils/teams";
 import { RetroButton } from "../components";
 import { QB, bevel, displayText } from "../theme";
+import HowToPlay from "../../../shared/components/HowToPlay";
 
 type Props = { group: Group; playerId: string };
 
@@ -54,6 +56,10 @@ export default function QuizLobbyScreen({ group, playerId }: Props) {
     randomCategories(BOARD_SIZES.full.categories),
   );
   const [starting, setStarting] = useState(false);
+  // Teams set up in the game menu? The host can play this as teams.
+  const teams = sessionTeamSides(group);
+  const [asTeams, setAsTeams] = useState(true);
+  const playTeams = !!teams && asTeams;
 
   // Switching show size keeps the picks, trimming or topping up to fit.
   const chooseSize = (next: QuizBoardSize) => {
@@ -106,7 +112,7 @@ export default function QuizLobbyScreen({ group, playerId }: Props) {
   const doStart = async () => {
     setStarting(true);
     try {
-      await startQuizBoard(group, { mode, categories: cats, size });
+      await startQuizBoard(group, { mode, categories: cats, size, asTeams: playTeams });
     } catch (e) {
       console.error(e);
       Alert.alert("Couldn't build the board", String((e as Error)?.message ?? e));
@@ -128,6 +134,13 @@ export default function QuizLobbyScreen({ group, playerId }: Props) {
             </Text>
           )}
         </View>
+        <HowToPlay
+          game="quiz-board"
+          center
+          details={isHost ? RULES[mode] : [...RULES.options.slice(0, 1), "The host picks the mode: Options (4 choices) or Buzzer (answer out loud).", "Wrong answers cost money in both modes, so be careful!", RULES.options[5], RULES.options[6]]}
+          detailsTitle={isHost ? (mode === "buzzer" ? "BUZZER MODE" : "OPTIONS MODE") : "ALL THE DETAILS"}
+          theme={{ text: QB.white, muted: QB.dim, accent: QB.gold, sheet: QB.bg, panel: QB.panel, sheetText: QB.white, sheetMuted: QB.dim }}
+        />
 
         {isHost && (
           <>
@@ -150,6 +163,30 @@ export default function QuizLobbyScreen({ group, playerId }: Props) {
                 </TouchableOpacity>
               ))}
             </View>
+
+            {teams && (
+              <>
+                <Text style={styles.label}>PLAY AS</Text>
+                <View style={styles.modeRow}>
+                  {[true, false].map((t) => (
+                    <TouchableOpacity
+                      key={String(t)}
+                      onPress={() => setAsTeams(t)}
+                      style={[styles.mode, asTeams === t && styles.modeOn]}
+                    >
+                      <Text style={displayText(18, asTeams === t ? QB.gold : QB.white)}>
+                        {t ? "👥 Teams" : "🙋 Solo"}
+                      </Text>
+                      <Text style={styles.modeDesc}>
+                        {t
+                          ? `${teams.map((x) => x.name).join(" vs ")}. One answer per team: first teammate to tap or buzz answers for all.`
+                          : "Everyone plays for their own money."}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
 
             <Text style={styles.label}>SHOW LENGTH</Text>
             <View style={styles.modeRow}>
@@ -202,18 +239,6 @@ export default function QuizLobbyScreen({ group, playerId }: Props) {
           </>
         )}
 
-        <Text style={styles.label}>
-          HOW TO PLAY{isHost ? "" : " — host is setting up the board"}
-        </Text>
-        <View style={styles.rules}>
-          {(isHost ? RULES[mode] : [...RULES.options.slice(0, 1), "The host picks the mode: Options (4 choices) or Buzzer (answer out loud).", "Wrong answers cost money in both modes, so be careful!", RULES.options[5], RULES.options[6]]).map(
-            (r, i) => (
-              <Text key={i} style={styles.rule}>
-                {i + 1}. {r}
-              </Text>
-            ),
-          )}
-        </View>
 
         {stale.length > 0 && (
           <View style={styles.staleBox}>

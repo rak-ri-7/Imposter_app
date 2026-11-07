@@ -17,6 +17,8 @@ import {
   clearLocalSession,
   LocalSession,
 } from "../utils/localSession";
+import { display } from "../theme/fonts";
+import BackLink from "../components/BackLink";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "QuickPlay">;
@@ -49,9 +51,10 @@ export default function QuickPlayMenuScreen({ navigation }: Props) {
         [{ text: "OK" }],
       );
     }
-    if (gameId === "imposter") {
-      navigation.navigate("ImposterQuickPlay");
-    }
+    if (gameId === "imposter") navigation.navigate("ImposterQuickPlay");
+    else if (gameId === "stop-the-timer") navigation.navigate("TimerPass");
+    else if (gameId === "match-the-following") navigation.navigate("MtfPass");
+    else if (gameId === "quiz-board") navigation.navigate("QuizPass");
   };
 
   const handleSetupPlayers = () => {
@@ -80,12 +83,7 @@ export default function QuickPlayMenuScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      <TouchableOpacity
-        style={styles.backBtn}
-        onPress={() => navigation.goBack()}
-      >
-        <Text style={styles.backText}>← Back</Text>
-      </TouchableOpacity>
+      <BackLink onPress={() => navigation.goBack()} />
 
       <Text style={styles.title}>⚡ Quick Play</Text>
       <Text style={styles.subtitle}>No internet needed</Text>
@@ -191,7 +189,7 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 26,
-    fontWeight: "bold",
+    ...display,
     color: "#1A1A2E",
     textAlign: "center",
     marginBottom: 4,
@@ -219,16 +217,16 @@ const styles = StyleSheet.create({
     marginBottom: 16,
   },
   setupBtn: {
-    backgroundColor: "#E63946",
+    backgroundColor: "#C9A45C", // the one "go" button: gold, like Play and Continue
     borderRadius: 12,
     padding: 14,
     alignItems: "center",
     width: "100%",
   },
   setupBtnText: {
-    color: "#fff",
-    fontSize: 15,
-    fontWeight: "600",
+    color: "#121110",
+    fontSize: 17,
+    ...display,
   },
   sessionHeader: {
     flexDirection: "row",

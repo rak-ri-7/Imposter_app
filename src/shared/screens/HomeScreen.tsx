@@ -19,8 +19,17 @@ import {
   clearSession,
   savePlayerName,
   getSavedPlayerName,
+  saveAvatar,
+  getSavedAvatar,
 } from "../utils/session";
+import PixelAvatar from "../avatars/PixelAvatar";
+import AvatarPicker from "../avatars/AvatarPicker";
+import { AVATARS, avatarById } from "../avatars/sprites";
 import { RouteProp } from "@react-navigation/native";
+import PosterWall from "../components/PosterWall";
+import { display } from "../theme/fonts";
+
+const TAGLINE = "Party games for all ages";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "Home">;
@@ -38,6 +47,16 @@ export default function HomeScreen({ navigation, route }: Props) {
     playerName: string;
   } | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
+  // A random avatar to start with, until the player picks (then remembered).
+  const [avatar, setAvatar] = useState(
+    () => AVATARS[Math.floor(Math.random() * AVATARS.length)].id,
+  );
+  const [picking, setPicking] = useState(false);
+  const pickAvatar = (id: string) => {
+    setAvatar(id);
+    setPicking(false);
+    saveAvatar(id);
+  };
 
   useEffect(() => {
     checkForSavedSession();
@@ -58,6 +77,8 @@ export default function HomeScreen({ navigation, route }: Props) {
       setPlayerName(savedName);
       setNamePrefilled(true);
     }
+    const savedAvatar = await getSavedAvatar();
+    if (avatarById(savedAvatar)) setAvatar(savedAvatar!);
 
     const session = await getSession();
     if (session) {
@@ -90,7 +111,8 @@ export default function HomeScreen({ navigation, route }: Props) {
     setLoading(true);
     try {
       await savePlayerName(playerName.trim()); // ← add this
-      const { group, playerId } = await createGroup(playerName.trim());
+      await saveAvatar(avatar);
+      const { group, playerId } = await createGroup(playerName.trim(), avatar);
       await saveSession(group.id, playerId, playerName.trim());
       navigation.navigate("GroupLobby", { groupId: group.id, playerId });
     } catch (e: any) {
@@ -106,9 +128,11 @@ export default function HomeScreen({ navigation, route }: Props) {
     setLoading(true);
     try {
       await savePlayerName(playerName.trim()); // ← add this
+      await saveAvatar(avatar);
       const { group, playerId } = await joinGroup(
         groupCode.trim(),
         playerName.trim(),
+        avatar,
       );
       await saveSession(group.id, playerId, playerName.trim());
       navigation.navigate("GroupLobby", { groupId: group.id, playerId });
@@ -121,8 +145,8 @@ export default function HomeScreen({ navigation, route }: Props) {
 
   if (checkingSession) {
     return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#E63946" />
+      <View style={[styles.container, styles.center]}>
+        <ActivityIndicator size="large" color={GOLD} />
       </View>
     );
   }
@@ -130,8 +154,10 @@ export default function HomeScreen({ navigation, route }: Props) {
   if (savedSession) {
     return (
       <View style={styles.container}>
-        <Text style={styles.title}>🎉 What Game Are We Playing Today?</Text>
-        <Text style={styles.subtitle}>The Indian Edition</Text>
+        <PosterWall />
+        <View style={styles.content}>
+        <Text style={styles.title}>What Game Are We{"\n"}Playing Today?</Text>
+        <Text style={styles.subtitle}>{TAGLINE}</Text>
 
         <View style={styles.resumeBox}>
           <Text style={styles.resumeText}>
@@ -148,43 +174,56 @@ export default function HomeScreen({ navigation, route }: Props) {
             <Text style={styles.backText}>Start fresh instead</Text>
           </TouchableOpacity>
         </View>
+        </View>
       </View>
     );
   }
 
   return (
+    <View style={styles.container}>
+    <PosterWall />
     <KeyboardAvoidingView
-      style={styles.container}
+      style={styles.content}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      <Text style={styles.title}>🎉 What Game Are We Playing Today?</Text>
-      <Text style={styles.subtitle}>The Indian Edition</Text>
+      <Text style={styles.title}>What Game Are We{"\n"}Playing Today?</Text>
+      <Text style={styles.subtitle}>{TAGLINE}</Text>
 
-      {mode === "create" && (
-        <TextInput
-          style={styles.input}
-          placeholder="Your name"
-          placeholderTextColor="#888"
-          value={playerName}
-          onChangeText={setPlayerName}
-          maxLength={16}
-        />
+      {mode !== null && (
+        <View style={styles.nameRow}>
+          <TouchableOpacity
+            onPress={() => setPicking(true)}
+            style={styles.avatarBtn}
+            accessibilityLabel="Change your avatar"
+          >
+            <PixelAvatar avatar={avatar} size={52} />
+            <View style={styles.avatarEdit}>
+              <Text style={styles.avatarEditText}>✎</Text>
+            </View>
+          </TouchableOpacity>
+          <TextInput
+            style={[styles.input, styles.nameInput]}
+            placeholder="Your name"
+            placeholderTextColor="#8C877E"
+            value={playerName}
+            onChangeText={setPlayerName}
+            maxLength={16}
+          />
+        </View>
       )}
+      <AvatarPicker
+        visible={picking}
+        selected={avatar}
+        onPick={pickAvatar}
+        onClose={() => setPicking(false)}
+      />
 
       {mode === "join" && (
         <>
           <TextInput
             style={styles.input}
-            placeholder="Your name"
-            placeholderTextColor="#888"
-            value={playerName}
-            onChangeText={setPlayerName}
-            maxLength={16}
-          />
-          <TextInput
-            style={styles.input}
             placeholder="Group code"
-            placeholderTextColor="#888"
+            placeholderTextColor="#8C877E"
             value={groupCode}
             onChangeText={setGroupCode}
             autoCapitalize="characters"
@@ -196,7 +235,7 @@ export default function HomeScreen({ navigation, route }: Props) {
       {loading ? (
         <ActivityIndicator
           size="large"
-          color="#E63946"
+          color={GOLD}
           style={{ marginTop: 24 }}
         />
       ) : (
@@ -271,128 +310,181 @@ export default function HomeScreen({ navigation, route }: Props) {
         </View>
       )}
     </KeyboardAvoidingView>
+    </View>
   );
 }
+
+// Colours: dark stone, ivory text and a brass accent (same family as the games).
+const GOLD = "#C9A45C";
+const INK = "#121110";
+const IVORY = "#ECE7DD";
+const MUTED = "#A9A49A";
+const PANEL = "rgba(23,25,28,0.92)";
+const LINE = "#2D3137";
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#1A1A2E",
+    backgroundColor: "#07080A",
+  },
+  center: {
     alignItems: "center",
     justifyContent: "center",
-    padding: 24,
+  },
+  // Everything sits at the bottom, over the darkest part of the poster wall.
+  content: {
+    flex: 1,
+    justifyContent: "flex-end",
+    paddingHorizontal: 24,
+    paddingBottom: 40,
   },
   title: {
-    fontSize: 30,
-    fontWeight: "bold",
-    color: "#E63946",
-    marginBottom: 4,
+    fontSize: 34,
+    lineHeight: 40,
+    ...display,
+    color: "#FFFFFF",
     textAlign: "center",
+    marginBottom: 8,
   },
   subtitle: {
-    fontSize: 16,
-    color: "#FFD700",
-    marginBottom: 48,
-    letterSpacing: 2,
+    fontSize: 15,
+    color: MUTED,
+    textAlign: "center",
+    marginBottom: 28,
+    letterSpacing: 0.5,
+  },
+  nameRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    marginBottom: 12,
+  },
+  avatarBtn: {
+    borderRadius: 14,
+  },
+  avatarEdit: {
+    position: "absolute",
+    right: -4,
+    bottom: -4,
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: GOLD,
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#07080A",
+  },
+  avatarEditText: {
+    color: INK,
+    fontSize: 11,
+    fontWeight: "900",
+  },
+  nameInput: {
+    flex: 1,
+    width: undefined,
+    marginBottom: 0,
   },
   input: {
     width: "100%",
-    backgroundColor: "#16213E",
-    color: "#fff",
-    borderRadius: 12,
+    backgroundColor: PANEL,
+    color: IVORY,
+    borderRadius: 14,
     padding: 16,
     fontSize: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#0F3460",
+    borderColor: LINE,
   },
   buttons: {
     width: "100%",
-    marginTop: 12,
+    marginTop: 4,
     gap: 12,
   },
   btn: {
-    padding: 16,
-    borderRadius: 12,
+    paddingVertical: 17,
+    borderRadius: 14,
     alignItems: "center",
   },
   btnPrimary: {
-    backgroundColor: "#E63946",
+    backgroundColor: GOLD,
   },
   btnSecondary: {
-    backgroundColor: "transparent",
-    borderWidth: 1.5,
-    borderColor: "#E63946",
+    backgroundColor: PANEL,
+    borderWidth: 1,
+    borderColor: LINE,
   },
   btnTextPrimary: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "600",
+    color: INK,
+    fontSize: 17,
+    fontWeight: "800",
   },
   btnTextSecondary: {
-    color: "#E63946",
-    fontSize: 16,
-    fontWeight: "600",
+    color: IVORY,
+    fontSize: 17,
+    fontWeight: "800",
   },
   backBtn: {
     alignItems: "center",
     marginTop: 4,
+    paddingVertical: 6,
   },
   backText: {
-    color: "#888",
+    color: MUTED,
     fontSize: 14,
+    fontWeight: "600",
   },
   resumeBox: {
     width: "100%",
-    backgroundColor: "#16213E",
-    borderRadius: 16,
-    padding: 24,
-    alignItems: "center",
+    backgroundColor: PANEL,
+    borderRadius: 18,
+    padding: 20,
+    alignItems: "stretch",
     borderWidth: 1,
-    borderColor: "#0F3460",
+    borderColor: LINE,
   },
   resumeText: {
-    color: "#888",
+    color: MUTED,
     fontSize: 14,
     marginBottom: 16,
     textAlign: "center",
   },
   resumeName: {
-    color: "#fff",
-    fontWeight: "600",
+    color: IVORY,
+    fontWeight: "700",
   },
-
   divider: {
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    marginVertical: 8,
+    marginVertical: 2,
   },
   dividerLine: {
     flex: 1,
-    height: 0.5,
-    backgroundColor: "#333",
+    height: StyleSheet.hairlineWidth,
+    backgroundColor: LINE,
   },
   dividerText: {
-    color: "#888",
+    color: MUTED,
     fontSize: 13,
   },
   quickPlayBtn: {
     alignItems: "center",
     padding: 14,
-    borderRadius: 12,
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: "#333",
+    borderColor: LINE,
     borderStyle: "dashed",
+    backgroundColor: "rgba(7,8,10,0.6)",
   },
   quickPlayText: {
-    color: "#FFD700",
+    color: GOLD,
     fontSize: 16,
-    fontWeight: "600",
+    fontWeight: "800",
     marginBottom: 2,
   },
   quickPlaySub: {
-    color: "#888",
+    color: MUTED,
     fontSize: 12,
   },
 });

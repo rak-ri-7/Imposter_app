@@ -337,7 +337,7 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
         </TouchableOpacity>
         <TouchableOpacity
           style={styles.menuBtn}
-          onPress={() => navigation.replace("QuickPlay")}
+          onPress={() => navigation.popTo("QuickPlay")}
         >
           <Text style={styles.menuBtnText}>Back to Menu</Text>
         </TouchableOpacity>
@@ -647,7 +647,7 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
 
         <TouchableOpacity
           style={styles.menuBtn}
-          onPress={() => navigation.replace("QuickPlay")}
+          onPress={() => navigation.popTo("QuickPlay")}
         >
           <Text style={styles.menuBtnText}>Back to Menu</Text>
         </TouchableOpacity>

@@ -1,7 +1,8 @@
 // src/games/timer/logic/game.ts
 import { doc, updateDoc, runTransaction, increment, serverTimestamp, Timestamp, Transaction } from 'firebase/firestore';
 import { db } from '../../../shared/firebase/config';
-import { Group, TimerGameState } from '../../../shared/types';
+import { Group, TeamSide, TimerGameState } from '../../../shared/types';
+import { rankTeams, sessionTeamSides } from '../../../shared/utils/teams';
 import { returnToMenu, scoreFields } from '../../../shared/firebase/groups';
 import { generateQuestionForRound } from '../data/questions';
 
@@ -20,7 +21,9 @@ export const toMillis = (ts: Timestamp | number | null | undefined): number | nu
     return ts.toMillis();
 };
 
-export const startTimerGame = async (group: Group): Promise<void> => {
+// asTeams: play as the session's teams (each team scores its average
+// distance from the answer). Ignored if there aren't 2 teams to play.
+export const startTimerGame = async (group: Group, asTeams = false): Promise<void> => {
     const groupRef = doc(db, 'groups', group.id);
     const question = generateQuestionForRound(1);
 
@@ -36,6 +39,7 @@ export const startTimerGame = async (group: Group): Promise<void> => {
         roundNumber: 1,
         distractionsEnabled: true,
         recentTemplates: [question.templateId],
+        teams: asTeams ? sessionTeamSides(group) : null,
     };
 
     await updateDoc(groupRef, {
@@ -115,10 +119,19 @@ export const revealResults = async (groupId: string, playerIds: string[]): Promi
 // round was already awarded.
 const buildAwardUpdates = (data: Group, gameState: TimerGameState) => {
     if (gameState.pointsAwardedRound === gameState.roundNumber) return null;
-    const ranking = calculateRanking(gameState.finalStops ?? {}, gameState.answer, data.players);
     const updates: Record<string, unknown> = {
         'gameState.pointsAwardedRound': gameState.roundNumber,
     };
+    const teams = teamsStillPlaying(gameState.teams, data.players);
+    if (teams) {
+        // Team mode: every member gets their team's points.
+        for (const t of teamRanking(gameState.finalStops ?? {}, gameState.answer, teams)) {
+            if (t.points <= 0 || !t.anyStopped) continue;
+            for (const id of t.team.memberIds) Object.assign(updates, scoreFields('stop-the-timer', id, t.points));
+        }
+        return updates;
+    }
+    const ranking = calculateRanking(gameState.finalStops ?? {}, gameState.answer, data.players);
     for (const r of ranking) {
         if (r.points > 0) Object.assign(updates, scoreFields('stop-the-timer', r.playerId, r.points));
     }
@@ -249,6 +262,67 @@ export const calculateRanking = (
     });
 
     return [...stopped, ...notStopped];
+};
+
+// ── TEAM MODE ────────────────────────────────────────────────────
+// Each team scores the average of its members' distances from the answer
+// (lower is better), so a team of 2 isn't beaten by a team of 4 just for
+// being smaller. A miss, or anything worse than this, counts as this far
+// off, so one disaster can't sink a team on its own.
+export const TEAM_MISS_MS = 10_000;
+
+// The teams as they stand now: players who've left the group no longer
+// count (otherwise they'd score as a miss every round and drag their team
+// down), and a team with nobody left drops out. Fewer than 2 teams left →
+// null, and the round is scored player by player instead.
+export const teamsStillPlaying = (
+    teams: TeamSide[] | null | undefined,
+    players: { id: string }[]
+): TeamSide[] | null => {
+    if (!teams?.length) return null;
+    const here = new Set(players.map((p) => p.id));
+    const left = teams
+        .map((t) => ({ ...t, memberIds: t.memberIds.filter((id) => here.has(id)) }))
+        .filter((t) => t.memberIds.length > 0);
+    return left.length >= 2 ? left : null;
+};
+
+export type TeamRankingEntry = {
+    team: TeamSide;
+    avgMs: number;      // average distance from the answer
+    best: string | null; // the teammate closest to the answer
+    anyStopped: boolean;
+    place: number;      // ties share it
+    points: number;     // each member gets this
+};
+
+export const teamRanking = (
+    finalStops: Record<string, number | null>,
+    answer: number,
+    teams: TeamSide[]
+): TeamRankingEntry[] => {
+    const answerMs = answer * 1000;
+    const gapOf = (id: string) => {
+        const raw = finalStops[id];
+        return typeof raw === 'number' && raw < MAX_TIMER_MS ? Math.min(Math.abs(raw - answerMs), TEAM_MISS_MS) : null;
+    };
+    const rows = teams.map((team) => {
+        const gaps = team.memberIds.map(gapOf);
+        const counted = gaps.map((g) => g ?? TEAM_MISS_MS);
+        const stoppers = team.memberIds.filter((_, i) => gaps[i] !== null);
+        const best = stoppers.sort((a, b) => (gapOf(a) ?? 0) - (gapOf(b) ?? 0))[0] ?? null;
+        return {
+            team,
+            avgMs: counted.length ? Math.round(counted.reduce((a, b) => a + b, 0) / counted.length) : TEAM_MISS_MS,
+            best,
+            anyStopped: stoppers.length > 0,
+        };
+    });
+    return rankTeams(rows, (r) => r.avgMs, false).map((r) => ({
+        ...r.item,
+        place: r.place,
+        points: r.item.anyStopped ? r.points : 0,
+    }));
 };
 
 // Awards the final round's points exactly once, then returns to the menu.

@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import type { Group, RrfGameState, RrfTeam } from '../../../shared/types';
 import { rivalOf } from '../logic/engine';
-import { rrfPlaceSeal, rrfPushSeal } from '../logic/game';
+import { presentOf, rrfPlaceSeal, rrfPushSeal } from '../logic/game';
 import Ruin, { TimerPill } from '../components/Ruin';
 import { GoldButton } from '../components/Bits';
 import { useServerNow } from '../../../shared/hooks/useServerNow';
@@ -16,7 +16,7 @@ type Props = { group: Group; gs: RrfGameState; playerId: string; team: RrfTeam }
 export default function RrfSealScreen({ group, gs, playerId, team }: Props) {
     const now = useServerNow();
     const seal = team.seal!;
-    const present = group.players.map((p) => p.id);
+    const present = presentOf(group);
     const nameOf = (id: string) => (id === playerId ? 'You' : group.players.find((p) => p.id === id)?.name ?? 'Someone');
     const mineTile = seal.tiles.find((t) => t.owner === playerId);
     // Tiles whose owner left can be placed by anyone.

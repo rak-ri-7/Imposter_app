@@ -2,6 +2,7 @@
   "expo": {
     "name": "WGAWPT",
     "slug": "imposter-game",
+    "scheme": "wgawpt",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -14,7 +15,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.rak.impostergame"
+      "bundleIdentifier": "com.rak.impostergame",
+      "associatedDomains": [
+        "applinks:imposter-game-a588f.web.app"
+      ]
     },
     "android": {
       "package": "com.rak.wgawpt",
@@ -24,7 +28,24 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "intentFilters": [
+        {
+          "action": "VIEW",
+          "autoVerify": true,
+          "data": [
+            {
+              "scheme": "https",
+              "host": "imposter-game-a588f.web.app",
+              "pathPrefix": "/join"
+            }
+          ],
+          "category": [
+            "BROWSABLE",
+            "DEFAULT"
+          ]
+        }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -36,7 +57,8 @@
     },
     "plugins": [
       "expo-status-bar",
-      "expo-audio"
+      "expo-audio",
+      "expo-font"
     ]
   }
 }

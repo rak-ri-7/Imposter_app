@@ -1,0 +1,6 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [{ "appID": "REPLACE_TEAMID.com.rak.impostergame", "paths": ["/join/*"] }]
+  }
+}

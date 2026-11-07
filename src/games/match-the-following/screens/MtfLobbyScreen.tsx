@@ -6,6 +6,7 @@ import { DEFAULT_ROUNDS, MAX_CHARS, MIN_PLAYERS, ROUND_OPTIONS } from "../logic/
 import { startMtf } from "../logic/game";
 import Paper from "../components/Paper";
 import { HAND, MF } from "../theme";
+import HowToPlay from "../../../shared/components/HowToPlay";
 
 type Props = { group: Group; playerId: string };
 
@@ -56,7 +57,7 @@ export default function MtfLobbyScreen({ group, playerId }: Props) {
       }
     >
       <Text style={styles.title}>Match the Following</Text>
-      <Text style={styles.sub}>Draw a line between each friend and what they'd do.</Text>
+      <HowToPlay game="match-the-following" details={RULES} theme={{ text: MF.pencil, muted: MF.muted, accent: MF.ink, sheet: MF.paper, panel: MF.card, sheetText: MF.pencil, sheetMuted: MF.muted, numberText: "#FFFFFF" }} />
 
       <Text style={styles.label}>ROUNDS</Text>
       <View style={styles.row}>
@@ -83,14 +84,6 @@ export default function MtfLobbyScreen({ group, playerId }: Props) {
         })}
       </View>
 
-      <Text style={styles.label}>INSTRUCTIONS</Text>
-      <View style={{ gap: 8 }}>
-        {RULES.map((r, i) => (
-          <Text key={i} style={styles.rule}>
-            {i + 1}. {r}
-          </Text>
-        ))}
-      </View>
     </Paper>
   );
 }

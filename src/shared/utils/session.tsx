@@ -49,3 +49,12 @@ export const savePlayerName = async (name: string): Promise<void> => {
 export const getSavedPlayerName = async (): Promise<string | null> => {
   return await AsyncStorage.getItem("savedPlayerName");
 };
+
+// The pixel avatar this phone last picked (remembered like the name).
+export const saveAvatar = async (avatar: string): Promise<void> => {
+  await AsyncStorage.setItem("savedAvatar", avatar).catch(() => {});
+};
+
+export const getSavedAvatar = async (): Promise<string | null> => {
+  return await AsyncStorage.getItem("savedAvatar").catch(() => null);
+};

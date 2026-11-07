@@ -5,6 +5,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RouteProp } from "@react-navigation/native";
 import { RootStackParamList } from "../../../App";
 import { useGroup } from "../../shared/hooks/useGroup";
+import { registerGameCloser, useMinimizableGame } from "../../shared/hooks/useMinimizableGame";
 import { useHostFailover } from "../../shared/hooks/useHostFailover";
 import { getServerNow, syncServerTimeOffset } from "../../shared/firebase/time";
 import { returnToMenu } from "../../shared/firebase/groups";
@@ -86,16 +87,13 @@ export default function QuizBoardFlowScreen({ navigation, route }: Props) {
     }).catch(() => {});
   }, [groupId, playerId]);
 
-  useEffect(() => {
-    if (group?.currentGame === "menu") {
-      navigation.replace("GameMenu", { groupId, playerId });
-    }
-  }, [group?.currentGame]);
+  // Back / swipe minimises this game; game over takes it away.
+  useMinimizableGame(navigation, route, group, "quiz-board", groupId, playerId);
 
   // Android back: the host can end the game; others are told to ask.
   const alertOpen = useRef(false);
   useEffect(() => {
-    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+    const sub = registerGameCloser(groupId, () => {
       if (!group || alertOpen.current) return true;
       alertOpen.current = true;
       const done = () => {

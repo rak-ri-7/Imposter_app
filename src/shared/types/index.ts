@@ -6,6 +6,7 @@ export type Player = {
     name: string;
     isHost: boolean;
     isReady: boolean;
+    avatar?: string; // pixel avatar id (src/shared/avatars/sprites.ts)
 };
 
 export type GameType = 'imposter' | 'stop-the-timer' | 'pass-the-bomb' | 'quiz-board' | 'card-clash' | 'clash-holdem' | 'court-of-thieves' | 'match-the-following' | 'roof-race';
@@ -33,6 +34,10 @@ export type Team = {
     color: string;
 };
 
+// A team as a game plays it: the session team, keeping only players who are
+// in this game. Snapshotted into a game's state when it starts in team mode.
+export type TeamSide = { id: string; name: string; color: string; memberIds: string[] };
+
 // 💣 Pass the Bomb: what a group told us about itself before playing
 // (timer mode), so it only gets instructions that make sense for them.
 export type BombCrowd = 'friends' | 'family' | 'couples' | 'colleagues' | 'justmet';
@@ -58,9 +63,14 @@ export type Group = {
     // The same points split by game (session leaderboard slides).
     gameScores?: Partial<Record<GameType, Record<string, number>>>;
     currentGame: GameType | 'menu';
+    menuTheme?: string; // 🎨 game-menu theme id (src/shared/themes/menuThemes.tsx)
     status: GameStatus;
     gameState: ImposterGameState | TimerGameState | BombGameState | PassGameState | QuizBoardGameState | ClashGameState | HoldemGameState | CotGameState | MtfGameState | RrfGameState;
     createdAt?: number;
+    // Last time anything happened in the group (stale after a day), and when
+    // a Firestore TTL policy may delete it.
+    lastActiveAt?: number;
+    expireAt?: Timestamp;
     teams?: Team[];
     // 🏛️ Race Before the Roof Falls: the lobby's settings (teams come from `teams`).
     rrfLobby?: { expeditions: number };
@@ -127,8 +137,8 @@ export type TimerGameState = {
     distractionsEnabled: boolean;
     finalStops: Record<string, number | null>;
     recentTemplates?: string[];
-
-
+    // Team mode: the teams playing (null / missing = everyone for themselves).
+    teams?: TeamSide[] | null;
 };
 
 export const emptyImposterState: ImposterGameState = {
@@ -910,6 +920,8 @@ export type QuizBoardGameState = {
     money: Record<string, number>;    // this game's rupees per player
     rounds: QuizBoardRound[];
     pointsAwarded?: boolean;
+    // Team mode: one answer per team, money adds up per team.
+    teams?: TeamSide[] | null;
 };
 
 
@@ -1148,6 +1160,9 @@ export type RrfGameState = {
     unguarded: boolean;
     results: RrfResult[];
     stats: Record<string, RrfStats>;
+    // Players whose phones dropped out (no check-ins, or out of the app too
+    // long). The game carries on as if they weren't here until they're back.
+    away?: string[];
     // A seal winner let go mid-hold: unless `pid` grabs again by `at`, the chest is unguarded.
     fumble?: { pid: string; at: number } | null;
     // The session teams playing as Tiger and Cobra (their own names and colours).

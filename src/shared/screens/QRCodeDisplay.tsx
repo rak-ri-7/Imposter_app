@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, Modal, TouchableOpacity } from "react-native";
 import QRCode from "react-native-qrcode-svg";
+import { inviteUrl } from "../config/invite";
 
 type Props = {
   code: string;
@@ -8,7 +9,9 @@ type Props = {
 };
 
 export default function QRCodeDisplay({ code, visible, onClose }: Props) {
-  const deepLink = `wgawpt://join/${code}`;
+  // A normal web link, so any phone camera can open it: straight into the
+  // app if it's installed, otherwise a page with the code and store buttons.
+  const link = inviteUrl(code);
 
   return (
     <Modal
@@ -20,11 +23,13 @@ export default function QRCodeDisplay({ code, visible, onClose }: Props) {
       <View style={styles.overlay}>
         <View style={styles.box}>
           <Text style={styles.title}>Scan to Join</Text>
-          <Text style={styles.subtitle}>Point your camera at this QR code</Text>
+          <Text style={styles.subtitle}>
+            Any phone camera works. No app yet? It shows them where to get it.
+          </Text>
 
           <View style={styles.qrWrapper}>
             <QRCode
-              value={deepLink}
+              value={link}
               size={200}
               color="#1A1A2E"
               backgroundColor="#fff"
@@ -108,20 +113,20 @@ const styles = StyleSheet.create({
     marginBottom: 6,
   },
   code: {
-    color: "#E63946",
+    color: "#B08A3E",
     fontSize: 36,
     fontWeight: "bold",
     letterSpacing: 8,
     marginBottom: 24,
   },
   closeBtn: {
-    backgroundColor: "#E63946",
+    backgroundColor: "#C9A45C",
     borderRadius: 12,
     paddingHorizontal: 40,
     paddingVertical: 14,
   },
   closeBtnText: {
-    color: "#fff",
+    color: "#121110",
     fontSize: 16,
     fontWeight: "600",
   },

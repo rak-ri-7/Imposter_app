@@ -16,6 +16,9 @@ import BombCollectionModal, { collectionCount } from "../timer/BombCollectionMod
 import { ALL_QUIRK_VARIANTS } from "../../logic/timer/bombQuirks";
 import { setBombLobby, setBombProfile } from "../../../../shared/firebase/groups";
 import BombGroupSetup, { profileSummary } from "./BombGroupSetup";
+import HowToPlay, { type HowToTheme } from "../../../../shared/components/HowToPlay";
+
+const BOMB_HOWTO: HowToTheme = { text: "#E8E8E8", muted: "#999", accent: "#FF4500", sheet: "#121212", panel: "#1E1E1E", sheetText: "#EDEDED", sheetMuted: "#999", numberText: "#FFFFFF" };
 import {
   startPassGame,
   PASS_STACK_DEFAULT,
@@ -28,6 +31,8 @@ import {
   CURRENCY,
   STORE,
 } from "../../logic/pass/passGame";
+import PixelAvatar from "../../../../shared/avatars/PixelAvatar";
+import { avatarIdFor } from "../../../../shared/avatars/sprites";
 
 type GameMode = "timer" | "pass";
 
@@ -212,66 +217,51 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
   ];
 
   const passRules = (
-    <View style={styles.rulesBox}>
-      <Text style={styles.rulesTitle}>HOW TO PLAY — PASS MODE</Text>
-      <Text style={styles.rule}>💣 One player holds the bomb</Text>
-      <Text style={styles.rule}>
-        🎯 Pick who you're passing to, then answer a question
-      </Text>
-      <Text style={styles.rule}>
-        🎒 {shownBudget} passes each per round — spend them on anyone
-      </Text>
-      <Text style={styles.rule}>
-        ✅ Right answer = the bomb moves (costs 1 pass)
-      </Text>
-      <Text style={styles.rule}>❌ Wrong answer = lose 1 pass, try again</Text>
-      <Text style={styles.rule}>💥 Can't pay a pass? It blows up on you</Text>
-      <Text style={styles.rule}>
-        🔁 New round = everyone topped back up to {shownBudget}
-      </Text>
-      <Text style={styles.rule}>
-        ❤️ {shownLives} {shownLives === 1 ? "life" : "lives"} each — last one
-        standing wins!
-      </Text>
-      <Text style={styles.rule}>
-        🏪 Earn {CURRENCY.name} for clean answers and spend them at the{" "}
-        {STORE.name}
-      </Text>
-      <Text style={styles.rule}>
-        🚨 Think someone's cheating? Call it out — a majority vote costs them
-        passes
-      </Text>
-      {shownHidden && (
-        <Text style={styles.rule}>
-          🔒 Hidden passes: you only see your own count — listen for fumbles and
-          keep track
-        </Text>
-      )}
-    </View>
+    <HowToPlay
+      game="pass-the-bomb"
+      hook="Pass mode: answer a question to pass the bomb on. Run out of passes and it blows up on you."
+      detailsTitle="PASS MODE"
+      details={[
+        "💣 One player holds the bomb.",
+        "🎯 Pick who you're passing to, then answer a question.",
+        `🎒 ${shownBudget} passes each per round. Spend them on anyone.`,
+        "✅ Right answer: the bomb moves (costs 1 pass).",
+        "❌ Wrong answer: lose 1 pass and try again.",
+        "💥 Can't pay a pass? It blows up on you.",
+        `🔁 New round: everyone is topped back up to ${shownBudget}.`,
+        `❤️ ${shownLives} ${shownLives === 1 ? "life" : "lives"} each. Last one standing wins!`,
+        `🏪 Earn ${CURRENCY.name} for clean answers and spend them at the ${STORE.name}.`,
+        "🚨 Think someone's cheating? Call it out. A majority vote costs them passes.",
+        ...(shownHidden ? ["🔒 Hidden passes: you only see your own count. Listen for fumbles and keep track."] : []),
+      ]}
+      theme={BOMB_HOWTO}
+    />
   );
 
   const [showCollection, setShowCollection] = useState(false);
 
   const timerRules = (
-    <View style={styles.rulesBox}>
-      <Text style={styles.rulesTitle}>HOW TO PLAY — TIMER MODE</Text>
-      <Text style={styles.rule}>💣 One player holds the bomb</Text>
-      <Text style={styles.rule}>
-        📜 They get a secret instruction to pass it
-      </Text>
-      <Text style={styles.rule}>🎯 Tap a player's name to pass</Text>
-      <Text style={styles.rule}>⚠️ At panic time — cut red or blue wire</Text>
-      <Text style={styles.rule}>💥 Wrong wire or no time = lose a life</Text>
-      <Text style={styles.rule}>❤️ 3 lives each — last one standing wins!</Text>
-      <TouchableOpacity
-        style={styles.collectionBtn}
-        onPress={() => setShowCollection(true)}
-      >
+    <>
+      <HowToPlay
+        game="pass-the-bomb"
+        hook="Timer mode: follow your secret instruction to pass the bomb, and cut the right wire when it panics."
+        detailsTitle="TIMER MODE"
+        details={[
+          "💣 One player holds the bomb.",
+          "📜 They get a secret instruction saying who they may pass it to.",
+          "🎯 Tap a player's name to pass.",
+          "⚠️ At panic time, cut the red or the blue wire.",
+          "💥 Wrong wire or out of time: lose a life.",
+          "❤️ 3 lives each. Last one standing wins!",
+        ]}
+        theme={BOMB_HOWTO}
+      />
+      <TouchableOpacity style={[styles.collectionBtn, { marginTop: 0, marginBottom: 14 }]} onPress={() => setShowCollection(true)}>
         <Text style={styles.collectionBtnText}>
           📖 Bomb Collection · {collectionCount(group)}/{ALL_QUIRK_VARIANTS.length} found
         </Text>
       </TouchableOpacity>
-    </View>
+    </>
   );
 
   return (
@@ -290,7 +280,7 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
         }}
         onDone={onSetupDone}
       />
-      <Text style={styles.title}>💣 Pass the Bomb</Text>
+      <Text style={styles.title}>💣 That Old Bomb Story</Text>
       <Text style={styles.subtitle}>Social deduction under pressure</Text>
 
       <ScrollView
@@ -598,9 +588,7 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
               renderItem={({ item }) => (
                 <View style={styles.playerRow}>
                   <View style={styles.avatar}>
-                    <Text style={styles.avatarText}>
-                      {item.name.charAt(0).toUpperCase()}
-                    </Text>
+                    <PixelAvatar avatar={avatarIdFor(item, group.players)} playerId={item.id} size={38} />
                   </View>
                   <Text style={styles.playerName}>{item.name}</Text>
                   <View style={styles.livesRow}>
@@ -858,6 +846,7 @@ const styles = StyleSheet.create({
     gap: 10,
   },
   avatar: {
+    overflow: "hidden",
     width: 38,
     height: 38,
     borderRadius: 19,

@@ -6,9 +6,14 @@ import {
   FlatList,
   Alert,
 } from "react-native";
+import { useState } from "react";
 import { Group } from "../../../shared/types";
+import { sessionTeamSides } from "../../../shared/utils/teams";
 import { useTimerGame } from "../logic/useTimerGame";
 import { startTimerGame } from "../logic/game";
+import HowToPlay from "../../../shared/components/HowToPlay";
+import PixelAvatar from "../../../shared/avatars/PixelAvatar";
+import { avatarIdFor } from "../../../shared/avatars/sprites";
 
 type Props = {
   group: Group;
@@ -17,12 +22,16 @@ type Props = {
 
 export default function TimerLobbyScreen({ group, playerId }: Props) {
   const { isHost, loading } = useTimerGame(group, playerId);
+  // Teams set up in the game menu? The host can play this as teams.
+  const teams = sessionTeamSides(group);
+  const [asTeams, setAsTeams] = useState(true);
+  const playTeams = !!teams && asTeams;
 
   const onStart = async () => {
     if (group.players.length < 2) {
       return Alert.alert("Need at least 2 players!");
     }
-    await startTimerGame(group);
+    await startTimerGame(group, playTeams);
   };
 
   return (
@@ -30,18 +39,36 @@ export default function TimerLobbyScreen({ group, playerId }: Props) {
       <Text style={styles.title}>⏱️ Stop the Timer</Text>
       <Text style={styles.subtitle}>Mental math + timing challenge</Text>
 
-      <View style={styles.rulesBox}>
-        <Text style={styles.rulesTitle}>How to play</Text>
-        <Text style={styles.rule}>1. A question appears on screen</Text>
-        <Text style={styles.rule}>2. Calculate the answer in your head</Text>
-        <Text style={styles.rule}>
-          3. A hidden timer starts — stop it when you think it matches the
-          answer
-        </Text>
-        <Text style={styles.rule}>
-          4. Closest to the answer wins the round!
-        </Text>
-      </View>
+      <HowToPlay
+        game="stop-the-timer"
+        center
+        theme={{ text: "#E6EEF5", muted: "#9AA7B5", accent: "#4FC3F7", sheet: "#0D1B2A", panel: "#1B2A3B", sheetText: "#E6EEF5", sheetMuted: "#9AA7B5" }}
+      />
+
+      {teams && !isHost && (
+        <View style={styles.teamToggle}>
+          <Text style={styles.teamToggleTitle}>👥 Teams are set up</Text>
+          <Text style={styles.teamToggleText}>
+            The host chooses whether this game is played as teams or everyone for themselves.
+          </Text>
+        </View>
+      )}
+      {teams && isHost && (
+        <TouchableOpacity
+          style={[styles.teamToggle, playTeams && styles.teamToggleOn]}
+          onPress={() => setAsTeams((v) => !v)}
+        >
+          <Text style={styles.teamToggleTitle}>
+            {playTeams ? "👥 Playing as teams" : "🙋 Everyone for themselves"}
+            {"  ·  tap to switch"}
+          </Text>
+          <Text style={styles.teamToggleText}>
+            {playTeams
+              ? `${teams.map((t) => t.name).join(" vs ")}. Everyone stops their own timer; the team closest on average wins the round, and every member scores.`
+              : "Ignore the teams: closest single player wins."}
+          </Text>
+        </TouchableOpacity>
+      )}
 
       <Text style={styles.playersLabel}>PLAYERS ({group.players.length})</Text>
       <FlatList
@@ -51,9 +78,7 @@ export default function TimerLobbyScreen({ group, playerId }: Props) {
         renderItem={({ item }) => (
           <View style={styles.playerRow}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {item.name.charAt(0).toUpperCase()}
-              </Text>
+              <PixelAvatar avatar={avatarIdFor(item, group.players)} playerId={item.id} size={40} />
             </View>
             <Text style={styles.playerName}>{item.name}</Text>
             {item.id === playerId && (
@@ -147,6 +172,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   avatar: {
+    overflow: "hidden",
     width: 40,
     height: 40,
     borderRadius: 20,
@@ -185,6 +211,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "600",
   },
+  teamToggle: {
+    backgroundColor: "#1B2A3B",
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: "#2A3A4B",
+    padding: 14,
+    marginBottom: 16,
+    gap: 4,
+  },
+  teamToggleOn: { borderColor: "#4FC3F7" },
+  teamToggleTitle: { color: "#fff", fontSize: 15, fontWeight: "700" },
+  teamToggleText: { color: "#9AA7B5", fontSize: 13, lineHeight: 18 },
   startBtn: {
     backgroundColor: "#4FC3F7",
     borderRadius: 14,

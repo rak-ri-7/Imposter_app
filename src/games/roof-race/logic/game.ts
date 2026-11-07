@@ -17,7 +17,9 @@ export const isRrfState = (gs: unknown): gs is RrfGameState => !!gs && (gs as { 
 
 // Firestore refuses undefined values anywhere in a document.
 const clean = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
-const present = (data: Group) => data.players.map((p) => p.id);
+// Who counts as here: in the group and not marked away (see engine.presentIds).
+const present = (data: Group) => E.presentIds(data.players.map((p) => p.id), isRrfState(data.gameState) ? data.gameState : null);
+export const presentOf = (group: Group): string[] => present(group);
 // The server time of the last write: no phone's clock may judge a move as earlier than that.
 const lastWrite = (data: Group): number | undefined => data.rrfAt?.toMillis?.();
 const groupRef = (groupId: string) => doc(db, 'groups', groupId);
@@ -170,6 +172,11 @@ export const rrfTick = (groupId: string, graceMs: number) =>
         return E.changed(gs, next) ? { ok: true, gs: next } : null;
     });
 
+// Host: who has dropped out (from the check-ins every phone sends). Only
+// the host writes it, so phones can't disagree.
+export const rrfSetAway = (groupId: string, playerId: string, away: string[]) =>
+    step(groupId, (gs, data) => (data.hostId !== playerId || gs.phase === 'over' ? null : E.setAway(gs, away.filter((p) => data.players.some((x) => x.id === p)))));
+
 // Host: skip the story or the expedition summary.
 export const rrfSkip = (groupId: string, playerId: string) =>
     step(groupId, (gs, data, now) => (data.hostId === playerId ? E.skip(gs, now, present(data)) : null));
@@ -189,7 +196,8 @@ export const finishRrf = async (group: Group): Promise<void> => {
             if (!isRrfState(gs) || gs.pointsAwarded) return;
             const updates: Record<string, unknown> = { 'gameState.pointsAwarded': true };
             if (gs.phase === 'over') {
-                for (const [pid, pts] of Object.entries(E.playerPoints(gs, present(data)))) {
+                // Everyone still in the group scores, dropped phones included.
+                for (const [pid, pts] of Object.entries(E.playerPoints(gs, data.players.map((p) => p.id)))) {
                     if (pts > 0) Object.assign(updates, scoreFields('roof-race', pid, pts));
                 }
             }

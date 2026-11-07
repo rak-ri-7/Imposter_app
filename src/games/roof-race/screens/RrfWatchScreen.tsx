@@ -4,6 +4,7 @@
 import { View, Text, StyleSheet } from 'react-native';
 import type { Group, RrfGameState, RrfTeam } from '../../../shared/types';
 import { TEAM_IDS, here } from '../logic/engine';
+import { presentOf } from '../logic/game';
 import { scenarioById } from '../data/scenarios';
 import Ruin from '../components/Ruin';
 import { DoorPath } from '../components/Bits';
@@ -16,7 +17,7 @@ type Props = { group: Group; gs: RrfGameState; playerId: string };
 export default function RrfWatchScreen({ group, gs, playerId }: Props) {
     const now = useServerNow();
     const sc = scenarioById(gs.scenario);
-    const present = group.players.map((p) => p.id);
+    const present = presentOf(group);
     const nameOf = (id: string) => group.players.find((p) => p.id === id)?.name ?? 'Someone';
 
     const headline =

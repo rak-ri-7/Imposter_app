@@ -4,7 +4,7 @@ import { View, Text, StyleSheet, ScrollView } from "react-native";
 import { formatRupees } from "../../../shared/quiz";
 import type { Group } from "../../../shared/types";
 import type { QuizBoardCtx } from "../logic/useQuizBoard";
-import { finishQuizBoard, standings } from "../logic/game";
+import { finishQuizBoard, standings, teamStandings } from "../logic/game";
 import { RetroButton } from "../components";
 import { QB, bevel, digitText, displayText } from "../theme";
 
@@ -17,14 +17,23 @@ export default function QuizFinalScreen({ group, playerId, ctx }: Props) {
 
   const rows = standings(gs.money, group.players);
   const played = (gs.rounds ?? []).some((r) => !r.voided);
-  const teams =
-    group.teamsEnabled && group.teams?.length
+  // Team mode: teams are ranked and score; players are shown for interest.
+  // Solo games with session teams still show the teams' totals.
+  const teamMode = !!gs.teams?.length;
+  const teams = teamMode
+    ? teamStandings(gs.money, gs.teams!).map((r) => ({ ...r.team, money: r.money, rank: r.rank, points: r.points }))
+    : group.teamsEnabled && group.teams?.length
       ? [...group.teams]
           .map((t) => ({
-            ...t,
+            id: t.id,
+            name: t.name,
+            color: t.color,
             money: t.playerIds.reduce((s, id) => s + (gs.money[id] ?? 0), 0),
+            rank: 0,
+            points: 0,
           }))
           .sort((a, b) => b.money - a.money)
+          .map((t, i, all) => ({ ...t, rank: i > 0 && all[i - 1].money === t.money ? i : i + 1 }))
       : null;
 
   const medal = (rank: number) =>
@@ -35,7 +44,10 @@ export default function QuizFinalScreen({ group, playerId, ctx }: Props) {
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.marquee}>
           <Text style={displayText(32, QB.gold)}>Final Standings</Text>
-          {rows[0] && played && (
+          {played && teamMode && teams?.[0] && (
+            <Text style={displayText(16)}>{teams[0].name} take the crown!</Text>
+          )}
+          {played && !teamMode && rows[0] && (
             <Text style={displayText(16)}>
               {nameOf(rows[0].playerId)} takes the crown!
             </Text>
@@ -45,14 +57,19 @@ export default function QuizFinalScreen({ group, playerId, ctx }: Props) {
         {teams && (
           <>
             <Text style={styles.label}>TEAMS</Text>
-            {teams.map((t, i) => (
+            {teams.map((t) => (
               <View key={t.id} style={styles.row}>
-                <Text style={styles.rank}>{medal(i + 1)}</Text>
+                <Text style={styles.rank}>{medal(t.rank)}</Text>
                 <View style={[styles.dot, { backgroundColor: t.color }]} />
                 <Text style={[displayText(17), styles.flex]}>{t.name}</Text>
-                <Text style={digitText(17, t.money < 0 ? QB.red : QB.gold)}>
-                  {formatRupees(t.money)}
-                </Text>
+                <View style={styles.right}>
+                  <Text style={digitText(17, t.money < 0 ? QB.red : QB.gold)}>
+                    {formatRupees(t.money)}
+                  </Text>
+                  {played && teamMode && t.points > 0 && (
+                    <Text style={styles.pts}>+{t.points} pts each</Text>
+                  )}
+                </View>
               </View>
             ))}
             <Text style={styles.label}>PLAYERS</Text>
@@ -70,7 +87,7 @@ export default function QuizFinalScreen({ group, playerId, ctx }: Props) {
               <Text style={digitText(17, r.money < 0 ? QB.red : QB.gold)}>
                 {formatRupees(r.money)}
               </Text>
-              {played && r.points > 0 && (
+              {played && !teamMode && r.points > 0 && (
                 <Text style={styles.pts}>+{r.points} leaderboard pts</Text>
               )}
             </View>

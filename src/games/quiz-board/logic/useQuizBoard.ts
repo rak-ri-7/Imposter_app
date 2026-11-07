@@ -15,6 +15,7 @@ import {
     revealAnswer,
     toMillis,
 } from './game';
+import { teamOfPlayer } from '../../../shared/utils/teams';
 
 // Other phones step in if the host's phone hasn't acted this long after
 // a deadline (asleep, backgrounded, dropped).
@@ -81,6 +82,19 @@ export const useQuizBoard = (group: Group | null, playerId: string) => {
     const lastRound = gs?.rounds?.[gs.rounds.length - 1];
     const canPick = !!gs && phase === 'board' && (playerId === gs.pickerId || isHost);
 
+    // ── team mode ────────────────────────────────────────────────────
+    const teams = gs?.teams?.length ? gs.teams : null;
+    const myTeam = teamOfPlayer(teams, playerId);
+    const watching = !!teams && !myTeam;
+    // The teammate who already answered / buzzed for my team (not me).
+    const answeredForMe =
+        (myTeam &&
+            myTeam.memberIds.find(
+                (id) => id !== playerId && (id in (gs?.picks ?? {}) || id in (gs?.buzzes ?? {}))
+            )) ||
+        null;
+    const teamsAnswered = teams ? teams.filter((t) => t.memberIds.some((id) => id in (gs?.picks ?? {}))).length : 0;
+
     // ── host automation (with backup from other phones) ──────────────
     const actedRef = useRef<string | null>(null);
     useEffect(() => {
@@ -118,8 +132,10 @@ export const useQuizBoard = (group: Group | null, playerId: string) => {
                     gs.mode === 'options' &&
                     (golden
                         ? golden.playerId in (gs.picks ?? {})
-                        : players.length > 0 &&
-                          players.every((p) => p.id in (gs.picks ?? {})));
+                        : gs.teams?.length
+                          ? gs.teams.every((t) => t.memberIds.some((id) => id in (gs.picks ?? {})))
+                          : players.length > 0 &&
+                            players.every((p) => p.id in (gs.picks ?? {})));
                 if (t >= endsAt + grace || (isHost && everyoneAnswered)) {
                     actedRef.current = key;
                     if (__DEV__)
@@ -182,6 +198,11 @@ export const useQuizBoard = (group: Group | null, playerId: string) => {
         canPick,
         nameOf,
         players,
+        teams,
+        myTeam,
+        watching,
+        answeredForMe,
+        teamsAnswered,
     };
 };
 

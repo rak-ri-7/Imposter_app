@@ -9,6 +9,7 @@ import {
 } from "react-native";
 import { Group, TimerGameState } from "../../../shared/types";
 import { useTimerGame } from "../logic/useTimerGame";
+import { teamRanking, teamsStillPlaying } from "../logic/game";
 
 type Props = {
   group: Group;
@@ -93,10 +94,17 @@ export default function TimerResultScreen({ group, playerId }: Props) {
     gameState.voidedRound?.round === gameState.roundNumber
       ? gameState.voidedRound
       : null;
-  const winners = voided
+  // Team mode: the teams' standings come first, and points go by team.
+  const teams = voided ? null : teamsStillPlaying(gameState.teams, group.players);
+  const teamRows = teams ? teamRanking(gameState.finalStops ?? {}, gameState.answer, teams) : null;
+  const teamWinners = teamRows ? teamRows.filter((t) => t.place === 1 && t.anyStopped) : [];
+  const pointsByPlayer: Record<string, number> = {};
+  if (teamRows)
+    for (const t of teamRows) for (const id of t.team.memberIds) pointsByPlayer[id] = t.points;
+  const winners = voided || teamRows
     ? []
     : ranking.filter((r) => r.rank === 1 && !r.didNotStop);
-  const nobodyStopped = !voided && ranking.length > 0 && winners.length === 0;
+  const nobodyStopped = !voided && ranking.length > 0 && ranking.every((r) => r.didNotStop);
   const stoppedEntries = ranking.filter((r) => r.stoppedAt !== null);
   const dp = Math.max(
     decimalsFor(stoppedEntries.map((r) => r.stoppedAt as number)),
@@ -148,6 +156,43 @@ export default function TimerResultScreen({ group, playerId }: Props) {
               </Text>
               {` tied for closest — each ${formatSeconds(winners[0].diff, dp)} off!`}
             </Text>
+          </View>
+        )}
+
+        {/* Team mode: who won the round, then every team */}
+        {teamRows && teamWinners.length > 0 && (
+          <View style={styles.winnerBox}>
+            <Text style={styles.winnerEmoji}>{teamWinners.length > 1 ? "🤝" : "🏆"}</Text>
+            <Text style={styles.winnerText}>
+              <Text style={styles.winnerName}>
+                {joinNames(teamWinners.map((t) => t.team.name))}
+              </Text>
+              {teamWinners.length > 1
+                ? ` tied, ${formatSeconds(teamWinners[0].avgMs)} off on average!`
+                : ` win the round, ${formatSeconds(teamWinners[0].avgMs)} off on average!`}
+            </Text>
+          </View>
+        )}
+        {teamRows && (
+          <View style={styles.teamTable}>
+            {teamRows.map((t) => (
+              <View key={t.team.id} style={[styles.teamRow, { borderLeftColor: t.team.color }]}>
+                <Text style={styles.teamPlace}>{getRankLabel(t.place, !t.anyStopped)}</Text>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.teamName}>{t.team.name}</Text>
+                  <Text style={styles.teamSub}>
+                    {t.anyStopped
+                      ? `avg ${formatSeconds(t.avgMs)} off${t.best ? ` · closest: ${getPlayerName(t.best)}` : ""}`
+                      : "nobody stopped in time"}
+                  </Text>
+                </View>
+                {t.points > 0 && (
+                  <View style={styles.pointsBadge}>
+                    <Text style={styles.pointsText}>+{t.points}pt each</Text>
+                  </View>
+                )}
+              </View>
+            ))}
           </View>
         )}
 
@@ -203,10 +248,16 @@ export default function TimerResultScreen({ group, playerId }: Props) {
                       {getPlayerName(r.playerId)}
                       {isMe ? " (you)" : ""}
                     </Text>
-                    {r.points > 0 && (
+                    {!teamRows && r.points > 0 && (
                       <View style={styles.pointsBadge}>
                         <Text style={styles.pointsText}>+{r.points}pt</Text>
                       </View>
+                    )}
+                    {teamRows && (
+                      <Text style={styles.teamTag}>
+                        {teams?.find((t) => t.memberIds.includes(r.playerId))?.name ?? "watching"}
+                        {pointsByPlayer[r.playerId] ? ` · +${pointsByPlayer[r.playerId]}` : ""}
+                      </Text>
                     )}
                   </View>
                   {r.stoppedAt === null ? (
@@ -315,6 +366,20 @@ const styles = StyleSheet.create({
   winnerEmoji: { fontSize: 24 },
   winnerText: { color: "#888", fontSize: 13, flex: 1, lineHeight: 20 },
   winnerName: { color: "#FFD700", fontWeight: "bold", fontSize: 15 },
+  teamTable: { gap: 6, marginBottom: 16 },
+  teamRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#1B2A3B",
+    borderRadius: 12,
+    padding: 12,
+    borderLeftWidth: 5,
+  },
+  teamPlace: { fontSize: 20, width: 36, textAlign: "center", color: "#888" },
+  teamName: { color: "#fff", fontSize: 15, fontWeight: "700" },
+  teamSub: { color: "#9AA7B5", fontSize: 12, marginTop: 2 },
+  teamTag: { color: "#9AA7B5", fontSize: 11 },
   sectionLabel: {
     color: "#888",
     fontSize: 11,

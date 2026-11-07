@@ -14,6 +14,8 @@ import {
   saveLocalSession,
   getLocalSession,
 } from "../utils/localSession";
+import { display } from "../theme/fonts";
+import BackLink from "../components/BackLink";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "QuickPlaySetup">;
@@ -99,12 +101,7 @@ export default function QuickPlaySetupScreen({ navigation }: Props) {
 
   return (
     <View style={styles.container}>
-      <TouchableOpacity
-        style={styles.backBtn}
-        onPress={() => navigation.goBack()}
-      >
-        <Text style={styles.backText}>← Back</Text>
-      </TouchableOpacity>
+      <BackLink dark onPress={() => navigation.goBack()} />
 
       <Text style={styles.title}>Players</Text>
       <Text style={styles.subtitle}>
@@ -162,7 +159,7 @@ const styles = StyleSheet.create({
   backText: { color: "#888", fontSize: 14 },
   title: {
     fontSize: 24,
-    fontWeight: "bold",
+    ...display,
     color: "#fff",
     marginBottom: 4,
   },
@@ -210,13 +207,13 @@ const styles = StyleSheet.create({
   },
   addBtnText: { color: "#888", fontSize: 14 },
   saveBtn: {
-    backgroundColor: "#E63946",
+    backgroundColor: "#C9A45C", // the one "go" button: gold, like Play and Continue
     borderRadius: 14,
     padding: 18,
     alignItems: "center",
     marginTop: 16,
   },
-  saveBtnText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
+  saveBtnText: { color: "#121110", fontSize: 18, ...display },
   clearBtn: {
     alignItems: "center",
     padding: 14,

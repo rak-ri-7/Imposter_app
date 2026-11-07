@@ -17,7 +17,9 @@ import type {
     QuizBoardMode,
     QuizBoardSize,
     QuizBoardRound,
+    TeamSide,
 } from '../../../shared/types';
+import { rankTeams, sessionTeamSides, teamOfPlayer } from '../../../shared/utils/teams';
 import type { QuizCategory } from '../../../shared/quiz';
 import {
     appendSeen,
@@ -92,7 +94,7 @@ const read = async (tx: Transaction, groupId: string) => {
 
 export const startQuizBoard = async (
     group: Group,
-    settings: { mode: QuizBoardMode; categories: QuizCategory[]; size: QuizBoardSize }
+    settings: { mode: QuizBoardMode; categories: QuizCategory[]; size: QuizBoardSize; asTeams?: boolean }
 ): Promise<void> => {
     const tiles = buildBoard(
         settings.categories,
@@ -101,7 +103,10 @@ export const startQuizBoard = async (
         settings.mode
     );
     const players = group.players;
-    const picker = players[Math.floor(Math.random() * players.length)];
+    // Team mode: one answer per team, money adds up per team.
+    const teams = settings.asTeams ? sessionTeamSides(group) : null;
+    const pickable = teams ? players.filter((p) => teamOfPlayer(teams, p.id)) : players;
+    const picker = pickable[Math.floor(Math.random() * pickable.length)];
 
     const gameState: QuizBoardGameState = {
         game: 'quiz-board',
@@ -123,6 +128,7 @@ export const startQuizBoard = async (
         money: Object.fromEntries(players.map((p) => [p.id, 0])),
         rounds: [],
         pointsAwarded: false,
+        teams,
     };
 
     await runTransaction(db, async (tx) => {
@@ -245,6 +251,11 @@ export const buzzIn = async (groupId: string, playerId: string): Promise<void> =
         if (gs.phase !== 'question' || gs.isPaused || gs.mode !== 'buzzer') return;
         if (gs.current?.golden) return; // golden tile: only the picker answers, aloud
         if (gs.buzzes && playerId in gs.buzzes) return;
+        if (gs.teams?.length) {
+            // Team mode: one buzz per team, and players not on a team watch.
+            const team = teamOfPlayer(gs.teams, playerId);
+            if (!team || team.memberIds.some((id) => id in (gs.buzzes ?? {}))) return;
+        }
         tx.update(groupRef, { [`gameState.buzzes.${playerId}`]: serverTimestamp() });
     });
 };
@@ -261,6 +272,11 @@ export const pickOption = async (
         if (gs.phase !== 'question' || gs.isPaused || gs.mode !== 'options') return;
         if (gs.current?.golden && gs.current.golden.playerId !== playerId) return;
         if (gs.picks && playerId in gs.picks) return;
+        if (gs.teams?.length && !gs.current?.golden) {
+            // Team mode: the first teammate to tap answers for the team.
+            const team = teamOfPlayer(gs.teams, playerId);
+            if (!team || team.memberIds.some((id) => id in (gs.picks ?? {}))) return;
+        }
         tx.update(groupRef, {
             [`gameState.picks.${playerId}`]: { option, at: serverTimestamp() },
         });
@@ -691,6 +707,16 @@ export const standings = (
     return rows;
 };
 
+// Team mode: each team's pot is its members' money added up. Every member
+// of a team gets that team's leaderboard points (1st = number of teams).
+export const teamStandings = (money: Record<string, number>, teams: TeamSide[]) =>
+    rankTeams(teams, (t) => t.memberIds.reduce((sum, id) => sum + (money?.[id] ?? 0), 0), true).map((r) => ({
+        team: r.item,
+        money: r.score,
+        rank: r.place,
+        points: r.points,
+    }));
+
 // Adds leaderboard points exactly once, then returns everyone to the menu.
 export const finishQuizBoard = async (group: Group): Promise<void> => {
     await runTransaction(db, async (tx) => {
@@ -700,7 +726,14 @@ export const finishQuizBoard = async (group: Group): Promise<void> => {
         if (gs.pointsAwarded) return;
         const updates: Record<string, unknown> = { 'gameState.pointsAwarded': true };
         // Only award a game that was actually played.
-        if ((gs.rounds ?? []).some((r) => !r.voided)) {
+        if ((gs.rounds ?? []).some((r) => !r.voided) && gs.teams?.length) {
+            const inGame = new Set(data.players.map((p) => p.id));
+            for (const t of teamStandings(gs.money, gs.teams)) {
+                if (t.points <= 0) continue;
+                for (const id of t.team.memberIds)
+                    if (inGame.has(id)) Object.assign(updates, scoreFields('quiz-board', id, t.points));
+            }
+        } else if ((gs.rounds ?? []).some((r) => !r.voided)) {
             for (const s of standings(gs.money, data.players)) {
                 if (s.points > 0) Object.assign(updates, scoreFields('quiz-board', s.playerId, s.points));
             }

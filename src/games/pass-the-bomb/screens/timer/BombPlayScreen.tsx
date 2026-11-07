@@ -23,6 +23,8 @@ import { QUIRK_INFO, QuirkVariant } from "../../logic/timer/bombQuirks";
 import { potCapFor, potForHold, potPreview, POT_RULE } from "../../logic/timer/bombPot";
 import { isAuctionRound } from "../../logic/timer/bombAuction";
 import BombAuctionPanel from "./BombAuctionPanel";
+import PixelAvatar from "../../../../shared/avatars/PixelAvatar";
+import { avatarIdFor } from "../../../../shared/avatars/sprites";
 
 type Props = {
   group: Group;
@@ -670,9 +672,7 @@ export default function BombPlayScreen({ group, playerId }: Props) {
                 <Text style={styles.gridClingyTag}>🔒</Text>
               )}
               <View style={styles.gridAvatar}>
-                <Text style={styles.gridAvatarText}>
-                  {item.name.charAt(0).toUpperCase()}
-                </Text>
+                <PixelAvatar avatar={avatarIdFor(item, group.players)} playerId={item.id} size={44} />
               </View>
               <Text style={styles.gridName} numberOfLines={1}>
                 {item.name}
@@ -898,6 +898,7 @@ const styles = StyleSheet.create({
   gridCardSelf: { opacity: 0.45 },
   gridCardBlocked: { opacity: 0.35 },
   gridAvatar: {
+    overflow: "hidden",
     width: 44,
     height: 44,
     borderRadius: 22,

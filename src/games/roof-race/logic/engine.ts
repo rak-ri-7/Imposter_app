@@ -99,7 +99,7 @@ export type Sides = Record<RrfTeamId, { name: string; color: string }>;
 export type FromSession = { ok: true; teams: Teams; sides: Sides; watching: string[] } | { ok: false; problem: string };
 
 export const NO_TEAMS =
-    'Race Before the Roof Falls is played by 2 teams. Set them up first: open the players list (👥) in the game menu and tap “Play as Teams”.';
+    'Race Before the Roof Falls! is played by 2 teams. Set them up first: open the players list (👥) in the game menu and tap “Play as Teams”.';
 
 export const fromSessionTeams = (enabled: boolean | undefined, session: SessionTeam[] | undefined, present: string[]): FromSession => {
     const list = enabled ? (session ?? []) : [];
@@ -107,7 +107,7 @@ export const fromSessionTeams = (enabled: boolean | undefined, session: SessionT
     if (list.length !== 2) {
         return {
             ok: false,
-            problem: `Race Before the Roof Falls is played by exactly 2 teams, and you have ${list.length}. Edit the teams (👥 in the game menu) so there are 2.`,
+            problem: `Race Before the Roof Falls! is played by exactly 2 teams, and you have ${list.length}. Edit the teams (👥 in the game menu) so there are 2.`,
         };
     }
     const [a, b] = list.map((t) => t.playerIds.filter((p) => present.includes(p)));
@@ -419,6 +419,19 @@ export const nextDue = (gs: RrfGameState, present: string[]): number => {
 };
 
 export const changed = (a: RrfGameState, b: RrfGameState) => JSON.stringify(a) !== JSON.stringify(b);
+
+// ── Dropped phones ──────────────────────────────────────────────────
+// Who counts as here: in the group, and not marked away. A dropped
+// key-holder's key passes on, their clue pages go to teammates, and the
+// chest doesn't wait for their hand. When they're back, they count again.
+export const presentIds = (playerIds: string[], gs: Pick<RrfGameState, 'away'> | null | undefined): string[] =>
+    playerIds.filter((p) => !(gs?.away ?? []).includes(p));
+
+export const setAway = (gs: RrfGameState, away: string[]): Result => {
+    const next = [...new Set(away)].sort();
+    if ((gs.away ?? []).join() === next.join()) return fail('No change.');
+    return { ok: true, gs: { ...clone(gs), away: next } };
+};
 
 // The time a move is judged at. Phones estimate the server clock, but a
 // phone's estimate is never allowed to be earlier than the real server

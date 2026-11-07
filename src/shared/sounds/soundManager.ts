@@ -1,4 +1,5 @@
 import { createAudioPlayer, AudioPlayer, setAudioModeAsync } from 'expo-audio';
+import { isMuted } from '../audio/sounds';
 
 export type SoundKey =
     | 'reveal-1' | 'reveal-2'
@@ -52,6 +53,7 @@ export const preloadSounds = async (): Promise<void> => {
 };
 
 export const playSound = (key: SoundKey): void => {
+    if (isMuted()) return; // the player's "Sounds" switch
     const player = players[key];
     if (!player) return;
     try {

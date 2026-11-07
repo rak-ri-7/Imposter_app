@@ -5,6 +5,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RouteProp } from "@react-navigation/native";
 import { RootStackParamList } from "../../../App";
 import { useGroup } from "../../shared/hooks/useGroup";
+import { registerGameCloser, useMinimizableGame } from "../../shared/hooks/useMinimizableGame";
 import { TimerGameState } from "../../shared/types";
 import { syncServerTimeOffset } from "../../shared/firebase/time";
 import { usePresence } from "../../shared/hooks/usePresence";
@@ -52,11 +53,8 @@ export default function TimerFlowScreen({ navigation, route }: Props) {
     syncServerTimeOffset(groupId);
   }, [groupId]);
 
-  useEffect(() => {
-    if (group?.currentGame === "menu") {
-      navigation.replace("GameMenu", { groupId, playerId });
-    }
-  }, [group?.currentGame]);
+  // Back / swipe minimises this game; game over takes it away.
+  useMinimizableGame(navigation, route, group, "stop-the-timer", groupId, playerId);
 
   if (loading || !group) {
     return (

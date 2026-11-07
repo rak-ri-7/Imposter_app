@@ -8,6 +8,7 @@ import CardBack from "../components/CardBack";
 import type { ClashDeckId } from "../data/types";
 import { ClashLength, DEFAULT_HAND, HAND_SIZES, startCardClash } from "../logic/game";
 import { CC, SERIF } from "../theme";
+import HowToPlay from "../../../shared/components/HowToPlay";
 
 // A showcase card for each deck tile.
 const SHOWCASE: Record<ClashDeckId, { id: string; stat: string; value: string }> = {
@@ -57,8 +58,9 @@ export default function ClashLobbyScreen({ group, playerId }: Props) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <Text style={styles.title}>🃏 Clash Cards</Text>
+      <Text style={styles.title}>🃏 Card Stats Callout!</Text>
       <Text style={styles.sub}>{group.players.length} players</Text>
+      <HowToPlay game="card-clash" details={RULES} theme={{ text: CC.text, muted: CC.textMuted, accent: CC.gold, sheet: CC.bg, panel: CC.panel, sheetText: CC.text, sheetMuted: CC.textMuted }} />
 
       <Text style={styles.label}>DECK</Text>
       <View style={styles.row}>
@@ -138,14 +140,6 @@ export default function ClashLobbyScreen({ group, playerId }: Props) {
       </View>
       <Text style={styles.hint}>Either way, the host can 🏁 finish the game in 5 or 10 more clashes at any time.</Text>
 
-      <Text style={styles.label}>HOW IT WORKS</Text>
-      <View style={styles.rules}>
-        {RULES.map((r, i) => (
-          <Text key={i} style={styles.rule}>
-            • {r}
-          </Text>
-        ))}
-      </View>
 
       {isHost ? (
         <TouchableOpacity style={[styles.startBtn, starting && styles.dim]} onPress={start} disabled={starting}>

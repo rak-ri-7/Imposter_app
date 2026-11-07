@@ -1,5 +1,22 @@
 // src/shared/audio/sounds.ts
 import { createAudioPlayer, AudioPlayer, setAudioModeAsync } from 'expo-audio';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// 🔇 The player's "Sounds" switch (in the game menu's profile panel),
+// remembered on this phone.
+const MUTE_KEY = 'soundsMuted';
+let muted = false;
+AsyncStorage.getItem(MUTE_KEY)
+    .then((v) => {
+        muted = v === '1';
+    })
+    .catch(() => {});
+export const isMuted = () => muted;
+export const setMuted = (on: boolean) => {
+    muted = on;
+    if (on) (Object.keys(players) as SoundName[]).forEach((n) => stopSound(n));
+    AsyncStorage.setItem(MUTE_KEY, on ? '1' : '0').catch(() => {});
+};
 
 const soundSources = {
     jumpscare: require('./piano_jumpscare.wav'),
@@ -38,6 +55,7 @@ export const preloadSounds = async () => {
 };
 
 export const playSound = (name: SoundName) => {
+    if (muted) return;
     const player = players[name];
     if (!player) {
         console.warn(`sound not loaded: ${name}`);

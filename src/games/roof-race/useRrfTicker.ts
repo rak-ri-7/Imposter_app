@@ -7,7 +7,7 @@ import { useEffect } from 'react';
 import type { Group, RrfGameState } from '../../shared/types';
 import { getServerNow, resyncServerTimeOffset, syncServerTimeOffset } from '../../shared/firebase/time';
 import { nextDue } from './logic/engine';
-import { rrfTick } from './logic/game';
+import { presentOf, rrfTick } from './logic/game';
 
 const BACKUP_GRACE_MS = 3000;
 const RETRY_MS = 1500;
@@ -15,7 +15,7 @@ const CHECK_MS = 200;
 
 export const useRrfTicker = (group: Group | null, gs: RrfGameState | null, isHost: boolean) => {
     const groupId = group?.id;
-    const present = group?.players.map((p) => p.id) ?? [];
+    const present = group ? presentOf(group) : [];
     const due = gs && gs.phase !== 'over' ? nextDue(gs, present) : Infinity;
 
     useEffect(() => {

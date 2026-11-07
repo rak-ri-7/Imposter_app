@@ -672,11 +672,13 @@ const difficultyForRound = (roundNumber: number): Difficulty => {
 // `recentTemplateIds`: ids from previous rounds, oldest first. Avoids
 // repeating any of them, and avoids the same family (months, riddles…)
 // as the last two rounds — relaxing those rules if nothing is left.
+// `difficulty`: force one (pass-the-phone gives everyone in a round the
+// same difficulty); otherwise it's rolled for the round number.
 export const generateQuestionForRound = (
     roundNumber: number,
-    recentTemplateIds: string[] = []
+    recentTemplateIds: string[] = [],
+    difficulty: Difficulty = difficultyForRound(roundNumber)
 ): Question => {
-    const difficulty = difficultyForRound(roundNumber);
     const pool = ALL.filter((t) => t.difficulty === difficulty);
     const recent = new Set(recentTemplateIds);
     const recentFamilies = new Set(recentTemplateIds.slice(-2).map(family));

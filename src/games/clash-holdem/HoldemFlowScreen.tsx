@@ -1,5 +1,5 @@
 // src/games/clash-holdem/HoldemFlowScreen.tsx
-// 💰 Clash Hold'em: picks the screen for the current phase and runs the
+// 💰 Holdem Deck: picks the screen for the current phase and runs the
 // automatic steps (dealer out of time → Draw; betting turn out of time →
 // check or fold; showdown → next hand). The host's phone does them on time;
 // every other phone steps in a little later as backup. Transactions (with
@@ -10,6 +10,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RouteProp } from "@react-navigation/native";
 import { RootStackParamList } from "../../../App";
 import { useGroup } from "../../shared/hooks/useGroup";
+import { registerGameCloser, useMinimizableGame } from "../../shared/hooks/useMinimizableGame";
 import { useHostFailover } from "../../shared/hooks/useHostFailover";
 import { returnToMenu } from "../../shared/firebase/groups";
 import {
@@ -43,9 +44,8 @@ export default function HoldemFlowScreen({ navigation, route }: Props) {
   const isHost = group?.hostId === playerId;
   const groupIdRef = useRef(groupId);
 
-  useEffect(() => {
-    if (group?.currentGame === "menu") navigation.replace("GameMenu", { groupId, playerId });
-  }, [group?.currentGame]);
+  // Back / swipe minimises this game; game over takes it away.
+  useMinimizableGame(navigation, route, group, "clash-holdem", groupId, playerId);
 
   // ── Automatic steps, timed from when this phone saw each step ──────
   const stepKey = gs ? `${gs.phase}:${gs.hand}:${gs.seq}` : "";
@@ -75,7 +75,7 @@ export default function HoldemFlowScreen({ navigation, route }: Props) {
   // ── Android back: the host can end the game ──────────────────────
   const alertOpen = useRef(false);
   useEffect(() => {
-    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+    const sub = registerGameCloser(groupId, () => {
       if (!group || alertOpen.current) return true;
       alertOpen.current = true;
       const done = () => {
@@ -83,7 +83,7 @@ export default function HoldemFlowScreen({ navigation, route }: Props) {
       };
       if (isHost && gs && gs.phase !== "over") {
         Alert.alert(
-          "End Clash Hold'em?",
+          "End Holdem Deck?",
           "End now and rank everyone by chips (a hand in progress is called off), or quit with no points.",
           [
             { text: "Keep playing", style: "cancel", onPress: done },

@@ -8,6 +8,7 @@ import type { ClashDeckId } from "../../card-clash/data/types";
 import { BIG_BLIND, DEFAULT_HANDS, HAND_OPTIONS, SMALL_BLIND, START_CHIPS } from "../logic/engine";
 import { startHoldem } from "../logic/game";
 import { CC, SERIF } from "../../card-clash/theme";
+import HowToPlay from "../../../shared/components/HowToPlay";
 
 type Props = { group: Group; playerId: string };
 
@@ -52,8 +53,9 @@ export default function HoldemLobbyScreen({ group, playerId }: Props) {
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 40 }]}>
-      <Text style={styles.title}>💰 Clash Hold'em</Text>
+      <Text style={styles.title}>💰 Holdem Deck</Text>
       <Text style={styles.sub}>{group.players.length} players · {START_CHIPS} chips each</Text>
+      <HowToPlay game="clash-holdem" details={RULES} theme={{ text: CC.text, muted: CC.textMuted, accent: CC.gold, sheet: CC.bg, panel: CC.panel, sheetText: CC.text, sheetMuted: CC.textMuted }} />
 
       <Text style={styles.label}>DECK</Text>
       <View style={styles.row}>
@@ -93,14 +95,6 @@ export default function HoldemLobbyScreen({ group, playerId }: Props) {
         })}
       </View>
 
-      <Text style={styles.label}>HOW IT WORKS</Text>
-      <View style={styles.rules}>
-        {RULES.map((r, i) => (
-          <Text key={i} style={styles.rule}>
-            • {r}
-          </Text>
-        ))}
-      </View>
 
       {isHost ? (
         <TouchableOpacity style={[styles.startBtn, starting && styles.dim]} onPress={start} disabled={starting}>

@@ -724,5 +724,35 @@ section('places');
     check(new Set(seen).size === 5, `a 5-expedition game visits all five (${seen.join(', ')})`);
 }
 
+section('dropped phones');
+{
+    let g = E.newGame({ tiger: TIGER, cobra: COBRA }, 1, 0, rng);
+    g = E.advance(g, E.INTRO_MS, ALL, rng);
+    let t = E.INTRO_MS;
+    check(!E.setAway(g, []).ok, 'no change: nothing written');
+    g = ok(E.setAway(g, ['rakesh', 'rakesh']), 'away');
+    check(g.away!.join() === 'rakesh', 'marked away once');
+    const here = E.presentIds(ALL, g);
+    check(!here.includes('rakesh') && here.length === 7, 'away players don’t count as here');
+    g = E.advance(g, t + 100, here, rng);
+    check(g.teams.tiger.keyHolder !== 'rakesh' && g.teams.tiger.stage === 'door', 'the dropped key-holder’s key passes to a teammate');
+    check(!g.teams.tiger.pages[g.teams.tiger.keyHolder] && Object.values(g.teams.tiger.pages).flat().length === g.teams.tiger.puzzle!.clues.length, 'pages re-dealt to the teammates still here');
+    // Tiger races to the vault without Rakesh; the chest doesn't wait for him.
+    for (let d = 0; d < 3; d++) {
+        g = ok(E.pushDoor(g, g.teams.tiger.keyHolder, g.teams.tiger.puzzle!.answer, t + 1000, here, rng), `door ${d}`);
+        if (d < 2) g = E.advance(g, (t = t + 1000 + E.BETWEEN_MS), here, rng);
+    }
+    t += 1000;
+    for (const p of ['unni', 'lachu', 'swathi']) g = ok(E.holdDown(g, p, t, here, rng), p);
+    check(E.holdDoneAt(g, 'tiger', here)?.kind === 'claim', 'three hands are enough while Rakesh is away');
+    // He's back before it completes: now his hand is needed too.
+    g = ok(E.setAway(g, []), 'back');
+    check(E.holdDoneAt(g, 'tiger', ALL) === null, 'back: the chest needs his hand again');
+    g = ok(E.holdDown(g, 'rakesh', t + 500, ALL, rng), 'rakesh holds');
+    g = E.advance(g, t + 500 + E.CLAIM_HOLD_MS, ALL, rng);
+    check(g.phase === 'expeditionEnd' && g.results[0].winner === 'tiger', 'all four hands: tiger claims');
+    check(E.playerPoints({ ...g, phase: 'over', away: ['rakesh'] }, ALL).rakesh === E.POINTS.win, 'a dropped player still gets their team’s points');
+}
+
 console.log(`\n${passed} passed, ${failed} failed`);
 if (failed) process.exit(1);

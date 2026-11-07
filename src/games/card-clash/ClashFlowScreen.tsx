@@ -1,5 +1,5 @@
 // src/games/card-clash/ClashFlowScreen.tsx
-// 🃏 Clash Cards: picks the screen for the current phase and runs the
+// 🃏 Card Stats Callout!: picks the screen for the current phase and runs the
 // automatic steps (caller or gold defender out of time → random stat;
 // answer beat out of time → reveal; reveal → Gold Defence or next clash).
 // The host's phone does them on time; every other phone steps in a little
@@ -10,6 +10,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RouteProp } from "@react-navigation/native";
 import { RootStackParamList } from "../../../App";
 import { useGroup } from "../../shared/hooks/useGroup";
+import { registerGameCloser, useMinimizableGame } from "../../shared/hooks/useMinimizableGame";
 import { useHostFailover } from "../../shared/hooks/useHostFailover";
 import { returnToMenu } from "../../shared/firebase/groups";
 import {
@@ -54,11 +55,8 @@ export default function ClashFlowScreen({ navigation, route }: Props) {
   const isHost = group?.hostId === playerId;
   const groupIdRef = useRef(groupId);
 
-  useEffect(() => {
-    if (group?.currentGame === "menu") {
-      navigation.replace("GameMenu", { groupId, playerId });
-    }
-  }, [group?.currentGame]);
+  // Back / swipe minimises this game; game over takes it away.
+  useMinimizableGame(navigation, route, group, "card-clash", groupId, playerId);
 
   // ── Automatic steps, timed from when this phone saw each phase ────
   const stage = gs?.last?.stage ?? "clash";
@@ -122,7 +120,7 @@ export default function ClashFlowScreen({ navigation, route }: Props) {
   // ── Android back: the host can end the game ──────────────────────
   const alertOpen = useRef(false);
   useEffect(() => {
-    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+    const sub = registerGameCloser(groupId, () => {
       if (!group || alertOpen.current) return true;
       alertOpen.current = true;
       const done = () => {
@@ -130,7 +128,7 @@ export default function ClashFlowScreen({ navigation, route }: Props) {
       };
       if (isHost && gs && gs.phase !== "over") {
         Alert.alert(
-          "End Clash Cards?",
+          "End Card Stats Callout?",
           "End now and rank everyone by the cards they hold, or quit with no points.",
           [
             { text: "Keep playing", style: "cancel", onPress: done },

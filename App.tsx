@@ -20,7 +20,12 @@ import HoldemFlowScreen from "./src/games/clash-holdem/HoldemFlowScreen";
 import CotFlowScreen from "./src/games/court-of-thieves/CotFlowScreen";
 import MtfFlowScreen from "./src/games/match-the-following/MtfFlowScreen";
 import RrfFlowScreen from "./src/games/roof-race/RrfFlowScreen";
+import TimerPassScreen from "./src/games/stop-the-timer/TimerPassScreen";
+import MtfPassScreen from "./src/games/match-the-following/MtfPassScreen";
+import QuizPassScreen from "./src/games/quiz-board/QuizPassScreen";
 import { preloadSounds } from "./src/shared/audio/sounds";
+import { useFonts } from "expo-font";
+import { FONT_FILES } from "./src/shared/theme/fonts";
 
 export type RootStackParamList = {
   Home: { joinCode?: string } | undefined;
@@ -30,6 +35,9 @@ export type RootStackParamList = {
   QuickPlaySetup: undefined;
   ImposterFlow: { groupId: string; playerId: string };
   ImposterQuickPlay: undefined;
+  TimerPass: undefined;
+  MtfPass: undefined;
+  QuizPass: undefined;
   TimerFlow: { groupId: string; playerId: string };
   TeamSetup: { groupId: string; playerId: string };
   BombFlow: { groupId: string; playerId: string };
@@ -44,7 +52,9 @@ export type RootStackParamList = {
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
 const linking = {
-  prefixes: ["wgawpt://"],
+  // The app's own links, and the web invite link (https://…/join/CODE),
+  // which opens the app straight to Join when it's installed.
+  prefixes: ["wgawpt://", "https://imposter-game-a588f.web.app"],
   config: {
     screens: {
       Home: {
@@ -61,6 +71,10 @@ export default function App() {
   useEffect(() => {
     preloadSounds();
   }, []);
+  // The display font (Fredoka). A blink at start-up; if it ever fails to
+  // load, the app carries on with the phone's own font.
+  const [fontsLoaded, fontError] = useFonts(FONT_FILES);
+  if (!fontsLoaded && !fontError) return null;
 
   return (
     <SafeAreaProvider>
@@ -84,6 +98,7 @@ export default function App() {
           <Stack.Screen
             name="ImposterQuickPlay"
             component={ImposterQuickPlayScreen}
+            options={{ gestureEnabled: false }}
           />
           <Stack.Screen name="TimerFlow" component={TimerFlowScreen} />
           <Stack.Screen name="TeamSetup" component={TeamSetupScreen} />
@@ -97,6 +112,11 @@ export default function App() {
           <Stack.Screen name="CotFlow" component={CotFlowScreen} />
           <Stack.Screen name="MtfFlow" component={MtfFlowScreen} />
           <Stack.Screen name="RrfFlow" component={RrfFlowScreen} />
+          {/* Pass-the-phone games: no swipe-back on iOS (one stray swipe would
+              lose the game). They leave through their own End game buttons. */}
+          <Stack.Screen name="TimerPass" component={TimerPassScreen} options={{ gestureEnabled: false }} />
+          <Stack.Screen name="MtfPass" component={MtfPassScreen} options={{ gestureEnabled: false }} />
+          <Stack.Screen name="QuizPass" component={QuizPassScreen} options={{ gestureEnabled: false }} />
         </Stack.Navigator>
       </NavigationContainer>
     </PaperProvider>

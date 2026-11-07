@@ -11,6 +11,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RouteProp } from "@react-navigation/native";
 import { RootStackParamList } from "../../../../../App";
 import { useGroup } from "../../../../shared/hooks/useGroup";
+import { registerGameCloser, useMinimizableGame } from "../../../../shared/hooks/useMinimizableGame";
 import { BombGameState, PassGameState } from "../../../../shared/types";
 import BombLobbyScreen from "./BombLobbyScreen";
 import BombPlayScreen from "../timer/BombPlayScreen";
@@ -190,7 +191,7 @@ export default function BombFlowScreen({ navigation, route }: Props) {
     leaveAlertOpenRef.current = true;
     Alert.alert(
       "Leave game?",
-      "This will end Pass the Bomb and return everyone to the Game Menu.",
+      "This will end That Old Bomb Story and return everyone to the Game Menu.",
       [
         {
           text: "Stay",
@@ -236,17 +237,13 @@ export default function BombFlowScreen({ navigation, route }: Props) {
     }
   }, [phase]);
 
-  useEffect(() => {
-    if (group?.currentGame === "menu") {
-      navigation.replace("GameMenu", { groupId, playerId });
-    }
-  }, [group?.currentGame]);
+  // Back / swipe minimises this game; game over takes it away.
+  useMinimizableGame(navigation, route, group, "pass-the-bomb", groupId, playerId);
 
   useEffect(() => {
     if (!group) return;
 
-    const backHandler = BackHandler.addEventListener(
-      "hardwareBackPress",
+    const backHandler = registerGameCloser(groupId,
       () => {
         confirmLeave();
         return true; // always handled — never let Android pop the screen silently

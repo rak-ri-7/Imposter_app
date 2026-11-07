@@ -4,21 +4,91 @@ import {
     setDoc,
     updateDoc,
     onSnapshot,
-    arrayUnion,
     deleteDoc,
     getDocs,
     query,
     where,
     runTransaction,
-    increment
+    increment,
+    Timestamp,
+    DocumentReference
 } from 'firebase/firestore';
 import { signInAnonymously } from 'firebase/auth';
 import { db, auth } from './config';
 import { BombGroupProfile, GameType, Group, Player, emptyImposterState, Team } from '../types';
 import { getDoc } from 'firebase/firestore';
 
-const generateGroupCode = (): string => {
-    return Math.random().toString(36).substring(2, 8).toUpperCase();
+// ── Group codes ──────────────────────────────────────────────────────
+// Six characters, leaving out the ones people misread (0/O, 1/I/L).
+const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const generateGroupCode = (): string =>
+    Array.from({ length: 6 }, () => CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)]).join('');
+
+// A group nobody has touched for a day is finished. Its code can be reused,
+// and it's deleted when someone next looks that code up. `expireAt` also
+// lets a Firestore TTL policy (on groups.expireAt) clear old groups out.
+export const GROUP_STALE_MS = 24 * 60 * 60 * 1000;
+const GROUP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const lastActive = (g: Partial<Group>): number => Math.max(g.lastActiveAt ?? 0, g.createdAt ?? 0, g.hostHeartbeatAt ?? 0);
+// No timestamps at all (made by an older version of the app): age unknown,
+// so it's never treated as finished.
+const isStale = (g: Partial<Group>, now: number): boolean => lastActive(g) > 0 && now - lastActive(g) > GROUP_STALE_MS;
+export const freshness = () => ({ lastActiveAt: Date.now(), expireAt: Timestamp.fromMillis(Date.now() + GROUP_TTL_MS) });
+
+// The group currently using this code (most recently active), clearing out
+// finished groups that still carry it.
+const findByCode = async (code: string): Promise<{ ref: DocumentReference; group: Group } | null> => {
+    const snap = await getDocs(query(collection(db, 'groups'), where('code', '==', code)));
+    const now = Date.now();
+    const live: { ref: DocumentReference; group: Group }[] = [];
+    for (const d of snap.docs) {
+        const group = { ...(d.data() as Group), id: d.id };
+        if (isStale(group, now)) deleteDoc(d.ref).catch(() => {});
+        else live.push({ ref: d.ref, group });
+    }
+    live.sort((a, b) => lastActive(b.group) - lastActive(a.group));
+    return live[0] ?? null;
+};
+
+// Someone opened the group: it's still in use (so its code isn't recycled).
+export const touchGroup = async (groupId: string): Promise<void> => {
+    try {
+        await updateDoc(doc(db, 'groups', groupId), freshness());
+    } catch {
+        // not important: the next open tries again
+    }
+};
+
+const sameName = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+// Leaving or being removed: take them off the players, the bench and the
+// teams; hand host to the next player if it was the host. Read and written
+// in one transaction, so a player joining at the same moment isn't lost.
+const dropFromGroup = async (groupId: string, playerId: string): Promise<void> => {
+    const groupRef = doc(db, 'groups', groupId);
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(groupRef);
+        if (!snap.exists()) return;
+        const g = snap.data() as Group;
+        let players = g.players.filter((p) => p.id !== playerId);
+        let benched = (g.benchedPlayers ?? []).filter((p) => p.id !== playerId);
+        if (players.length === 0 && benched.length > 0) {
+            players = benched;
+            benched = [];
+        }
+        if (players.length === 0) {
+            tx.delete(groupRef);
+            return;
+        }
+        const hostId = g.hostId === playerId || !players.some((p) => p.id === g.hostId) ? players[0].id : g.hostId;
+        tx.update(groupRef, {
+            players: players.map((p) => ({ ...p, isHost: p.id === hostId })),
+            benchedPlayers: benched,
+            hostId,
+            ...(g.teams ? { teams: g.teams.map((t) => ({ ...t, playerIds: t.playerIds.filter((id) => id !== playerId) })) } : {}),
+            ...freshness(),
+        });
+    });
 };
 
 export const getCurrentUser = async () => {
@@ -46,10 +116,13 @@ export const checkGroupExists = async (
 };
 
 export const createGroup = async (
-    playerName: string
+    playerName: string,
+    avatar?: string
 ): Promise<{ group: Group; playerId: string }> => {
     const user = await getCurrentUser();
-    const groupCode = generateGroupCode();
+    // A code no other live group is using.
+    let groupCode = generateGroupCode();
+    for (let i = 0; i < 8 && (await findByCode(groupCode)); i++) groupCode = generateGroupCode();
     const groupRef = doc(collection(db, 'groups'));
 
     const player: Player = {
@@ -57,6 +130,7 @@ export const createGroup = async (
         name: playerName,
         isHost: true,
         isReady: false,
+        ...(avatar ? { avatar } : {}),
     };
 
     const group: Group = {
@@ -68,45 +142,88 @@ export const createGroup = async (
         currentGame: 'menu',
         status: 'menu',
         gameState: emptyImposterState,
+        createdAt: Date.now(),
     };
 
-    await setDoc(groupRef, group);
+    await setDoc(groupRef, { ...group, ...freshness() });
     return { group, playerId: user.uid };
 };
 
 export const joinGroup = async (
     groupCode: string,
-    playerName: string
+    playerName: string,
+    avatar?: string
 ): Promise<{ group: Group; playerId: string }> => {
     const user = await getCurrentUser();
+    const found = await findByCode(groupCode.trim().toUpperCase());
+    if (!found) throw new Error('No group with that code. Check the letters and try again.');
+    const name = playerName.trim();
 
-    const groupsRef = collection(db, 'groups');
-    const q = query(groupsRef, where('code', '==', groupCode.toUpperCase()));
-    const snapshot = await getDocs(q);
-
-    if (snapshot.empty) throw new Error('Group not found');
-
-    const groupDoc = snapshot.docs[0];
-    const group = groupDoc.data() as Group;
-
-    const existingPlayer = group.players.find((p) => p.id === user.uid);
-    if (existingPlayer) {
-        return { group: { ...group, id: groupDoc.id }, playerId: user.uid };
-    }
-
-    const player: Player = {
-        id: user.uid,
-        name: playerName,
-        isHost: false,
-        isReady: false,
-    };
-
-    await updateDoc(groupDoc.ref, {
-        players: arrayUnion(player),
-        [`scores.${user.uid}`]: 0,
+    let joined: Group = found.group;
+    await runTransaction(db, async (tx) => {
+        const snap = await tx.get(found.ref);
+        if (!snap.exists()) throw new Error('That group has just closed. Ask for a new code.');
+        const g = { ...(snap.data() as Group), id: found.ref.id };
+        joined = g;
+        const everyone = [...g.players, ...(g.benchedPlayers ?? [])];
+        if (everyone.some((p) => p.id === user.uid)) return; // already in: just come back
+        const clash = everyone.find((p) => sameName(p.name, name));
+        if (clash) throw new Error(`Someone in this group is already called ${clash.name}. Add an initial or a nickname.`);
+        // Someone already has this avatar: join without one (a steady stand-in
+        // shows instead) and pick another in the lobby.
+        const free = avatar && !everyone.some((p) => p.avatar === avatar);
+        const player: Player = { id: user.uid, name, isHost: false, isReady: false, ...(free ? { avatar } : {}) };
+        tx.update(found.ref, {
+            players: [...g.players, player],
+            // Coming back after leaving keeps the points already earned.
+            [`scores.${user.uid}`]: g.scores?.[user.uid] ?? 0,
+            ...freshness(),
+        });
     });
+    return { group: joined, playerId: user.uid };
+};
 
-    return { group: { ...group, id: groupDoc.id }, playerId: user.uid };
+// 🎨 Change the game-menu theme for the whole group (any member can).
+export const setGroupTheme = (groupId: string, themeId: string) =>
+    updateDoc(doc(db, 'groups', groupId), { menuTheme: themeId });
+
+// Change the name you go by in this group. Returns a problem to show, or
+// null when it's saved.
+export const setPlayerName = async (groupId: string, playerId: string, raw: string): Promise<string | null> => {
+    const name = raw.trim().replace(/\s+/g, ' ');
+    if (!name) return 'Type a name first.';
+    const ref = doc(db, 'groups', groupId);
+    return runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists()) return 'This group has closed.';
+        const g = snap.data() as Group;
+        const everyone = [...g.players, ...(g.benchedPlayers ?? [])];
+        const clash = everyone.find((p) => p.id !== playerId && sameName(p.name, name));
+        if (clash) return `Someone here is already called ${clash.name}. Try an initial or a nickname.`;
+        const swap = (list: Player[]) => list.map((p) => (p.id === playerId ? { ...p, name } : p));
+        const update: Record<string, unknown> = { players: swap(g.players) };
+        if (g.benchedPlayers?.some((p) => p.id === playerId)) update.benchedPlayers = swap(g.benchedPlayers);
+        tx.update(ref, update);
+        return null;
+    });
+};
+
+// Change your avatar from the lobby. Refused (returns false) if someone else
+// took it first.
+export const setPlayerAvatar = async (groupId: string, playerId: string, avatar: string): Promise<boolean> => {
+    const ref = doc(db, 'groups', groupId);
+    return runTransaction(db, async (tx) => {
+        const snap = await tx.get(ref);
+        if (!snap.exists()) return false;
+        const g = snap.data() as Group;
+        const everyone = [...g.players, ...(g.benchedPlayers ?? [])];
+        if (everyone.some((p) => p.id !== playerId && p.avatar === avatar)) return false;
+        const swap = (list: Player[]) => list.map((p) => (p.id === playerId ? { ...p, avatar } : p));
+        const update: Record<string, unknown> = { players: swap(g.players) };
+        if (g.benchedPlayers?.some((p) => p.id === playerId)) update.benchedPlayers = swap(g.benchedPlayers);
+        tx.update(ref, update);
+        return true;
+    });
 };
 
 export const listenToGroup = (
@@ -132,26 +249,11 @@ export const listenToGroup = (
 export const leaveGroup = async (
     groupId: string,
     playerId: string,
-    isHost: boolean,
-    players: Player[]
+    _isHost?: boolean,
+    _players?: Player[]
 ): Promise<void> => {
-    const groupRef = doc(db, 'groups', groupId);
-    const remaining = players.filter((p) => p.id !== playerId);
-
-    if (remaining.length === 0) {
-        await deleteDoc(groupRef);
-        return;
-    }
-
-    if (isHost) {
-        remaining[0].isHost = true;
-        await updateDoc(groupRef, {
-            players: remaining,
-            hostId: remaining[0].id,
-        });
-    } else {
-        await updateDoc(groupRef, { players: remaining });
-    }
+    // (The extra arguments are ignored: the group is re-read inside a transaction.)
+    await dropFromGroup(groupId, playerId);
 };
 // Leaderboard points as update fields: the session total plus that game's
 // share (for the per-game slides). Every award goes through here.
@@ -173,28 +275,10 @@ export const addScore = async (
 export const removePlayer = async (
     groupId: string,
     playerIdToRemove: string,
-    currentPlayers: Player[],
-    currentHostId: string
+    _currentPlayers?: Player[],
+    _currentHostId?: string
 ): Promise<void> => {
-    const groupRef = doc(db, 'groups', groupId);
-    const remaining = currentPlayers.filter((p) => p.id !== playerIdToRemove);
-
-    if (remaining.length === 0) {
-        await deleteDoc(groupRef);
-        return;
-    }
-
-    if (currentHostId === playerIdToRemove) {
-        // Host removing themselves shouldn't normally route through here
-        // (they'd use Leave instead), but handle it safely just in case.
-        remaining[0].isHost = true;
-        await updateDoc(groupRef, {
-            players: remaining,
-            hostId: remaining[0].id,
-        });
-    } else {
-        await updateDoc(groupRef, { players: remaining });
-    }
+    await dropFromGroup(groupId, playerIdToRemove);
 };
 
 // Lets the host bench certain players out of the next game while keeping
@@ -229,6 +313,7 @@ export const returnToMenu = async (
             currentGame: 'menu',
             status: 'menu',
             gameState: emptyImposterState,
+            ...freshness(),
         };
 
         // Bring benched players back. Callers may pass the lists explicitly
@@ -253,6 +338,7 @@ export const startSelectedGame = async (
     await updateDoc(groupRef, {
         currentGame: game,
         status: 'lobby',
+        ...freshness(),
     });
 };
 
@@ -285,7 +371,7 @@ export const sendHostHeartbeat = async (groupId: string, playerId: string): Prom
             const snap = await transaction.get(groupRef);
             if (!snap.exists()) return;
             if ((snap.data() as Group).hostId !== playerId) return;
-            transaction.update(groupRef, { hostHeartbeatAt: Date.now() });
+            transaction.update(groupRef, { hostHeartbeatAt: Date.now(), ...freshness() });
         });
     } catch {
         // next heartbeat retries

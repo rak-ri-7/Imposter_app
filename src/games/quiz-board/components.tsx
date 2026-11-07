@@ -79,6 +79,41 @@ export function MoneyStrip({
   playerId: string;
 }) {
   const money = ctx.gs?.money ?? {};
+  // Team mode: one pot per team (its members' money added up).
+  if (ctx.teams) {
+    const pots = ctx.teams
+      .map((t) => ({ t, m: t.memberIds.reduce((s, id) => s + (money[id] ?? 0), 0) }))
+      .sort((a, b) => b.m - a.m);
+    return (
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.strip}
+      >
+        {pots.map(({ t, m }) => {
+          const picking = !!ctx.gs && t.memberIds.includes(ctx.gs.pickerId);
+          return (
+            <View
+              key={t.id}
+              style={[
+                styles.podium,
+                { borderLeftWidth: 4, borderLeftColor: t.color },
+                ctx.myTeam?.id === t.id && styles.podiumMe,
+              ]}
+            >
+              <Text numberOfLines={1} style={displayText(11, QB.dim)}>
+                {picking ? "▶ " : ""}
+                {t.name}
+              </Text>
+              <Text style={digitText(15, m < 0 ? QB.red : QB.gold)}>
+                {formatRupees(m)}
+              </Text>
+            </View>
+          );
+        })}
+      </ScrollView>
+    );
+  }
   const rows = [...group.players].sort(
     (a, b) => (money[b.id] ?? 0) - (money[a.id] ?? 0),
   );
@@ -137,7 +172,9 @@ export function RoundOutcome({
         ? `🌟 ${goldenName} won the golden bet: +${formatRupees(round.value)}`
         : `🌟 ${goldenName} lost the golden bet: −${formatRupees(round.value)}`
       : round.winnerId
-        ? `${nameOf(round.winnerId)} wins ${formatRupees(round.value)}${round.double ? " (double money)" : ""}`
+        ? `${nameOf(round.winnerId)} wins ${formatRupees(round.value)}${
+            ctx.teams ? ` for ${ctx.teams.find((t) => t.memberIds.includes(round.winnerId!))?.name ?? "their team"}` : ""
+          }${round.double ? " (double money)" : ""}`
         : "Nobody got it";
 
   const deltas = Object.entries(round.deltas ?? {}).filter(([, d]) => d !== 0);

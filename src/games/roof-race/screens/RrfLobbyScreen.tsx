@@ -9,6 +9,7 @@ import { rrfSetExpeditions, sessionTeams, startRrf } from '../logic/game';
 import Ruin from '../components/Ruin';
 import { GoldButton, GhostButton } from '../components/Bits';
 import { CARVED, RR, TEAM } from '../theme';
+import HowToPlay from '../../../shared/components/HowToPlay';
 
 type Props = { group: Group; playerId: string; onEditTeams: () => void };
 
@@ -58,8 +59,9 @@ export default function RrfLobbyScreen({ group, playerId, onEditTeams }: Props) 
                 )
             }
         >
-            <Text style={styles.title}>Race Before the Roof Falls</Text>
+            <Text style={styles.title}>Race Before the Roof Falls!</Text>
             <Text style={styles.sub}>Two teams. Three doors. One treasure. The walls are already shaking.</Text>
+            <HowToPlay game="roof-race" details={RULES} theme={{ text: RR.sand, muted: RR.sandMuted, accent: RR.gold, sheet: RR.bg, panel: RR.panel, sheetText: RR.sand, sheetMuted: RR.sandMuted, numberText: RR.goldInk }} />
 
             {from.ok ? (
                 <>
@@ -118,14 +120,6 @@ export default function RrfLobbyScreen({ group, playerId, onEditTeams }: Props) 
                 })}
             </View>
 
-            <Text style={styles.label}>HOW IT WORKS</Text>
-            <View style={{ gap: 8 }}>
-                {RULES.map((r, i) => (
-                    <Text key={i} style={styles.rule}>
-                        {i + 1}. {r}
-                    </Text>
-                ))}
-            </View>
         </Ruin>
     );
 }

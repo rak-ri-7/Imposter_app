@@ -10,6 +10,8 @@ import {
 import { Group, ImposterGameState } from "../../../shared/types";
 import { useImposterGame } from "../logic/useImposterGame";
 import { imposterGuess } from "../logic/game";
+import PixelAvatar from "../../../shared/avatars/PixelAvatar";
+import { avatarIdFor } from "../../../shared/avatars/sprites";
 
 type Props = {
   group: Group;
@@ -109,9 +111,7 @@ export default function VoteScreen({ group, playerId }: Props) {
               disabled={!!myVote || isMe}
             >
               <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {player.name.charAt(0).toUpperCase()}
-                </Text>
+                <PixelAvatar avatar={avatarIdFor(player, group.players)} playerId={player.id} size={42} />
               </View>
               <Text style={styles.playerName}>
                 {player.name}
@@ -244,6 +244,7 @@ const styles = StyleSheet.create({
   playerRowVoted: { borderColor: "#E63946", backgroundColor: "#1E1028" },
   playerRowSelf: { opacity: 0.4 },
   avatar: {
+    overflow: "hidden",
     width: 42,
     height: 42,
     borderRadius: 21,

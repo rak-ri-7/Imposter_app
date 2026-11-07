@@ -33,7 +33,10 @@ type Props = { group: Group; playerId: string; ctx: QuizBoardCtx };
 const LETTERS = ["A", "B", "C", "D"];
 
 export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
-  const { gs, phase, isHost, remainingMs, queue, hasBuzzed, myPick, nameOf } = ctx;
+  const { gs, phase, isHost, remainingMs, queue, hasBuzzed, myPick, nameOf, teams, myTeam, watching, answeredForMe } = ctx;
+  // Team mode: a teammate already answered/buzzed for us, or we're watching.
+  const teamBlocked = !!teams && (watching || !!answeredForMe);
+  const teamName = (id: string) => (teams ? teams.find((t) => t.memberIds.includes(id))?.name : undefined);
   const [judgeOpen, setJudgeOpen] = useState(false);
   const [localBuzz, setLocalBuzz] = useState(false);
   const blink = useRef(new Animated.Value(1)).current;
@@ -71,7 +74,7 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
   const correctIndex = current.options.findIndex((o) => o.correct);
 
   const onBuzz = async () => {
-    if (hasBuzzed || localBuzz || paused) return;
+    if (hasBuzzed || localBuzz || paused || teamBlocked) return;
     setLocalBuzz(true);
     playSound("wire-lock-in");
     try {
@@ -83,7 +86,7 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
   };
 
   const onOption = (i: number) => {
-    if (myPick !== undefined || paused) return;
+    if (myPick !== undefined || paused || (teamBlocked && !golden)) return;
     pickOption(group.id, playerId, i).catch(console.error);
   };
 
@@ -222,7 +225,8 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
                   disabled={
                     phase !== "question" ||
                     myPick !== undefined ||
-                    (!!golden && !iAmGolden)
+                    (!!golden && !iAmGolden) ||
+                    (!golden && teamBlocked)
                   }
                   onPress={() => onOption(i)}
                   style={[
@@ -254,7 +258,9 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
                       ? "Locked in."
                       : `Only you answer · right wins ${formatRupees(value)}, wrong loses it`
                     : `Only ${goldenName} answers this one`
-                  : `${myPick !== undefined ? "Locked in. " : ""}${ctx.answeredCount}/${ctx.players.length} answered · wrong answers lose ${formatRupees(value)}`}
+                  : teams
+                    ? `${watching ? "You're watching (not on a team). " : answeredForMe ? `${nameOf(answeredForMe)} answered for ${myTeam?.name}. ` : myPick !== undefined ? `Locked in for ${myTeam?.name}. ` : "One answer per team: first tap counts. "}${ctx.teamsAnswered}/${teams.length} teams answered · wrong loses ${formatRupees(value)}`
+                    : `${myPick !== undefined ? "Locked in. " : ""}${ctx.answeredCount}/${ctx.players.length} answered · wrong answers lose ${formatRupees(value)}`}
               </Text>
             )}
           </View>
@@ -282,16 +288,20 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
             {phase === "question" && !paused && (
               <TouchableOpacity
                 onPress={onBuzz}
-                disabled={hasBuzzed || localBuzz}
+                disabled={hasBuzzed || localBuzz || teamBlocked}
                 activeOpacity={0.7}
-                style={[styles.buzzer, (hasBuzzed || localBuzz) && styles.buzzerDone]}
+                style={[styles.buzzer, (hasBuzzed || localBuzz || teamBlocked) && styles.buzzerDone]}
               >
-                <Text style={displayText(hasBuzzed || localBuzz ? 18 : 30)}>
+                <Text style={displayText(hasBuzzed || localBuzz || teamBlocked ? 18 : 30)}>
                   {hasBuzzed || localBuzz
                     ? queue.indexOf(playerId) >= 0
                       ? `#${queue.indexOf(playerId) + 1} in line`
                       : "Buzzed!"
-                    : "BUZZ"}
+                    : watching
+                      ? "Watching"
+                      : answeredForMe
+                        ? `${nameOf(answeredForMe)} buzzed`
+                        : "BUZZ"}
                 </Text>
               </TouchableOpacity>
             )}
@@ -305,6 +315,7 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
                 <Text style={[displayText(18), styles.flex]}>
                   {nameOf(id)}
                   {id === playerId ? " (you)" : ""}
+                  {teamName(id) ? ` · ${teamName(id)}` : ""}
                 </Text>
               </View>
             ))}

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Join the party · What Game Are We Playing Today?</title>
+<meta name="description" content="You're invited to a group of party games. Tap to join.">
+<meta property="og:title" content="You're invited to play party games!">
+<meta property="og:description" content="Tap to join the group in What Game Are We Playing Today?">
+<meta property="og:image" content="https://imposter-game-a588f.web.app/img/share.jpg">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#07080A">
+<style>
+  /* ── Edit these when the app is in the stores ───────────────────── */
+  /* (the links themselves are in the script below) */
+  :root { --bg:#07080A; --panel:rgba(23,25,28,.94); --line:#2D3137; --gold:#C9A45C; --ink:#121110; --ivory:#ECE7DD; --muted:#A9A49A; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--ivory);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wall { position:fixed; inset:-30%; display:flex; justify-content:center; gap:14px; transform:rotate(-15deg); opacity:.8; pointer-events:none; }
+  .col { display:flex; flex-direction:column; gap:14px; animation: drift 60s linear infinite alternate; }
+  .col:nth-child(2n) { animation-direction: alternate-reverse; margin-top:-120px; }
+  .col img { width:min(30vw,160px); aspect-ratio:2/3; object-fit:cover; border-radius:14px; }
+  @keyframes drift { to { transform: translateY(-25%); } }
+  @media (prefers-reduced-motion: reduce) { .col { animation:none; } }
+  .shade { position:fixed; inset:0; background:linear-gradient(to bottom, rgba(7,8,10,.3), rgba(7,8,10,.5) 35%, rgba(7,8,10,.95) 62%, #07080A); }
+  main { position:relative; min-height:100%; max-width:460px; margin:0 auto; padding:24px 20px 36px;
+    display:flex; flex-direction:column; justify-content:flex-end; gap:14px; }
+  h1 { font-size:30px; line-height:1.15; margin:0; text-align:center; font-weight:900; }
+  .sub { color:var(--muted); text-align:center; margin:0 0 6px; }
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:18px; text-align:center; }
+  .label { color:var(--muted); font-size:12px; font-weight:800; letter-spacing:2px; }
+  .code { color:var(--gold); font-size:44px; font-weight:900; letter-spacing:8px; margin:6px 0 2px; }
+  .copy { background:none; border:1px solid var(--line); color:var(--ivory); border-radius:10px; padding:8px 14px; font-weight:700; font-size:14px; }
+  .btn { display:block; width:100%; text-align:center; text-decoration:none; border-radius:14px; padding:17px; font-size:17px; font-weight:800; border:0; }
+  .primary { background:var(--gold); color:var(--ink); }
+  .secondary { background:var(--panel); color:var(--ivory); border:1px solid var(--line); }
+  .hint { color:var(--muted); font-size:13px; text-align:center; line-height:1.5; margin:0; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<div class="wall" aria-hidden="true">
+  <div class="col"><img src="/img/imposter.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""></div>
+  <div class="col"><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""><img src="/img/imposter.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""></div>
+  <div class="col"><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""><img src="/img/imposter.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""></div>
+  <div class="col"><img src="/img/imposter.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""></div>
+  <div class="col"><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""><img src="/img/imposter.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""></div>
+  <div class="col"><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""><img src="/img/imposter.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""></div>
+</div>
+<div class="shade"></div>
+
+<main>
+  <h1>You're invited!</h1>
+  <p class="sub">Party games for all ages, on everyone's phone.</p>
+
+  <div class="card" id="codeCard">
+    <div class="label">GROUP CODE</div>
+    <div class="code" id="code">—</div>
+    <button class="copy" id="copy" type="button">Copy code</button>
+  </div>
+
+  <a class="btn primary" id="open" href="#">Open the app &amp; join</a>
+  <a class="btn secondary hidden" id="play" href="#">Get it on Google Play</a>
+  <a class="btn secondary hidden" id="ios" href="#">Download on the App Store</a>
+  <p class="hint" id="hint">Don't have the app yet? Install it, open it, tap <b>Join a Group</b> and enter the code above.</p>
+</main>
+
+<script>
+  // ── Settings ────────────────────────────────────────────────────────
+  var SCHEME = "wgawpt";
+  var ANDROID_PACKAGE = "com.rak.wgawpt";
+  var PLAY_URL = "https://play.google.com/store/apps/details?id=" + ANDROID_PACKAGE;
+  var APP_STORE_URL = ""; // e.g. "https://apps.apple.com/app/id1234567890" once it's live
+  // ────────────────────────────────────────────────────────────────────
+
+  var m = location.pathname.match(/\/join\/([A-Za-z0-9]{4,8})/);
+  var code = m ? m[1].toUpperCase() : "";
+  var ua = navigator.userAgent || "";
+  var android = /Android/i.test(ua);
+  var ios = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+
+  var $ = function (id) { return document.getElementById(id); };
+  if (code) {
+    $("code").textContent = code;
+    document.title = "Join group " + code + " · What Game Are We Playing Today?";
+  } else {
+    $("codeCard").classList.add("hidden");
+    $("open").textContent = "Open the app";
+  }
+
+  var appLink = SCHEME + "://" + (code ? "join/" + code : "");
+  // Android: one link that opens the app, or the Play Store if it isn't installed.
+  var androidLink = "intent://" + (code ? "join/" + code : "") + "#Intent;scheme=" + SCHEME +
+    ";package=" + ANDROID_PACKAGE + ";S.browser_fallback_url=" + encodeURIComponent(PLAY_URL) + ";end";
+
+  $("open").href = android ? androidLink : appLink;
+  if (!ios) { $("play").href = PLAY_URL; $("play").classList.remove("hidden"); }
+  if (APP_STORE_URL && !android) { $("ios").href = APP_STORE_URL; $("ios").classList.remove("hidden"); }
+
+  // iOS: if the app didn't open, the page is still showing, so offer the store.
+  $("open").addEventListener("click", function () {
+    if (!ios || !APP_STORE_URL) return;
+    var t = setTimeout(function () { if (!document.hidden) location.href = APP_STORE_URL; }, 1600);
+    document.addEventListener("visibilitychange", function () { if (document.hidden) clearTimeout(t); });
+  });
+
+  $("copy").addEventListener("click", function () {
+    var done = function () { $("copy").textContent = "Copied ✓"; setTimeout(function () { $("copy").textContent = "Copy code"; }, 1800); };
+    if (navigator.clipboard) navigator.clipboard.writeText(code).then(done, function () {});
+  });
+
+  // Straight into the app where we can (Android opens it, or the Play Store).
+  if (code && android) setTimeout(function () { location.href = androidLink; }, 300);
+</script>
+</body>
+</html>

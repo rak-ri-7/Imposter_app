@@ -3,7 +3,7 @@
 import { View, Text, StyleSheet } from 'react-native';
 import type { Group, RrfGameState } from '../../../shared/types';
 import { TEAM_IDS, here } from '../logic/engine';
-import { rrfSkip } from '../logic/game';
+import { presentOf, rrfSkip } from '../logic/game';
 import { scenarioById } from '../data/scenarios';
 import Ruin, { TimerPill } from '../components/Ruin';
 import { DoorPath, GoldButton } from '../components/Bits';
@@ -18,7 +18,7 @@ export default function RrfIntroScreen({ group, gs, playerId }: Props) {
     const now = useServerNow();
     const isHost = group.hostId === playerId;
     const sc = scenarioById(gs.scenario);
-    const present = group.players.map((p) => p.id);
+    const present = presentOf(group);
     const nameOf = (id: string) => (id === playerId ? 'You' : group.players.find((p) => p.id === id)?.name ?? 'Someone');
     const left = gs.phaseEndsAt - now;
 

@@ -11,6 +11,7 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RouteProp } from "@react-navigation/native";
 import { RootStackParamList } from "../../../App";
 import { useGroup } from "../../shared/hooks/useGroup";
+import { registerGameCloser, useMinimizableGame } from "../../shared/hooks/useMinimizableGame";
 import { useImposterGame } from "./logic/useImposterGame";
 import { ImposterGameState, ImposterSettings } from "../../shared/types";
 import { usePresence } from "../../shared/hooks/usePresence";
@@ -21,6 +22,8 @@ import WordRevealScreen from "./screens/WordRevealScreen";
 import DescribeScreen from "./screens/DescribeScreen";
 import VoteScreen from "./screens/VoteScreen";
 import ResultScreen from "./screens/ResultScreen";
+import PixelAvatar from "../../shared/avatars/PixelAvatar";
+import { avatarIdFor } from "../../shared/avatars/sprites";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "ImposterFlow">;
@@ -56,11 +59,8 @@ export default function ImposterFlowScreen({ navigation, route }: Props) {
     imposterGs?.awayIgnored,
   );
 
-  useEffect(() => {
-    if (group?.currentGame === "menu") {
-      navigation.replace("GameMenu", { groupId, playerId });
-    }
-  }, [group?.currentGame]);
+  // Back / swipe minimises this game; game over takes it away.
+  useMinimizableGame(navigation, route, group, "imposter", groupId, playerId);
 
   if (loading || !group) {
     return (
@@ -156,7 +156,7 @@ function ImposterLobby({
 
   return (
     <View style={styles.container}>
-      <Text style={styles.lobbyTitle}>🕵️ Imposter</Text>
+      <Text style={styles.lobbyTitle}>🕵️ Are You the Imposter?</Text>
       <Text style={styles.lobbySubtitle}>Ready to play?</Text>
 
       {isHost && (
@@ -182,9 +182,7 @@ function ImposterLobby({
         renderItem={({ item }) => (
           <View style={styles.playerRow}>
             <View style={styles.avatar}>
-              <Text style={styles.avatarText}>
-                {item.name.charAt(0).toUpperCase()}
-              </Text>
+              <PixelAvatar avatar={avatarIdFor(item, group.players)} playerId={item.id} size={40} />
             </View>
             <Text style={styles.playerName}>{item.name}</Text>
             {item.isHost && (
@@ -267,6 +265,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   avatar: {
+    overflow: "hidden",
     width: 40,
     height: 40,
     borderRadius: 20,

@@ -8,10 +8,22 @@ import {
   Alert,
   Modal,
   ScrollView,
-  TextInput,
+  Share,
+  Image,
 } from "react-native";
+import { POSTER_BY_GAME } from "../assets/posters";
+import { display, displaySemi } from "../theme/fonts";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
-import { RouteProp } from "@react-navigation/native";
+import { RouteProp, useIsFocused } from "@react-navigation/native";
+import PixelAvatar from "../avatars/PixelAvatar";
+import { avatarIdFor } from "../avatars/sprites";
+import ChatSheet from "../components/ChatSheet";
+import ProfileSheet from "../components/ProfileSheet";
+import ThemeSheet from "../components/ThemeSheet";
+import LeaveGroupSheet from "../components/LeaveGroupSheet";
+import { inviteMessage, inviteUrl } from "../config/invite";
+import { useChat } from "../hooks/useChat";
+import { statusColor, useOnlineStatus } from "../hooks/useOnlineStatus";
 import { RootStackParamList } from "../../../App";
 import { useGroup } from "../hooks/useGroup";
 import { GameType, Team } from "../types";
@@ -20,15 +32,22 @@ import {
   dissolveTeams,
   leaveGroup,
   removePlayer,
+  returnToMenu,
   setActivePlayersForGame,
+  touchGroup,
 } from "../firebase/groups";
-import { games } from "../../games/registry";
+import { games, GameDefinition, GameKind, KIND_LABEL, fitFor, minutesLabel, playersLabel, usesTeams } from "../../games/registry";
+import GameInfoSheet from "../components/GameInfoSheet";
+import MiniGame, { useMinimizedRoute } from "../components/MiniGame";
+import { ThemeWallpaper, menuThemeById, menuThemeStyles } from "../themes/menuThemes";
+import { routeForGame } from "../hooks/useMinimizableGame";
 import { fromSessionTeams } from "../../games/roof-race/logic/engine";
 import { clearSession } from "../utils/session";
 import { BackHandler } from "react-native";
 import PlayerSelectModal from "../components/PlayerSelectModal";
 import { denseRanks, rankMedal } from "../utils/ranking";
 import { AllTimeRow, getProfile, loadAllTime, setRealName } from "../firebase/profiles";
+import BackLink from "../components/BackLink";
 
 // Leaderboard slides: 🏆 Session → one per game played this session →
 // 🌍 All-time (everyone you've played with, across sessions, merged by
@@ -47,7 +66,20 @@ export default function GameMenuScreen({ navigation, route }: Props) {
   const [showPlayerSelect, setShowPlayerSelect] = useState(false);
   const [pendingGameId, setPendingGameId] = useState<GameType | null>(null);
   // The leaderboard and player list open as overlays, leaving the screen to the games.
-  const [sheet, setSheet] = useState<null | "board" | "players">(null);
+  const [sheet, setSheet] = useState<null | "board" | "players" | "chat" | "me" | "theme">(null);
+  const [leaving, setLeaving] = useState(false);
+  const chat = useChat(groupId, playerId);
+  // Who's here (and keeps this phone checked in while the menu is on top).
+  const isFocused = useIsFocused();
+  const online = useOnlineStatus(groupId, playerId, (group?.players ?? []).map((p) => p.id), isFocused);
+  // The game whose details are open, and the filter chip picked.
+  const [info, setInfo] = useState<GameDefinition | null>(null);
+  const [filter, setFilter] = useState<"all" | "fit" | "quick" | GameKind>("all");
+  const anyBest = !!group && games.some((g) => fitFor(g, group.players.length) === "best");
+  // Players left and the "Best for" chip went away while it was picked.
+  useEffect(() => {
+    if (filter === "fit" && !anyBest) setFilter("all");
+  }, [filter, anyBest]);
 
   // Leaderboard slides
   const [slide, setSlide] = useState(0);
@@ -70,66 +102,82 @@ export default function GameMenuScreen({ navigation, route }: Props) {
 
   // Real name (this phone's all-time identity)
   const [realName, setRealNameState] = useState<string>("");
-  const [nameModal, setNameModal] = useState(false);
-  const [nameDraft, setNameDraft] = useState("");
   useEffect(() => {
     getProfile(playerId)
       .then((p) => setRealNameState(p?.realName ?? ""))
       .catch(() => {});
   }, [playerId]);
-  const saveRealName = async (value: string) => {
+  const saveRealName = async (value: string): Promise<boolean> => {
     try {
       await setRealName(playerId, value);
       setRealNameState(value.trim().replace(/\s+/g, " "));
-      setNameModal(false);
       setAllTime(null);
+      return true;
     } catch {
       Alert.alert("Couldn't save", "Check your connection (or the Firestore rule for profiles) and try again.");
+      return false;
     }
   };
 
   const isHost = group?.hostId === playerId;
+  // 🎨 The group's theme: a wallpaper plus colours for text and buttons.
+  const theme = menuThemeById(group?.menuTheme);
+  const T = menuThemeStyles(theme);
+  useEffect(() => {
+    touchGroup(groupId);
+  }, [groupId]);
+
+  // A game starts → open it. Unless it's minimised underneath already (the
+  // player came here to check the board or chat): then it stays a mini
+  // player until they tap it.
+  const minimized = useMinimizedRoute(group);
+  useEffect(() => {
+    const target = routeForGame(group?.currentGame);
+    if (!target || minimized || !isFocused) return;
+    navigation.replace(target as any, { groupId, playerId });
+  }, [group?.currentGame, minimized, isFocused]);
 
   useEffect(() => {
-    if (group?.currentGame === "imposter") {
-      navigation.replace("ImposterFlow", { groupId, playerId });
-    } else if (group?.currentGame === "stop-the-timer") {
-      navigation.replace("TimerFlow", { groupId, playerId });
-    } else if (group?.currentGame === "pass-the-bomb") {
-      navigation.replace("BombFlow", { groupId, playerId });
-    } else if (group?.currentGame === "quiz-board") {
-      navigation.replace("QuizBoardFlow", { groupId, playerId });
-    } else if (group?.currentGame === "card-clash") {
-      navigation.replace("ClashFlow", { groupId, playerId });
-    } else if (group?.currentGame === "clash-holdem") {
-      navigation.replace("HoldemFlow", { groupId, playerId });
-    } else if (group?.currentGame === "court-of-thieves") {
-      navigation.replace("CotFlow", { groupId, playerId });
-    } else if (group?.currentGame === "match-the-following") {
-      navigation.replace("MtfFlow", { groupId, playerId });
-    } else if (group?.currentGame === "roof-race") {
-      navigation.replace("RrfFlow", { groupId, playerId });
-    }
-  }, [group?.currentGame]);
-
-  useEffect(() => {
+    // Only while this screen is on top (a hidden menu must never grab the
+    // press), and go BACK to the lobby rather than stacking a second one.
+    if (!isFocused) return;
     const backHandler = BackHandler.addEventListener(
       "hardwareBackPress",
       () => {
-        navigation.navigate("GroupLobby", { groupId, playerId });
+        navigation.popTo("GroupLobby", { groupId, playerId });
         return true;
       },
     );
     return () => backHandler.remove();
-  }, [navigation, groupId, playerId]);
+  }, [navigation, groupId, playerId, isFocused]);
 
   const onSelectGame = async (
     gameId: GameType,
     available: boolean,
-  ) => {
+    justClosed = false, // the previous game was closed a moment ago
+  ): Promise<void> => {
     if (!available) return;
     if (!isHost || !group) return;
     const gameDef = games.find((g) => g.id === gameId)!;
+    // A game is still running (minimised): close it first?
+    const running = !justClosed && group.currentGame !== "menu" ? games.find((g) => g.id === group.currentGame) : null;
+    if (running) {
+      return Alert.alert(
+        `Close ${running.name}?`,
+        `${running.name} is still running (minimised). Starting ${gameDef.name} closes it for everyone. Rounds already scored keep their points.`,
+        [
+          { text: `Keep ${running.name}`, style: "cancel" },
+          {
+            text: `Close & start`,
+            style: "destructive",
+            onPress: async () => {
+              await returnToMenu(groupId);
+              onSelectGame(gameId, available, true);
+            },
+          },
+        ],
+      );
+    }
     if (group.players.length < gameDef.minPlayers) {
       return Alert.alert(`Needs ${gameDef.minPlayers}+ players`);
     }
@@ -179,7 +227,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
 
   if (loading || !group) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, T.container]}>
         <Text style={styles.loadingText}>Loading...</Text>
       </View>
     );
@@ -226,27 +274,8 @@ export default function GameMenuScreen({ navigation, route }: Props) {
       .join("  ·  ");
   })();
 
-  const handleLeave = () => {
-    Alert.alert(
-      "Leave Group?",
-      isHost
-        ? "You are the host. Next player will become host if you leave."
-        : "Are you sure you want to leave?",
-      [
-        { text: "Stay", style: "cancel" },
-        {
-          text: "Leave",
-          style: "destructive",
-          onPress: async () => {
-            if (!group) return;
-            await leaveGroup(group.id, playerId, isHost, group.players);
-            await clearSession();
-            navigation.replace("Home");
-          },
-        },
-      ],
-    );
-  };
+  // The app's own "Leave the group?" prompt (LeaveGroupSheet does the rest).
+  const handleLeave = () => setLeaving(true);
 
   const handleKick = (targetId: string, targetName: string) => {
     if (!group) return;
@@ -346,95 +375,222 @@ export default function GameMenuScreen({ navigation, route }: Props) {
   };
 
   return (
-    <View style={styles.container}>
-      <TouchableOpacity style={styles.leaveBtn} onPress={handleLeave}>
-        <Text style={styles.leaveBtnText}>← Leave Group</Text>
-      </TouchableOpacity>
-      <Text style={styles.title}>Game Menu</Text>
-      <TouchableOpacity onPress={() => Alert.alert("Group Code", group.code)}>
-        <Text style={styles.codeHint}>
-          Group code: {group.code} (tap to view)
-        </Text>
-      </TouchableOpacity>
-      <TouchableOpacity
-        style={styles.nameChip}
-        onPress={() => {
-          setNameDraft(realName);
-          setNameModal(true);
-        }}
-      >
-        <Text style={styles.nameChipText}>
-          {realName ? `👤 Real name: ${realName}  ✏️` : "👤 Set your real name for the all-time board  ✏️"}
-        </Text>
-      </TouchableOpacity>
+    <View style={[styles.container, T.container]}>
+      <ThemeWallpaper theme={theme} />
+      <BackLink label="Leave" onPress={handleLeave} textStyle={T.sectionLabel} />
+      {/* You (top left) and the invite (top right) */}
+      <View style={styles.topBar}>
+        {(() => {
+          const me = group.players.find((p) => p.id === playerId);
+          return (
+            <TouchableOpacity style={styles.meChip} onPress={() => setSheet("me")} accessibilityLabel="Your profile and settings">
+              <View>
+                <PixelAvatar avatar={me ? avatarIdFor(me, group.players) : undefined} playerId={playerId} size={40} />
+                {isHost && <Text style={styles.meCrown}>👑</Text>}
+              </View>
+              <View style={{ flexShrink: 1 }}>
+                <Text style={styles.meName} numberOfLines={1}>{me?.name ?? "You"}</Text>
+                <Text style={styles.meSub} numberOfLines={1}>
+                  {group.scores?.[playerId] ?? 0} pts · {realName ? "Profile" : "Set up profile"} ›
+                </Text>
+              </View>
+            </TouchableOpacity>
+          );
+        })()}
+        <View style={{ flex: 1 }} />
+        <TouchableOpacity
+          style={styles.themeBtn}
+          onPress={() => setSheet("theme")}
+          accessibilityLabel={`Group theme: ${theme.name}`}
+        >
+          <Text style={styles.themeBtnText}>🎨</Text>
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={styles.inviteChip}
+          onPress={() =>
+            Share.share({
+              message: inviteMessage(group.code, group.players.find((p) => p.id === group.hostId)?.name),
+              url: inviteUrl(group.code),
+            })
+          }
+          accessibilityLabel={`Invite friends, group code ${group.code}`}
+        >
+          <Text style={styles.inviteCode}>{group.code}</Text>
+          <Text style={styles.inviteText}>➕ Invite</Text>
+        </TouchableOpacity>
+      </View>
+      <Text style={[styles.title, T.title]}>Game Menu</Text>
 
       {/* Slim standings bar: the full boards open as overlays */}
-      <View style={styles.standBar}>
+      <View style={[styles.standBar, T.standBar]}>
         <TouchableOpacity style={styles.standTop} onPress={() => setSheet("board")} activeOpacity={0.7}>
-          <Text style={styles.standText} numberOfLines={1}>
+          <Text style={[styles.standText, T.standText]} numberOfLines={1}>
             {topLine || "🏆 No points yet"}
           </Text>
         </TouchableOpacity>
         <View style={styles.standBtns}>
-          <TouchableOpacity style={styles.standBtn} onPress={() => setSheet("board")}>
-            <Text style={styles.standBtnText}>🏆 Leaderboard</Text>
+          <TouchableOpacity style={[styles.standBtn, { flex: 1.45 }, T.standBtn]} onPress={() => setSheet("board")}>
+            <Text style={[styles.standBtnText, T.standBtnText]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+              🏆 Leaderboard
+            </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={styles.standBtn} onPress={() => setSheet("players")}>
-            <Text style={styles.standBtnText}>👥 Players ({group.players.length})</Text>
+          <TouchableOpacity style={[styles.standBtn, { flex: 1.25 }, T.standBtn]} onPress={() => setSheet("players")}>
+            <Text style={[styles.standBtnText, T.standBtnText]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+              👥 Players ({group.players.length})
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={[styles.standBtn, { flex: 0.8 }, T.standBtn]} onPress={() => setSheet("chat")}>
+            <Text style={[styles.standBtnText, T.standBtnText]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
+              💬 Chat
+            </Text>
+            {chat.unread > 0 && (
+              <View style={styles.unreadBadge}>
+                <Text style={styles.unreadText}>{chat.unread > 9 ? "9+" : chat.unread}</Text>
+              </View>
+            )}
           </TouchableOpacity>
         </View>
       </View>
 
-      <Text style={styles.sectionLabel}>CHOOSE A GAME</Text>
+      {!isHost && (() => {
+        const host = group.players.find((p) => p.id === group.hostId);
+        return (
+          <View style={styles.guestBanner}>
+            {host && <PixelAvatar avatar={avatarIdFor(host, group.players)} size={40} />}
+            <View style={{ flex: 1 }}>
+              <Text style={styles.guestBannerTitle}>
+                Waiting for {host?.name ?? "the host"} to pick a game
+              </Text>
+              <Text style={styles.guestBannerSub}>
+                Tap any game to see how it works. You'll jump in when it starts.
+              </Text>
+            </View>
+          </View>
+        );
+      })()}
+
+      <Text style={[styles.sectionLabel, T.sectionLabel]}>{isHost ? "CHOOSE A GAME" : "GAMES YOU CAN PLAY"}</Text>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ flexGrow: 0, flexShrink: 0, marginBottom: 10 }}
+        contentContainerStyle={styles.filterRow}
+      >
+        {([
+          ["all", "All"],
+          // Only when some game is actually at its best with this many
+          // (with 1 player, none is: that chip would always be empty).
+          ...(anyBest ? [["fit", `⭐ Best for ${group.players.length}`]] : []),
+          ...(Object.keys(KIND_LABEL) as GameKind[])
+            .filter((k) => games.some((g) => g.kind === k))
+            .map((k) => [k, KIND_LABEL[k]]),
+          ["quick", "⚡ Under 10 min"],
+        ] as [typeof filter, string][]).map(([key, label]) => (
+          <TouchableOpacity
+            key={key}
+            style={[[styles.filterChip, T.filterChip], filter === key && [styles.filterChipOn, T.filterChipOn]]}
+            onPress={() => setFilter(key)}
+          >
+            <Text style={[[styles.filterText, T.filterText], filter === key && [styles.filterTextOn, T.filterTextOn]]}>{label}</Text>
+          </TouchableOpacity>
+        ))}
+      </ScrollView>
       <FlatList
-        data={games}
+        contentContainerStyle={minimized ? { paddingBottom: 120 } : undefined}
+        data={games.filter((g) =>
+          filter === "all"
+            ? true
+            : filter === "fit"
+              ? fitFor(g, group.players.length) === "best"
+              : filter === "quick"
+                ? g.minutes[0] <= 10 && g.minutes[1] <= 10
+                : filter === "teams"
+                  ? usesTeams(g)
+                  : g.kind === filter,
+        )}
         keyExtractor={(item) => item.id}
         numColumns={2}
         columnWrapperStyle={styles.row}
+        ListEmptyComponent={
+          <Text style={[styles.filterEmpty, T.filterEmpty]}>No games match that yet. Try another filter.</Text>
+        }
         renderItem={({ item }) => {
-          const enoughPlayers = group.players.length >= item.minPlayers;
           const available = item.available !== false;
-          const canPlay = isHost && enoughPlayers && available;
-
+          const fit = fitFor(item, group.players.length);
+          // A game that can't be played right now is faded INSIDE a solid
+          // tile, so a themed wallpaper never shows through it.
+          const faded = !available || fit === "short";
           return (
             <TouchableOpacity
-              style={[
-                styles.gameCard,
-                available && styles.gameCardAvailable,
-                !canPlay && styles.gameCardDisabled,
-              ]}
-              onPress={() => onSelectGame(item.id, available)}
-              disabled={!canPlay}
+              style={styles.gameCard}
+              onPress={() => available && setInfo(item)}
+              disabled={!available}
+              accessibilityHint="Shows how the game works"
             >
-              {available ? (
-                <View style={styles.readyBadge}>
-                  <Text style={styles.readyBadgeText}>Ready</Text>
-                </View>
-              ) : (
+              {!available ? (
                 <View style={styles.soonBadge}>
                   <Text style={styles.soonBadgeText}>Soon</Text>
                 </View>
-              )}
-              <Text style={styles.gameEmoji}>{item.emoji}</Text>
-              <Text style={styles.gameName}>{item.name}</Text>
-              <Text style={styles.gameDesc}>{item.description}</Text>
-              {available && !enoughPlayers && (
-                <Text style={styles.gameWarning}>
-                  Needs {item.minPlayers}+ players
+              ) : item.isNew ? (
+                <View style={styles.newBadge}>
+                  <Text style={styles.newBadgeText}>NEW</Text>
+                </View>
+              ) : null}
+              {/* The game's poster across the top of the tile */}
+              <View style={[styles.posterWrap, faded && styles.gameInnerFaded]}>
+                {POSTER_BY_GAME[item.id] ? (
+                  <Image source={POSTER_BY_GAME[item.id]} style={styles.posterImg} resizeMode="cover" />
+                ) : (
+                  <View style={[styles.posterImg, styles.posterEmpty]}>
+                    <Text style={styles.gameEmoji}>{item.emoji}</Text>
+                  </View>
+                )}
+                <View style={styles.posterEmoji}>
+                  <Text style={styles.posterEmojiText}>{item.emoji}</Text>
+                </View>
+              </View>
+              <View style={[styles.gameInner, faded && styles.gameInnerFaded]}>
+                <Text style={styles.gameName}>{item.name}</Text>
+                <Text style={styles.gameDesc}>{item.description}</Text>
+                <Text style={styles.gameMeta}>
+                  👥 {playersLabel(item)} · ⏱ {minutesLabel(item)}
                 </Text>
-              )}
+                <Text style={styles.gameKind}>
+                  {KIND_LABEL[item.kind]}
+                  {item.teamPlay?.need === "optional" ? " · 👥 Team mode" : ""}
+                </Text>
+              </View>
+              {fit === "best" && <Text style={styles.gameFit}>⭐ Great for {group.players.length}</Text>}
+              {fit === "short" && <Text style={styles.gameWarning}>Needs {item.minPlayers}+ players</Text>}
             </TouchableOpacity>
           );
         }}
       />
 
-      {!isHost && (
-        <View style={styles.waitingBox}>
-          <Text style={styles.waitingText}>
-            Waiting for host to pick a game...
-          </Text>
-        </View>
-      )}
+      <GameInfoSheet
+        game={info}
+        onClose={() => setInfo(null)}
+        group={group}
+        playerId={playerId}
+        onPlay={(g) => {
+          setInfo(null);
+          onSelectGame(g.id, g.available !== false);
+        }}
+      />
+
+      {/* The minimised game, bottom right */}
+      <MiniGame group={group} playerId={playerId} />
+
+      <ChatSheet
+        visible={sheet === "chat"}
+        onClose={() => setSheet(null)}
+        group={group}
+        playerId={playerId}
+        messages={chat.messages}
+        blocked={chat.blocked}
+        onSeen={chat.markRead}
+        onRetry={chat.retry}
+      />
 
       {/* 🏆 Leaderboard overlay */}
       <Modal visible={sheet === "board"} transparent animationType="slide" onRequestClose={() => setSheet(null)}>
@@ -529,10 +685,11 @@ export default function GameMenuScreen({ navigation, route }: Props) {
         <ScrollView style={styles.sheetList}>
           {group.players.map((player) => (
             <View key={player.id} style={styles.playerMgmtRow}>
-              <View style={styles.avatar}>
-                <Text style={styles.avatarText}>
-                  {player.name.charAt(0).toUpperCase()}
-                </Text>
+              <View>
+                <PixelAvatar avatar={avatarIdFor(player, group.players)} size={36} dim={online[player.id] === "offline"} />
+                {online[player.id] && online[player.id] !== "unknown" && (
+                  <View style={[styles.onlineDot, { backgroundColor: statusColor[online[player.id]] }]} />
+                )}
               </View>
               <Text style={styles.leaderName}>
                 {player.name}
@@ -652,45 +809,22 @@ export default function GameMenuScreen({ navigation, route }: Props) {
         </View>
       </Modal>
 
-      {/* Real name: ties this phone's points to one name across sessions */}
-      <Modal
-        visible={nameModal}
-        transparent
-        animationType="slide"
-        onRequestClose={() => setNameModal(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalBox}>
-            <Text style={styles.modalTitle}>👤 Your real name</Text>
-            <Text style={styles.modalSubtitle}>
-              Whatever username you play under, this phone's points go to this name on the 🌍 All-time board. Use the same name on every phone you play on.
-            </Text>
-            <TextInput
-              style={styles.nameInput}
-              value={nameDraft}
-              onChangeText={setNameDraft}
-              placeholder="e.g. Rakesh"
-              placeholderTextColor="#AAA"
-              maxLength={30}
-              autoFocus
-              autoCapitalize="words"
-              returnKeyType="done"
-              onSubmitEditing={() => saveRealName(nameDraft)}
-            />
-            <TouchableOpacity style={styles.nameSave} onPress={() => saveRealName(nameDraft)}>
-              <Text style={styles.nameSaveText}>Save</Text>
-            </TouchableOpacity>
-            {!!realName && (
-              <TouchableOpacity style={styles.modalCancel} onPress={() => saveRealName("")}>
-                <Text style={[styles.modalCancelText, { color: "#E63946" }]}>Remove real name</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity style={styles.modalCancel} onPress={() => setNameModal(false)}>
-              <Text style={styles.modalCancelText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+      <ThemeSheet visible={sheet === "theme"} onClose={() => setSheet(null)} group={group} playerId={playerId} />
+
+      <ProfileSheet
+        visible={sheet === "me"}
+        onClose={() => setSheet(null)}
+        group={group}
+        playerId={playerId}
+        realName={realName}
+        onSaveRealName={saveRealName}
+        onLeave={() => {
+          setSheet(null);
+          handleLeave();
+        }}
+      />
+
+      <LeaveGroupSheet visible={leaving} onClose={() => setLeaving(false)} group={group} playerId={playerId} tone="light" />
 
       {/* Player selection modal — host picks who's actually playing before start */}
       <PlayerSelectModal
@@ -718,12 +852,55 @@ const styles = StyleSheet.create({
     fontSize: 16,
   },
   title: {
-    fontSize: 26,
-    fontWeight: "bold",
+    fontSize: 32,
+    ...display,
     color: "#1A1A2E",
     textAlign: "center",
-    marginBottom: 4,
+    marginBottom: 14,
   },
+  topBar: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 14,
+  },
+  meChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 10,
+    backgroundColor: "#fff",
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#EAEAEE",
+    paddingVertical: 6,
+    paddingLeft: 6,
+    paddingRight: 14,
+    flexShrink: 1,
+  },
+  meCrown: { position: "absolute", top: -9, left: -6, fontSize: 14 },
+  meName: { color: "#1A1A2E", fontSize: 16, ...display },
+  meSub: { color: "#888", fontSize: 11, marginTop: 1 },
+  themeBtn: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: "#fff",
+    borderWidth: 1,
+    borderColor: "#EAEAEE",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  themeBtnText: { fontSize: 22 },
+  inviteChip: {
+    alignItems: "center",
+    backgroundColor: "#1A1A2E",
+    borderRadius: 14,
+    paddingVertical: 7,
+    paddingHorizontal: 12,
+  },
+  inviteCode: { color: "#C9A45C", fontSize: 15, fontWeight: "900", letterSpacing: 2 },
+  inviteText: { color: "#fff", fontSize: 11, fontWeight: "700", marginTop: 1 },
   codeHint: {
     color: "#E63946",
     fontSize: 13,
@@ -761,10 +938,28 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: "#1A1A2E",
     borderRadius: 10,
-    paddingVertical: 9,
+    minHeight: 40,
+    paddingHorizontal: 4,
+    flexDirection: "row",
     alignItems: "center",
+    justifyContent: "center",
   },
-  standBtnText: { color: "#fff", fontSize: 13, fontWeight: "600" },
+  standBtnText: { color: "#fff", fontSize: 13, ...displaySemi, textAlign: "center", textAlignVertical: "center", includeFontPadding: false },
+  unreadBadge: {
+    position: "absolute",
+    top: -6,
+    right: -4,
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 5,
+    backgroundColor: "#E63946",
+    alignItems: "center",
+    justifyContent: "center",
+    borderWidth: 2,
+    borderColor: "#fff",
+  },
+  unreadText: { color: "#fff", fontSize: 10, fontWeight: "900" },
   sheetDismiss: { flex: 1 },
   sheet: {
     height: "85%",
@@ -876,17 +1071,74 @@ const styles = StyleSheet.create({
   },
   gameCard: {
     flex: 1,
-    backgroundColor: "#fff",
+    backgroundColor: "#FFFFFF", // solid on every theme
+    shadowColor: "#000",
+    shadowOpacity: 0.12,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 3,
     borderRadius: 16,
-    padding: 16,
+    paddingBottom: 12,
     alignItems: "center",
     marginBottom: 10,
     borderWidth: 1,
     borderColor: "#EAEAEE",
     position: "relative",
     minHeight: 140,
-    justifyContent: "center",
+    justifyContent: "flex-start",
+    overflow: "hidden",
   },
+  posterWrap: { alignSelf: "stretch", height: 112, marginBottom: 10 },
+  posterImg: { width: "100%", height: "100%", borderTopLeftRadius: 15, borderTopRightRadius: 15 },
+  posterEmpty: { backgroundColor: "#1A1A2E", alignItems: "center", justifyContent: "center" },
+  posterEmoji: {
+    position: "absolute",
+    left: 8,
+    bottom: -12,
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: "#FFFFFF",
+    alignItems: "center",
+    justifyContent: "center",
+    shadowColor: "#000",
+    shadowOpacity: 0.15,
+    shadowRadius: 3,
+    shadowOffset: { width: 0, height: 1 },
+    elevation: 2,
+  },
+  posterEmojiText: { fontSize: 16 },
+  gameCardBest: {
+    borderWidth: 1.5,
+    borderColor: "#3FA66A",
+  },
+  newBadge: {
+    zIndex: 2,
+    position: "absolute",
+    top: 8,
+    right: 8,
+    backgroundColor: "#C9A45C",
+    borderRadius: 6,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+  },
+  newBadgeText: { color: "#121110", fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+  gameMeta: { color: "#1A1A2E", fontSize: 11, fontWeight: "700", marginTop: 8 },
+  gameKind: { color: "#888", fontSize: 11, marginTop: 2 },
+  gameFit: { color: "#2E8B57", fontSize: 11, fontWeight: "800", marginTop: 4 },
+  filterRow: { gap: 6, paddingRight: 8 },
+  filterChip: {
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: "#E2E2EA",
+    backgroundColor: "#fff",
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  filterChipOn: { backgroundColor: "#1A1A2E", borderColor: "#1A1A2E" },
+  filterText: { color: "#1A1A2E", fontSize: 13, fontWeight: "700" },
+  filterTextOn: { color: "#fff" },
+  filterEmpty: { color: "#888", textAlign: "center", padding: 24 },
   gameCardAvailable: {
     borderWidth: 1.5,
     borderColor: "#E63946",
@@ -894,6 +1146,8 @@ const styles = StyleSheet.create({
   gameCardDisabled: {
     opacity: 0.55,
   },
+  gameInner: { alignItems: "center", alignSelf: "stretch", paddingHorizontal: 10 },
+  gameInnerFaded: { opacity: 0.45 },
   readyBadge: {
     position: "absolute",
     top: 8,
@@ -909,6 +1163,7 @@ const styles = StyleSheet.create({
     fontWeight: "600",
   },
   soonBadge: {
+    zIndex: 2,
     position: "absolute",
     top: 8,
     right: 8,
@@ -928,9 +1183,11 @@ const styles = StyleSheet.create({
   },
   gameName: {
     color: "#1A1A2E",
-    fontSize: 14,
-    fontWeight: "600",
-    marginBottom: 2,
+    fontSize: 16,
+    lineHeight: 19,
+    ...display,
+    marginTop: 4,
+    marginBottom: 3,
     textAlign: "center",
   },
   gameDesc: {
@@ -943,6 +1200,25 @@ const styles = StyleSheet.create({
     fontSize: 10,
     marginTop: 6,
     textAlign: "center",
+  },
+  guestBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 12,
+    backgroundColor: "#1A1A2E",
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 14,
+  },
+  guestBannerTitle: {
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "800",
+  },
+  guestBannerSub: {
+    color: "#C9C9D6",
+    fontSize: 12,
+    marginTop: 2,
   },
   waitingBox: {
     padding: 18,
@@ -1061,6 +1337,8 @@ const styles = StyleSheet.create({
     padding: 14,
     marginTop: 4,
   },
+  leaveLink: { alignSelf: "flex-start", marginBottom: 10 },
+  leaveLinkText: { color: "#888", fontSize: 14, fontWeight: "600" },
   leaveBtnText: {
     color: "#888",
     fontSize: 14,
@@ -1092,6 +1370,16 @@ const styles = StyleSheet.create({
   tabBtnTextActive: {
     color: "#fff",
   },
+  onlineDot: {
+    position: "absolute",
+    right: -3,
+    bottom: -3,
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: "#fff",
+  },
   playerMgmtRow: {
     flexDirection: "row",
     alignItems: "center",
@@ -1112,15 +1400,17 @@ const styles = StyleSheet.create({
     fontWeight: "bold",
   },
   hostBadge: {
-    backgroundColor: "#E63946",
+    backgroundColor: "#FFF4DC",
+    borderWidth: 1,
+    borderColor: "#C9A45C",
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 3,
   },
   hostBadgeText: {
-    color: "#fff",
+    color: "#9A7432",
     fontSize: 10,
-    fontWeight: "600",
+    fontWeight: "800",
   },
   kickBtn: {
     width: 26,

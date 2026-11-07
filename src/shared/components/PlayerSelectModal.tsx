@@ -9,6 +9,7 @@ import {
   FlatList,
 } from "react-native";
 import { Player } from "../types";
+import { display } from "../theme/fonts";
 
 type Props = {
   visible: boolean;
@@ -159,24 +160,26 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  checkboxChecked: { backgroundColor: "#E63946", borderColor: "#E63946" },
+  checkboxChecked: { backgroundColor: "#1A1A2E", borderColor: "#1A1A2E" },
   checkmark: { color: "#fff", fontSize: 13, fontWeight: "bold" },
   name: { fontSize: 15, color: "#1A1A2E", flex: 1 },
   hostBadge: {
-    backgroundColor: "#E63946",
+    backgroundColor: "#FFF4DC",
+    borderWidth: 1,
+    borderColor: "#C9A45C",
     borderRadius: 8,
     paddingHorizontal: 8,
     paddingVertical: 2,
   },
-  hostBadgeText: { color: "#fff", fontSize: 10, fontWeight: "600" },
+  hostBadgeText: { color: "#9A7432", fontSize: 10, fontWeight: "800" },
   confirmBtn: {
-    backgroundColor: "#E63946",
+    backgroundColor: "#C9A45C", // the one "go" button: gold, like Play and Continue
     borderRadius: 14,
     padding: 16,
     alignItems: "center",
   },
   confirmBtnDisabled: { backgroundColor: "#ccc" },
-  confirmBtnText: { color: "#fff", fontSize: 15, fontWeight: "bold" },
+  confirmBtnText: { color: "#121110", fontSize: 17, ...display },
   cancelBtn: { alignItems: "center", padding: 12, marginTop: 6 },
   cancelBtnText: { color: "#888", fontSize: 14 },
 });

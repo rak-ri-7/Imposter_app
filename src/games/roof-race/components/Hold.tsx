@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from 'react';
 import { View, Text, Pressable, StyleSheet, Vibration, AppState } from 'react-native';
 import type { Group, RrfGameState, RrfHold, RrfTeamId } from '../../../shared/types';
 import { CLAIM_HOLD_MS, INTERRUPT_COST, INTERRUPT_HOLD_MS, here, holdDoneAt, holdKind } from '../logic/engine';
-import { rrfHoldDown, rrfHoldUp } from '../logic/game';
+import { presentOf, rrfHoldDown, rrfHoldUp } from '../logic/game';
 import { getServerNow } from '../../../shared/firebase/time';
 import { RR, TEAM } from '../theme';
 
@@ -74,7 +74,7 @@ export function HoldButton({ group, gs, playerId, label, holdingLabel, color = R
 
 // One team's hands, and a bar that fills while they hold together.
 export function HoldMeter({ group, gs, team, kind, now, playerId }: { group: Group; gs: RrfGameState; team: RrfTeamId; kind: RrfHold['kind']; now: number; playerId: string }) {
-    const present = group.players.map((p) => p.id);
+    const present = presentOf(group);
     const people = here(gs.teams[team], present);
     const holding = people.filter((p) => gs.holds[p]?.kind === kind);
     const done = holdDoneAt(gs, team, present);

@@ -11,7 +11,10 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RouteProp } from "@react-navigation/native";
 import { RootStackParamList } from "../../../App";
 import { useGroup } from "../../shared/hooks/useGroup";
+import { registerGameCloser, useMinimizableGame } from "../../shared/hooks/useMinimizableGame";
 import { useHostFailover } from "../../shared/hooks/useHostFailover";
+import { usePresence } from "../../shared/hooks/usePresence";
+import DroppedBanner from "../../shared/components/DroppedBanner";
 import { returnToMenu } from "../../shared/firebase/groups";
 import { getServerNow, resyncServerTimeOffset, syncServerTimeOffset } from "../../shared/firebase/time";
 import {
@@ -53,6 +56,9 @@ export default function CotFlowScreen({ navigation, route }: Props) {
   useHostFailover(group, playerId);
   const gs = group && isCotState(group.gameState) ? group.gameState : null;
   const isHost = group?.hostId === playerId;
+  // Who has dropped out (just shown: nothing here waits for one player forever).
+  const presence = usePresence(groupId, playerId, gs && gs.phase !== "over" ? gs.seats : []);
+  const nameOf = (id: string) => group?.players.find((p) => p.id === id)?.name ?? "Someone";
   const groupIdRef = useRef(groupId);
 
   useEffect(() => {
@@ -64,9 +70,8 @@ export default function CotFlowScreen({ navigation, route }: Props) {
     if (gs?.phase === "roles") resyncServerTimeOffset(groupId);
   }, [gs?.round, gs?.phase === "roles"]);
 
-  useEffect(() => {
-    if (group?.currentGame === "menu") navigation.replace("GameMenu", { groupId, playerId });
-  }, [group?.currentGame]);
+  // Back / swipe minimises this game; game over takes it away.
+  useMinimizableGame(navigation, route, group, "court-of-thieves", groupId, playerId);
 
   // ── Timed steps, on the server clock ─────────────────────────────
   const stepKey = gs ? `${gs.phase}:${gs.round}:${gs.seq}:${gs.trial?.turn ?? ""}` : "";
@@ -111,7 +116,7 @@ export default function CotFlowScreen({ navigation, route }: Props) {
   // ── Android back: the host can end the game ──────────────────────
   const alertOpen = useRef(false);
   useEffect(() => {
-    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+    const sub = registerGameCloser(groupId, () => {
       if (!group || alertOpen.current) return true;
       alertOpen.current = true;
       const done = () => {
@@ -170,6 +175,7 @@ export default function CotFlowScreen({ navigation, route }: Props) {
       </View>
     );
   }
+  const screen = (() => {
   switch (gs.phase) {
     case "roles":
       return <CotRoleScreen group={group} gs={gs} playerId={playerId} />;
@@ -189,6 +195,13 @@ export default function CotFlowScreen({ navigation, route }: Props) {
     default:
       return null;
   }
+  })();
+  return (
+    <View style={{ flex: 1 }}>
+      {screen}
+      <DroppedBanner names={presence.awayIds.map(nameOf)} meOffline={presence.meOffline} note="The game carries on: their timers still run." />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({

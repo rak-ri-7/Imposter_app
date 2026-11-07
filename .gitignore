@@ -39,3 +39,8 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Firestore backups (tools/firestore-backup.mjs) and the Admin key: never commit these
+backups/
+tools/service-account.json
+*service-account*.json

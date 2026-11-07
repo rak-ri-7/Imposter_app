@@ -9,7 +9,10 @@ import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RouteProp } from "@react-navigation/native";
 import { RootStackParamList } from "../../../App";
 import { useGroup } from "../../shared/hooks/useGroup";
+import { registerGameCloser, useMinimizableGame } from "../../shared/hooks/useMinimizableGame";
 import { useHostFailover } from "../../shared/hooks/useHostFailover";
+import { usePresence } from "../../shared/hooks/usePresence";
+import DroppedBanner from "../../shared/components/DroppedBanner";
 import { returnToMenu } from "../../shared/firebase/groups";
 import { getServerNow, resyncServerTimeOffset, syncServerTimeOffset } from "../../shared/firebase/time";
 import { allAnswered, allLocked } from "./logic/engine";
@@ -36,6 +39,9 @@ export default function MtfFlowScreen({ navigation, route }: Props) {
   useHostFailover(group, playerId);
   const gs = group && isMtfState(group.gameState) ? group.gameState : null;
   const isHost = group?.hostId === playerId;
+  // Who has dropped out (just shown: the timers carry the game on without them).
+  const presence = usePresence(groupId, playerId, gs && gs.phase !== "over" ? gs.seats : []);
+  const nameOf = (id: string) => group?.players.find((p) => p.id === id)?.name ?? "Someone";
   const groupIdRef = useRef(groupId);
 
   useEffect(() => {
@@ -46,9 +52,8 @@ export default function MtfFlowScreen({ navigation, route }: Props) {
     if (gs?.phase === "answer") resyncServerTimeOffset(groupId);
   }, [gs?.round]);
 
-  useEffect(() => {
-    if (group?.currentGame === "menu") navigation.replace("GameMenu", { groupId, playerId });
-  }, [group?.currentGame]);
+  // Back / swipe minimises this game; game over takes it away.
+  useMinimizableGame(navigation, route, group, "match-the-following", groupId, playerId);
 
   // ── Timed steps, on the server clock ─────────────────────────────
   const present = group?.players.map((p) => p.id) ?? [];
@@ -80,7 +85,7 @@ export default function MtfFlowScreen({ navigation, route }: Props) {
   // ── Android back: the host can end the game ──────────────────────
   const alertOpen = useRef(false);
   useEffect(() => {
-    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+    const sub = registerGameCloser(groupId, () => {
       if (!group || alertOpen.current) return true;
       alertOpen.current = true;
       const done = () => {
@@ -138,6 +143,7 @@ export default function MtfFlowScreen({ navigation, route }: Props) {
       </View>
     );
   }
+  const screen = (() => {
   switch (gs.phase) {
     case "answer":
       return <MtfAnswerScreen group={group} gs={gs} playerId={playerId} />;
@@ -150,6 +156,13 @@ export default function MtfFlowScreen({ navigation, route }: Props) {
     default:
       return null;
   }
+  })();
+  return (
+    <View style={{ flex: 1 }}>
+      {screen}
+      <DroppedBanner names={presence.awayIds.map(nameOf)} meOffline={presence.meOffline} note="The timer carries on." />
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
