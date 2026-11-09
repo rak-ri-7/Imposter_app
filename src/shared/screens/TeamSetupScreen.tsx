@@ -463,7 +463,9 @@ const styles = StyleSheet.create({
   },
   addTeamText: { color: "#888", fontSize: 14 },
   confirmBtn: {
-    backgroundColor: "#C9A45C", // the one "go" button: gold, like Play and Continue
+    backgroundColor: "#FFC83D", // the main button colour (sunshine), with a darker lip underneath
+    borderBottomWidth: 4,
+    borderBottomColor: "#D18F00",
     borderRadius: 14,
     padding: 18,
     alignItems: "center",

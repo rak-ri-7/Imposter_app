@@ -7,6 +7,7 @@ import { MIN_ROUNDS_FOR_POINTS, awards, roundsPlayed, standings } from "../logic
 import { finishMtf } from "../logic/game";
 import Paper from "../components/Paper";
 import { HAND, MF, penOf } from "../theme";
+import { EndPodium, podiumEntries } from "../../../shared/components/WinnerPodium";
 
 type Props = { group: Group; gs: MtfGameState; playerId: string };
 
@@ -29,6 +30,7 @@ export default function MtfOverScreen({ group, gs, playerId }: Props) {
   const played = roundsPlayed(gs);
   const noPoints = played < (gs.endedEarly ? MIN_ROUNDS_FOR_POINTS : 1);
 
+  const podium = nobody ? [] : podiumEntries(rows.filter((r) => r.score > 0), group.players, (r) => `${r.score} right`);
   return (
     <Paper
       kicker="Results"
@@ -53,6 +55,7 @@ export default function MtfOverScreen({ group, gs, playerId }: Props) {
         )
       }
     >
+      <EndPodium id={`${group.id}:mtf:${rows.map((r) => r.playerId + r.score).join(",")}:${played}`} subtitle="MATCH THE FOLLOWING · FINAL" entries={podium} />
       <Text style={styles.trophy}>🏆</Text>
       <Text style={styles.title}>
         {title}

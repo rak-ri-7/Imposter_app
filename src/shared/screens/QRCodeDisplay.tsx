@@ -120,7 +120,9 @@ const styles = StyleSheet.create({
     marginBottom: 24,
   },
   closeBtn: {
-    backgroundColor: "#C9A45C",
+    backgroundColor: "#FFC83D",
+    borderBottomWidth: 4,
+    borderBottomColor: "#D18F00",
     borderRadius: 12,
     paddingHorizontal: 40,
     paddingVertical: 14,

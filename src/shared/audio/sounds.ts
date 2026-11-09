@@ -22,9 +22,16 @@ const soundSources = {
     jumpscare: require('./piano_jumpscare.wav'),
     heartbeat: require('./heartbeat.mp3'),
     clocktick: require('./clocktick.mp3'),
+    // 🏆 The winner podium (made for this app in code, see WinnerPodium).
+    podiumRoll: require('./podium_roll.wav'),
+    podiumDrum: require('./podium_drum.wav'),
+    podiumPop: require('./podium_pop.wav'),
+    podiumFanfare: require('./podium_fanfare.wav'),
+    // 🎬 The "now playing" intro when a game begins (see GameIntro).
+    gameStart: require('./game_start.wav'),
 } as const;
 
-type SoundName = keyof typeof soundSources;
+export type SoundName = keyof typeof soundSources;
 
 const players: Partial<Record<SoundName, AudioPlayer>> = {};
 

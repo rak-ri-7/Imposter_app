@@ -27,6 +27,9 @@ import { statusColor, statusLabel, useOnlineStatus } from "../hooks/useOnlineSta
 import { avatarIdFor } from "../avatars/sprites";
 import { inviteMessage, inviteUrl } from "../config/invite";
 import BackLink from "../components/BackLink";
+import { PosterStrip } from "../components/PosterWall";
+import VoiceButton from "../voice/VoiceButton";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "GroupLobby">;
@@ -41,6 +44,7 @@ export default function GroupLobbyScreen({ navigation, route }: Props) {
   const [showQR, setShowQR] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [picking, setPicking] = useState(false);
+  const insets = useSafeAreaInsets();
   useEffect(() => {
     touchGroup(groupId);
   }, [groupId]);
@@ -128,6 +132,7 @@ export default function GroupLobbyScreen({ navigation, route }: Props) {
 
   // Same look as the game menu: light, in the group's chosen theme.
   const theme = menuThemeById(group.menuTheme);
+  const bottomSpace = insets.bottom + 16; // clear of the phone's own buttons
   const T = menuThemeStyles(theme);
 
   return (
@@ -155,12 +160,16 @@ export default function GroupLobbyScreen({ navigation, route }: Props) {
         </View>
       </View>
 
+      {/* 🎙️ Talk while you play, even when you're not in the same room */}
+      <VoiceButton groupId={groupId} style={styles.voiceBtn} textStyle={styles.voiceBtnText} label="🎙️ Join voice chat" />
+
       <QRCodeDisplay
         code={group.code}
         visible={showQR}
         onClose={() => setShowQR(false)}
       />
-      <MiniGame group={group} playerId={playerId} bottom={110} />
+      {/* Above the Continue button, which sits at the bottom when the list is long */}
+      <MiniGame group={group} playerId={playerId} bottom={bottomSpace + 70} />
       <LeaveGroupSheet visible={leaving} onClose={() => setLeaving(false)} group={group} playerId={playerId} tone="light" />
       <AvatarPicker
         visible={picking}
@@ -182,6 +191,24 @@ export default function GroupLobbyScreen({ navigation, route }: Props) {
         data={group.players}
         keyExtractor={(item) => item.id}
         style={styles.list}
+        ListFooterComponent={
+          <>
+          {/* Until there's a proper crowd: a peek at what's on tonight. */}
+          {group.players.length < 3 && (
+            <View style={styles.waitCard}>
+              <Text style={styles.waitTitle}>
+                {group.players.length === 1 ? "Waiting for your friends…" : "Waiting for a few more…"}
+              </Text>
+              <Text style={styles.waitSub}>
+                Most games need 3 or more. Share the code. Here's what's on tonight:
+              </Text>
+              <View style={styles.waitStrip}>
+                <PosterStrip height={96} />
+              </View>
+            </View>
+          )}
+          </>
+        }
         renderItem={({ item }) => {
           const mine = item.id === playerId;
           const st = status[item.id] ?? "unknown";
@@ -232,6 +259,9 @@ export default function GroupLobbyScreen({ navigation, route }: Props) {
         }}
       />
 
+      {/* Straight under the players (and the posters) while they fit; once
+          the list is long it scrolls and this stays in view above the
+          phone's own buttons. */}
       {!isHost && (
         <Text style={[styles.guestNote, T.sectionLabel, { fontWeight: "600" }]}>
           {group.players.find((p) => p.id === group.hostId)?.name ?? "The host"} picks the
@@ -239,7 +269,7 @@ export default function GroupLobbyScreen({ navigation, route }: Props) {
         </Text>
       )}
       <TouchableOpacity
-        style={[styles.continueBtn, !isHost && styles.continueBtnGuest]}
+        style={[styles.continueBtn, !isHost && styles.continueBtnGuest, { marginBottom: bottomSpace }]}
         onPress={() => navigation.navigate("GameMenu", { groupId, playerId })}
       >
         <Text style={[styles.continueBtnText, !isHost && styles.continueBtnTextGuest]}>
@@ -253,6 +283,7 @@ export default function GroupLobbyScreen({ navigation, route }: Props) {
 // Same family as the game menu: light cards, navy text, brass accent.
 const GOLD = "#C9A45C";
 const INK = "#121110";
+const SUN = "#FFC83D"; // the app's main button colour
 const IVORY = "#1A1A2E"; // main text (navy on light)
 const MUTED = "#7A7A8C";
 const PANEL = "#FFFFFF";
@@ -264,6 +295,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#F7F7FA",
     padding: 24,
     paddingTop: 60,
+    paddingBottom: 0, // the button adds the phone's bottom inset itself
   },
   loadingText: {
     color: MUTED,
@@ -317,8 +349,40 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "700",
   },
+  // Only as tall as its rows (so the button sits right under them), and
+  // shrinks to scroll when there are more players than fit.
   list: {
-    flex: 1,
+    flexGrow: 0,
+    flexShrink: 1,
+  },
+  waitCard: {
+    backgroundColor: PANEL,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: LINE,
+    borderStyle: "dashed",
+    paddingTop: 14,
+    paddingBottom: 12,
+    marginTop: 4,
+    overflow: "hidden",
+  },
+  waitTitle: {
+    color: IVORY,
+    fontSize: 16,
+    ...displaySemi,
+    textAlign: "center",
+  },
+  waitSub: {
+    color: MUTED,
+    fontSize: 12.5,
+    lineHeight: 18,
+    textAlign: "center",
+    marginTop: 3,
+    marginBottom: 10,
+    paddingHorizontal: 16,
+  },
+  waitStrip: {
+    paddingLeft: 12,
   },
   playerRow: {
     flexDirection: "row",
@@ -387,22 +451,30 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: "800",
   },
+  // Same chunky pill as the welcome screen's main button.
   continueBtn: {
-    backgroundColor: GOLD,
-    borderRadius: 14,
-    padding: 18,
+    alignSelf: "center",
+    width: "86%",
+    maxWidth: 320,
+    backgroundColor: SUN,
+    borderRadius: 26,
+    paddingVertical: 13,
     alignItems: "center",
-    marginTop: 16,
+    marginTop: 18,
+    borderBottomWidth: 4,
+    borderBottomColor: "#D18F00",
   },
   continueBtnText: {
-    color: INK,
-    fontSize: 19,
+    color: "#2A1800",
+    fontSize: 18,
     ...display,
   },
   continueBtnGuest: {
     backgroundColor: PANEL,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: LINE,
+    borderBottomWidth: 4,
+    borderBottomColor: LINE,
     marginTop: 10,
   },
   continueBtnTextGuest: {
@@ -434,6 +506,24 @@ const styles = StyleSheet.create({
     color: IVORY,
     fontSize: 13,
     fontWeight: "700",
+  },
+  voiceBtn: {
+    alignSelf: "center",
+    marginTop: -6,
+    marginBottom: 14,
+    minWidth: 190,
+    alignItems: "center",
+    backgroundColor: PANEL,
+    borderRadius: 999,
+    paddingHorizontal: 18,
+    paddingVertical: 9,
+    borderWidth: 1.5,
+    borderColor: LINE,
+  },
+  voiceBtnText: {
+    color: IVORY,
+    fontSize: 14,
+    ...displaySemi,
   },
 
   leaveBtn: {

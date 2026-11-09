@@ -33,6 +33,7 @@ import Paper from "./components/Paper";
 import { HAND, MF, penOf } from "./theme";
 import HandOff, { type HandOffTheme } from "../../shared/passPhone/HandOff";
 import { addLocalPoints, useLocalPlayers } from "../../shared/passPhone/useLocalPlayers";
+import { EndPodium, type PodiumEntry } from "../../shared/components/WinnerPodium";
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, "MtfPass"> };
 
@@ -64,6 +65,7 @@ export default function MtfPassScreen({ navigation }: Props) {
   const saved = useRef(false);
 
   const quit = () => navigation.popTo("QuickPlay");
+  const runId = useRef(Math.random().toString(36).slice(2)).current; // this game, for the podium
   const finish = async (state: MtfGameState) => {
     setGs(state);
     if (!saved.current) {
@@ -371,6 +373,7 @@ export default function MtfPassScreen({ navigation }: Props) {
   // ── Final results ─────────────────────────────────────────────────
   const table = standings(gs);
   const prize = awards(gs);
+  const podium: PodiumEntry[] = table[0]?.score > 0 ? table.filter((r) => r.rank <= 3 && r.score > 0).map((r) => ({ id: r.playerId, name: r.playerId, rank: r.rank, score: `${r.score} right` })) : [];
   return (
     <Paper
       kicker="Final results"
@@ -380,6 +383,7 @@ export default function MtfPassScreen({ navigation }: Props) {
         </TouchableOpacity>
       }
     >
+      <EndPodium id={`mtf-pass:${runId}:${table.map((r) => r.playerId + r.score).join(",")}`} subtitle="MATCH THE FOLLOWING · FINAL" entries={podium} />
       <Text style={styles.title}>{table[0] && table[0].score > 0 ? `${table.filter((r) => r.rank === 1).map((r) => r.playerId).join(" & ")} top${table.filter((r) => r.rank === 1).length > 1 ? "" : "s"} the class!` : "Pens down!"}</Text>
       {table.map((r) => (
         <View key={r.playerId} style={styles.scoreRow}>

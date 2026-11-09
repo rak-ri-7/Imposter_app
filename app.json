@@ -58,7 +58,16 @@
     "plugins": [
       "expo-status-bar",
       "expo-audio",
-      "expo-font"
+      "expo-font",
+      "expo-dev-client",
+      "@livekit/react-native-expo-plugin",
+      [
+        "@config-plugins/react-native-webrtc",
+        {
+          "microphonePermission": "Lets you talk with your group in voice chat.",
+          "cameraPermission": "This app doesn't use the camera for calls."
+        }
+      ]
     ]
   }
 }

@@ -28,6 +28,7 @@ import { RetroButton } from "./components";
 import { QB, bevel, digitText, displayText } from "./theme";
 import { addLocalPoints, useLocalPlayers } from "../../shared/passPhone/useLocalPlayers";
 import HandOff from "../../shared/passPhone/HandOff";
+import { EndPodium, type PodiumEntry } from "../../shared/components/WinnerPodium";
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, "QuizPass"> };
 
@@ -64,6 +65,7 @@ export default function QuizPassScreen({ navigation }: Props) {
   }, []);
 
   const quit = () => navigation.popTo("QuickPlay");
+  const runId = useRef(Math.random().toString(36).slice(2)).current; // this game, for the podium
   const need = BOARD_SIZES[size].categories;
 
   // Final standings: by money, ties share a place; Quick Play points follow
@@ -454,8 +456,10 @@ export default function QuizPassScreen({ navigation }: Props) {
 
   // ── Final standings ───────────────────────────────────────────────
   const rows = standings();
+  const podium: PodiumEntry[] = rounds > 0 ? rows.filter((r) => r.rank <= 3).map((r) => ({ id: r.name, name: r.name, rank: r.rank, score: formatRupees(r.money) })) : [];
   return (
     <View style={styles.container}>
+      <EndPodium id={`quiz-pass:${runId}:${rows.map((r) => r.name + r.money).join(",")}`} subtitle="QUIZ BOARD · FINAL" entries={podium} />
       <ScrollView contentContainerStyle={[styles.pad, { gap: 8 }]}>
         <View style={styles.marquee}>
           <Text style={displayText(30, QB.gold)}>Final Standings</Text>

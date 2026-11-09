@@ -17,6 +17,7 @@ import { endBoardEarly, pickTile } from "../logic/game";
 import { doubleMoneyActive } from "../logic/board";
 import { MoneyStrip, RetroButton, RoundOutcome } from "../components";
 import { QB, bevel, digitText, displayText } from "../theme";
+import { haptics } from "../../../shared/haptics";
 
 type Props = { group: Group; playerId: string; ctx: QuizBoardCtx };
 
@@ -40,6 +41,7 @@ export default function QuizBoardScreen({ group, playerId, ctx }: Props) {
   const onTile = async (index: number) => {
     if (!canPick || busy) return;
     setBusy(true);
+    haptics.tap();
     try {
       await pickTile(group.id, playerId, index, getServerNow());
     } catch (e) {

@@ -1,0 +1,14 @@
+{
+  "name": "wgawpt-voice",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "dev": "wrangler dev",
+    "test": "node test/run.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "^4.158.0",
+    "livekit-server-sdk": "^2.19.2"
+  }
+}

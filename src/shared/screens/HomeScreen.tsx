@@ -9,6 +9,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   Alert,
+  useWindowDimensions,
 } from "react-native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../../../App";
@@ -26,10 +27,15 @@ import PixelAvatar from "../avatars/PixelAvatar";
 import AvatarPicker from "../avatars/AvatarPicker";
 import { AVATARS, avatarById } from "../avatars/sprites";
 import { RouteProp } from "@react-navigation/native";
-import PosterWall from "../components/PosterWall";
-import { display } from "../theme/fonts";
+import WelcomeScene, { PartyLights, type SceneKind } from "../components/WelcomeScene";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { StatusBar } from "expo-status-bar";
+import { useIsFocused } from "@react-navigation/native";
+import { display, displaySemi } from "../theme/fonts";
 
-const TAGLINE = "Party games for all ages";
+const TAGLINE = "Pull up a chair. Someone’s already cheating.";
+// One of the two welcome scenes, picked once each time the app starts.
+const SCENE: SceneKind = Math.random() < 0.5 ? "crowd" : "table";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "Home">;
@@ -52,6 +58,11 @@ export default function HomeScreen({ navigation, route }: Props) {
     () => AVATARS[Math.floor(Math.random() * AVATARS.length)].id,
   );
   const [picking, setPicking] = useState(false);
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const topPad = insets.top + (SCENE === "crowd" ? 76 : 32);
+  const bottomPad = insets.bottom + 18; // clear of the phone's own buttons
+  const isFocused = useIsFocused();
   const pickAvatar = (id: string) => {
     setAvatar(id);
     setPicking(false);
@@ -146,7 +157,7 @@ export default function HomeScreen({ navigation, route }: Props) {
   if (checkingSession) {
     return (
       <View style={[styles.container, styles.center]}>
-        <ActivityIndicator size="large" color={GOLD} />
+        <ActivityIndicator size="large" color={SUN} />
       </View>
     );
   }
@@ -154,10 +165,16 @@ export default function HomeScreen({ navigation, route }: Props) {
   if (savedSession) {
     return (
       <View style={styles.container}>
-        <PosterWall />
-        <View style={styles.content}>
-        <Text style={styles.title}>What Game Are We{"\n"}Playing Today?</Text>
+        {/* White icons on this dark screen; back to dark icons for the light screens */}
+        <StatusBar style={isFocused ? "light" : "dark"} />
+        {SCENE === "crowd" && <PartyLights width={width} />}
+        <View style={[styles.content, { paddingTop: topPad, paddingBottom: bottomPad }]}>
+        <Text style={styles.title}>
+          What Game Are We{"\n"}
+          <Text style={styles.titleGold}>Playing Today?</Text>
+        </Text>
         <Text style={styles.subtitle}>{TAGLINE}</Text>
+        <WelcomeScene kind={SCENE} me={avatar} />
 
         <View style={styles.resumeBox}>
           <Text style={styles.resumeText}>
@@ -181,13 +198,18 @@ export default function HomeScreen({ navigation, route }: Props) {
 
   return (
     <View style={styles.container}>
-    <PosterWall />
+    <StatusBar style={isFocused ? "light" : "dark"} />
+    {SCENE === "crowd" && <PartyLights width={width} />}
     <KeyboardAvoidingView
-      style={styles.content}
+      style={[styles.content, { paddingTop: topPad, paddingBottom: bottomPad }]}
       behavior={Platform.OS === "ios" ? "padding" : "height"}
     >
-      <Text style={styles.title}>What Game Are We{"\n"}Playing Today?</Text>
+      <Text style={styles.title}>
+          What Game Are We{"\n"}
+          <Text style={styles.titleGold}>Playing Today?</Text>
+        </Text>
       <Text style={styles.subtitle}>{TAGLINE}</Text>
+      <WelcomeScene kind={SCENE} me={mode !== null ? avatar : undefined} />
 
       {mode !== null && (
         <View style={styles.nameRow}>
@@ -235,7 +257,7 @@ export default function HomeScreen({ navigation, route }: Props) {
       {loading ? (
         <ActivityIndicator
           size="large"
-          color={GOLD}
+          color={SUN}
           style={{ marginTop: 24 }}
         />
       ) : (
@@ -246,30 +268,23 @@ export default function HomeScreen({ navigation, route }: Props) {
                 style={[styles.btn, styles.btnPrimary]}
                 onPress={() => setMode("create")}
               >
-                <Text style={styles.btnTextPrimary}>Create a Group</Text>
+                <Text style={styles.btnTextPrimary}>🎉  Create a Group</Text>
               </TouchableOpacity>
 
               <TouchableOpacity
                 style={[styles.btn, styles.btnSecondary]}
                 onPress={() => setMode("join")}
               >
-                <Text style={styles.btnTextSecondary}>Join a Group</Text>
+                <Text style={styles.btnTextSecondary}>🔑  Join a Group</Text>
               </TouchableOpacity>
-
-              <View style={styles.divider}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.dividerText}>or</Text>
-                <View style={styles.dividerLine} />
-              </View>
 
               <TouchableOpacity
                 style={styles.quickPlayBtn}
                 onPress={() => navigation.navigate("QuickPlay")}
+                accessibilityLabel="Quick Play: no internet, pass one phone around"
               >
                 <Text style={styles.quickPlayText}>⚡ Quick Play</Text>
-                <Text style={styles.quickPlaySub}>
-                  No internet? Pass the phone locally
-                </Text>
+                <Text style={styles.quickPlaySub}>· one phone, no internet</Text>
               </TouchableOpacity>
             </>
           )}
@@ -315,28 +330,29 @@ export default function HomeScreen({ navigation, route }: Props) {
 }
 
 // Colours: dark stone, ivory text and a brass accent (same family as the games).
-const GOLD = "#C9A45C";
+const GOLD = "#C9A45C"; // spinner + accents
+const SUN = "#FFC83D"; // sunshine: the main button
 const INK = "#121110";
 const IVORY = "#ECE7DD";
 const MUTED = "#A9A49A";
-const PANEL = "rgba(23,25,28,0.92)";
-const LINE = "#2D3137";
+const PANEL = "rgba(58,28,72,0.96)";
+const LINE = "#55305F";
+const NIGHT = "#2A1236"; // deep plum
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#07080A",
+    backgroundColor: NIGHT,
   },
   center: {
     alignItems: "center",
     justifyContent: "center",
   },
-  // Everything sits at the bottom, over the darkest part of the poster wall.
+  // Title at the top, the scene in the middle, the buttons at the bottom.
   content: {
     flex: 1,
-    justifyContent: "flex-end",
     paddingHorizontal: 24,
-    paddingBottom: 40,
+    paddingBottom: 32,
   },
   title: {
     fontSize: 34,
@@ -346,12 +362,16 @@ const styles = StyleSheet.create({
     textAlign: "center",
     marginBottom: 8,
   },
+  titleGold: {
+    color: "#F2C66D",
+  },
   subtitle: {
-    fontSize: 15,
-    color: MUTED,
+    fontSize: 14,
+    ...displaySemi,
+    color: "#C9AFCF",
     textAlign: "center",
-    marginBottom: 28,
-    letterSpacing: 0.5,
+    marginBottom: 4,
+    letterSpacing: 0.3,
   },
   nameRow: {
     flexDirection: "row",
@@ -369,14 +389,14 @@ const styles = StyleSheet.create({
     width: 22,
     height: 22,
     borderRadius: 11,
-    backgroundColor: GOLD,
+    backgroundColor: SUN,
     alignItems: "center",
     justifyContent: "center",
     borderWidth: 2,
-    borderColor: "#07080A",
+    borderColor: NIGHT,
   },
   avatarEditText: {
-    color: INK,
+    color: "#2A1800",
     fontSize: 11,
     fontWeight: "900",
   },
@@ -399,30 +419,38 @@ const styles = StyleSheet.create({
   buttons: {
     width: "100%",
     marginTop: 4,
-    gap: 12,
+    gap: 10,
   },
+  // Chunky "candy" pills: a darker lip under each one, like a real button.
   btn: {
-    paddingVertical: 17,
-    borderRadius: 14,
+    alignSelf: "center",
+    width: "86%",
+    maxWidth: 320,
+    paddingVertical: 12,
+    borderRadius: 26,
     alignItems: "center",
+    borderBottomWidth: 4,
   },
   btnPrimary: {
-    backgroundColor: GOLD,
+    backgroundColor: SUN,
+    borderBottomColor: "#D18F00",
   },
   btnSecondary: {
     backgroundColor: PANEL,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: LINE,
+    borderBottomWidth: 4,
+    borderBottomColor: "#1A0A22",
   },
   btnTextPrimary: {
-    color: INK,
+    color: "#2A1800",
     fontSize: 17,
-    fontWeight: "800",
+    ...displaySemi,
   },
   btnTextSecondary: {
     color: IVORY,
     fontSize: 17,
-    fontWeight: "800",
+    ...displaySemi,
   },
   backBtn: {
     alignItems: "center",
@@ -468,23 +496,24 @@ const styles = StyleSheet.create({
     color: MUTED,
     fontSize: 13,
   },
+  // A small link-like pill under the two big buttons.
   quickPlayBtn: {
+    alignSelf: "center",
+    flexDirection: "row",
     alignItems: "center",
-    padding: 14,
-    borderRadius: 14,
-    borderWidth: 1,
-    borderColor: LINE,
-    borderStyle: "dashed",
-    backgroundColor: "rgba(7,8,10,0.6)",
+    gap: 6,
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 18,
+    marginTop: 2,
   },
   quickPlayText: {
-    color: GOLD,
-    fontSize: 16,
-    fontWeight: "800",
-    marginBottom: 2,
+    color: SUN,
+    fontSize: 15,
+    ...displaySemi,
   },
   quickPlaySub: {
-    color: MUTED,
-    fontSize: 12,
+    color: "#C9AFCF",
+    fontSize: 13,
   },
 });

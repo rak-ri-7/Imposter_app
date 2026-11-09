@@ -1,0 +1,14 @@
+# voice-worker/wrangler.toml
+# 🎙️ Hands out voice chat passes (LiveKit tokens) to players. Free on
+# Cloudflare's Workers plan. See README.md in this folder for setup.
+name = "wgawpt-voice"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+LIVEKIT_URL = "wss://partygame-app-kt18030x.livekit.cloud"
+FIREBASE_PROJECT_ID = "imposter-game-a588f"
+
+# Secrets (set with `npx wrangler secret put <NAME>`, never written here):
+#   LIVEKIT_API_KEY
+#   LIVEKIT_API_SECRET

@@ -10,6 +10,7 @@ import Ruin, { TimerPill } from '../components/Ruin';
 import { GoldButton } from '../components/Bits';
 import { useServerNow } from '../../../shared/hooks/useServerNow';
 import { CARVED, RR, TEAM, clock, sideLabel } from '../theme';
+import { EndPodium, type PodiumEntry } from '../../../shared/components/WinnerPodium';
 
 type Props = { group: Group; gs: RrfGameState; playerId: string };
 
@@ -89,6 +90,17 @@ export function RrfOverScreen({ group, gs, playerId }: Props) {
     const aw = awards(gs, present);
     const pts = playerPoints(gs, present);
     const none = Object.keys(pts).length === 0;
+    // 🏆 The night's teams on the podium (a draw shares the top step).
+    const podium: PodiumEntry[] = gs.results.length
+        ? rows.map((r, i) => ({
+              id: r.id,
+              name: sideLabel(gs, r.id),
+              rank: i > 0 && rows[i - 1].score === r.score ? 1 : i + 1,
+              color: TEAM[r.id].color,
+              score: `${r.score} pts · 👑×${r.treasures}`,
+              members: (gs.teams[r.id]?.members ?? []).map((id) => group.players.find((p) => p.id === id) ?? { id, name: nameOf(id) }),
+          }))
+        : [];
     return (
         <Ruin
             kicker={gs.endedEarly ? `ENDED EARLY · ${gs.results.length} EXPEDITION${gs.results.length === 1 ? '' : 'S'}` : 'THE NIGHT IS OVER'}
@@ -111,6 +123,7 @@ export function RrfOverScreen({ group, gs, playerId }: Props) {
                 )
             }
         >
+            <EndPodium id={`${group.id}:rrf:${rows.map((r) => r.id + r.score).join(',')}:${gs.results.length}`} subtitle="ROOF RACE · THE NIGHT IS OVER" entries={podium} />
             <Text style={styles.big}>🏆</Text>
             <Text style={[styles.title, w && { color: TEAM[w].color }]}>
                 {w ? `${TEAM[w].emoji} ${sideLabel(gs, w)} wins the night!` : gs.results.length ? 'A draw! The ruins couldn’t pick.' : 'No expedition finished'}

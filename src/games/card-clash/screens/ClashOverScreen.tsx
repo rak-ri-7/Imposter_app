@@ -5,6 +5,7 @@ import type { ClashGameState, Group } from "../../../shared/types";
 import { rankMedal } from "../../../shared/utils/ranking";
 import { CLASH_CAP, MIN_CLASHES_FOR_ALL, clashStandings, clashesPlayed, finishCardClash, hostCalledTime } from "../logic/game";
 import { CC, SERIF } from "../theme";
+import { EndPodium, podiumEntries } from "../../../shared/components/WinnerPodium";
 
 type Props = { group: Group; gs: ClashGameState; playerId: string };
 
@@ -18,8 +19,10 @@ export default function ClashOverScreen({ group, gs, playerId }: Props) {
   const played = clashesPlayed(gs);
   const short = played < MIN_CLASHES_FOR_ALL;
 
+  const podium = podiumEntries(rows, group.players, (r) => (r.cards > 0 ? `${r.cards} cards` : `out in clash ${r.outRound ?? "?"}`));
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      <EndPodium id={`${group.id}:clash:${rows.map((r) => r.playerId + r.cards).join(",")}:${played}`} subtitle="CARD STATS CALLOUT · FINAL" entries={podium} />
       <Text style={styles.trophy}>🏆</Text>
       <Text style={styles.title}>
         {champ ? `${nameOf(champ.playerId)} ${champ.playerId === playerId ? "win" : "wins"}!` : "Game over"}

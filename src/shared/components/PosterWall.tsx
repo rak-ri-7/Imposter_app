@@ -128,3 +128,41 @@ export default function PosterWall() {
     </View>
   );
 }
+
+// ── A single row of the posters, drifting sideways ─────────────────────
+// Used in the Party Group while you're waiting for friends to join: a peek
+// at what's on tonight. Still when the phone asks for reduced motion.
+const STRIP_SECONDS = 40; // one full set of posters
+
+export function PosterStrip({ height = 96 }: { height?: number }) {
+  const w = Math.round(height / 1.5);
+  const gap = 8;
+  const setW = POSTERS.length * (w + gap);
+  const [still, setStill] = useState(false);
+  useEffect(() => {
+    AccessibilityInfo.isReduceMotionEnabled().then(setStill).catch(() => {});
+    const sub = AccessibilityInfo.addEventListener("reduceMotionChanged", setStill);
+    return () => sub.remove();
+  }, []);
+  const x = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (still) return;
+    x.setValue(0);
+    const loop = Animated.loop(
+      Animated.timing(x, { toValue: 1, duration: STRIP_SECONDS * 1000, easing: Easing.linear, useNativeDriver: true }),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [still]);
+  const translateX = still ? 0 : x.interpolate({ inputRange: [0, 1], outputRange: [0, -setW] });
+  return (
+    <View style={{ height, overflow: "hidden" }} pointerEvents="none">
+      {/* Two sets side by side, so sliding by one set loops seamlessly */}
+      <Animated.View style={{ flexDirection: "row", gap, transform: [{ translateX }] }}>
+        {[...POSTERS, ...POSTERS, ...POSTERS].map((src, i) => (
+          <Image key={i} source={src} style={{ width: w, height, borderRadius: 10 }} resizeMode="cover" fadeDuration={0} />
+        ))}
+      </Animated.View>
+    </View>
+  );
+}

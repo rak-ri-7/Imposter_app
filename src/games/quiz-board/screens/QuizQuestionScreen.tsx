@@ -27,6 +27,7 @@ import {
 } from "../logic/game";
 import { RetroButton, RoundOutcome, WinnerPicker } from "../components";
 import { QB, bevel, digitText, displayText } from "../theme";
+import { haptics } from "../../../shared/haptics";
 
 type Props = { group: Group; playerId: string; ctx: QuizBoardCtx };
 
@@ -77,6 +78,7 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
     if (hasBuzzed || localBuzz || paused || teamBlocked) return;
     setLocalBuzz(true);
     playSound("wire-lock-in");
+    haptics.press();
     try {
       await buzzIn(group.id, playerId);
     } catch (e) {
@@ -87,6 +89,7 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
 
   const onOption = (i: number) => {
     if (myPick !== undefined || paused || (teamBlocked && !golden)) return;
+    haptics.press();
     pickOption(group.id, playerId, i).catch(console.error);
   };
 

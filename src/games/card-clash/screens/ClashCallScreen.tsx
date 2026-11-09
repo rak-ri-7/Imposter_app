@@ -43,6 +43,7 @@ import FlipCard from "../components/FlipCard";
 import PileBar, { Rect } from "../components/PileBar";
 import FlyingCards, { Flight } from "../components/FlyingCards";
 import { CC, SERIF } from "../theme";
+import { haptics } from "../../../shared/haptics";
 
 type Props = { group: Group; gs: ClashGameState; playerId: string };
 
@@ -219,7 +220,7 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
     if (busy || chosen || !isCaller || !flipped || rolling) return;
     setBusy(true);
     setChosen("statKey" in choice ? choice.statKey : "wild");
-    Vibration.vibrate(40);
+    haptics.press();
     try {
       const res = await callStat(group.id, playerId, gs.round, choice);
       if (!res.success) setChosen(null);

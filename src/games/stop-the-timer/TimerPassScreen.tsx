@@ -17,6 +17,7 @@ import DistractionWrapper from "./components/DistractionWrapper";
 import DistractionOverlay from "./components/DistractionOverlay";
 import HandOff from "../../shared/passPhone/HandOff";
 import { addLocalPoints, rotate, useLocalPlayers } from "../../shared/passPhone/useLocalPlayers";
+import { EndPodium, type PodiumEntry } from "../../shared/components/WinnerPodium";
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, "TimerPass"> };
 
@@ -72,6 +73,7 @@ export default function TimerPassScreen({ navigation }: Props) {
   const current = turns[turnIdx];
 
   const quit = () => navigation.popTo("QuickPlay");
+  const runId = useRef(Math.random().toString(36).slice(2)).current; // this game, for the podium
   const finish = async () => {
     if (!saved.current) {
       saved.current = true;
@@ -370,8 +372,12 @@ export default function TimerPassScreen({ navigation }: Props) {
 
   // ── Game over ─────────────────────────────────────────────────────
   const board = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+  const podium: PodiumEntry[] = board
+    .map(([name, pts]) => ({ id: name, name, rank: board.findIndex(([, p]) => p === pts) + 1, score: `${pts} pts` }))
+    .filter((e) => e.rank <= 3);
   return (
     <View style={styles.container}>
+      <EndPodium id={`timer-pass:${runId}:${board.map(([n, p]) => n + p).join(",")}`} subtitle="STOP THE TIMER · FINAL" entries={podium} />
       <Text style={styles.title}>🏁 Game over</Text>
       <Text style={styles.subtitle}>
         {roundsScored} round{roundsScored === 1 ? "" : "s"} played · points added to the Quick Play board

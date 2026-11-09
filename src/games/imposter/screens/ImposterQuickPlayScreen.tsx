@@ -17,6 +17,7 @@ import {
   getLocalSession,
   updateLocalScores,
 } from "../../../shared/utils/localSession";
+import { EndPodium, type PodiumEntry } from "../../../shared/components/WinnerPodium";
 
 type Props = {
   navigation: NativeStackNavigationProp<
@@ -62,6 +63,7 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
     boolean | null
   >(null);
   const timerRef = useRef<any>(null);
+  const runId = useRef(Math.random().toString(36).slice(2)).current; // this session, for the podium
 
   useEffect(() => {
     if (timerRunning) {
@@ -568,8 +570,17 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
       }
     });
 
+    // 🏆 The winning side takes the top step (names give steady avatars).
+    const impWins = !caughtCorrectly || !!imposterGuessCorrect;
+    const crewSide = { id: "crew", name: "The Players", color: "#4FC3F7", members: players.filter((p) => p.name !== imposterName).map((p) => ({ id: p.name, name: p.name })) };
+    const impSide = { id: "imposter", name: imposterName, color: "#E63946", members: [{ id: imposterName, name: imposterName }] };
+    const podium: PodiumEntry[] = impWins
+      ? [{ ...impSide, rank: 1, score: imposterGuessCorrect ? "Stole the win" : "Fooled everyone" }, { ...crewSide, rank: 2 }]
+      : [{ ...crewSide, rank: 1, score: "Found the imposter" }, { ...impSide, rank: 2, score: "Caught" }];
+
     return (
       <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+        <EndPodium id={`imposter-pass:${runId}:${word}:${imposterName}`} subtitle="ARE YOU THE IMPOSTER? · RESULT" entries={podium} doneLabel="See who it was →" />
         <Text style={styles.resultEmoji}>{caughtCorrectly ? "🎉" : "😈"}</Text>
         <Text style={styles.resultTitle}>
           {!caughtCorrectly

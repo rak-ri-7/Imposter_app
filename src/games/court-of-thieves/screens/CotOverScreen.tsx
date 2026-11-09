@@ -7,6 +7,7 @@ import { rankMedal } from "../../../shared/utils/ranking";
 import { MIN_ROUNDS_FOR_POINTS, roundsPlayed, standings } from "../logic/engine";
 import { finishCot } from "../logic/game";
 import { CT, rupees, seatColor } from "../theme";
+import { EndPodium, podiumEntries } from "../../../shared/components/WinnerPodium";
 
 type Props = { group: Group; gs: CotGameState; playerId: string };
 
@@ -25,8 +26,11 @@ export default function CotOverScreen({ group, gs, playerId }: Props) {
   const champ = rows[0];
   const played = roundsPlayed(gs);
 
+  const podium = podiumEntries(rows, group.players, (r) => `${rupees(r.real)} real`);
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+      {/* after the fake-money count, so it doesn't spoil the reveal */}
+      <EndPodium id={revealed ? `${group.id}:cot:${rows.map((r) => r.playerId + r.real).join(",")}:${played}` : null} subtitle="COURT OF THIEVES · VERDICT" entries={podium} />
       <Text style={styles.big}>{revealed ? "🏆" : "💸"}</Text>
       <Text style={styles.title}>
         {revealed ? (champ ? `${name(champ.playerId)} ${champ.playerId === playerId ? "win" : "wins"}!` : "Game over") : "The final count…"}

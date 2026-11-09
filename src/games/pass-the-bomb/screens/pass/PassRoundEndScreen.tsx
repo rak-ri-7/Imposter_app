@@ -25,6 +25,7 @@ import PassPerkNews from "./PassPerkNews";
 import { returnToMenu } from "../../../../shared/firebase/groups";
 import PassLuckySheet from "./PassLuckySheet";
 import { LUCKY, ticketsAllowed } from "../../logic/pass/passPerks";
+import { EndPodium, type PodiumEntry } from "../../../../shared/components/WinnerPodium";
 
 type Props = { group: Group; playerId: string };
 
@@ -105,6 +106,21 @@ export default function PassRoundEndScreen({ group, playerId }: Props) {
     ...[...gs.eliminationOrder].reverse(),
   ];
   const iWon = !!gs.winnerId && gs.winnerId === mySide;
+  // 🏆 Only on the final result: sides on the podium (a team shows its members).
+  const podium: PodiumEntry[] = isResult
+    ? standings.slice(0, 3).map((id, i) => {
+        const side = sideById(gs, id);
+        const members = (side?.memberIds ?? [id]).map((m) => group.players.find((p) => p.id === m) ?? { id: m, name: side?.name ?? "Someone", avatar: undefined as string | undefined });
+        return {
+          id,
+          name: side?.name ?? "Someone",
+          rank: i + 1,
+          color: side?.color,
+          score: i === 0 ? "Last one standing" : `${i === 1 ? "2nd" : "3rd"} out last`,
+          ...(team ? { members } : { avatar: members[0]?.avatar }),
+        };
+      })
+    : [];
 
   // 💥 Sound + buzz the moment the round-end screen appears for a new explosion.
   useEffect(() => {
@@ -123,6 +139,7 @@ export default function PassRoundEndScreen({ group, playerId }: Props) {
 
   return (
     <View style={styles.container}>
+      <EndPodium id={isResult ? `${group.id}:bomb-pass:${standings.join(",")}` : null} subtitle="THAT OLD BOMB STORY · FINAL" entries={podium} />
       <ScrollView contentContainerStyle={styles.scroll}>
         {isResult ? (
           <>

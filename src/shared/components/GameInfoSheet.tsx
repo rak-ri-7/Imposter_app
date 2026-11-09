@@ -178,8 +178,8 @@ const styles = StyleSheet.create({
     stepText: { flex: 1, color: NAVY, fontSize: 14, lineHeight: 20 },
     more: { color: '#999', fontSize: 12, marginTop: 10 },
     footer: { padding: 14, paddingBottom: 24, borderTopWidth: 1, borderTopColor: '#EAEAEE', backgroundColor: '#F7F7FA' },
-    play: { backgroundColor: '#C9A45C', borderRadius: 14, paddingVertical: 16, alignItems: 'center' },
+    play: { backgroundColor: '#FFC83D', borderBottomWidth: 4, borderBottomColor: '#D18F00', borderRadius: 14, paddingVertical: 14, alignItems: 'center' },
     playOff: { opacity: 0.45 },
-    ask: { backgroundColor: NAVY },
+    ask: { backgroundColor: NAVY, borderBottomColor: '#0B0B1A' },
     playText: { color: '#121110', fontSize: 16, ...display },
 });

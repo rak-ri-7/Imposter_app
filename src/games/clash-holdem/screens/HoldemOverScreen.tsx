@@ -7,6 +7,7 @@ import { rankMedal } from "../../../shared/utils/ranking";
 import { MIN_HANDS_FOR_ALL, handsPlayed, holdemStandings } from "../logic/engine";
 import { finishHoldem } from "../logic/game";
 import { CC, SERIF } from "../../card-clash/theme";
+import { EndPodium, podiumEntries } from "../../../shared/components/WinnerPodium";
 
 type Props = { group: Group; gs: HoldemGameState; playerId: string };
 
@@ -19,9 +20,11 @@ export default function HoldemOverScreen({ group, gs, playerId }: Props) {
     id === playerId ? "You" : group.players.find((p) => p.id === id)?.name ?? "Someone";
   const champ = rows[0];
   const played = handsPlayed(gs);
+  const podium = podiumEntries(rows, group.players, (r) => (r.chips > 0 ? `${r.chips} chips` : `out in hand ${r.outHand ?? "?"}`));
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={[styles.content, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 40 }]}>
+      <EndPodium id={`${group.id}:holdem:${rows.map((r) => r.playerId + r.chips).join(",")}:${played}`} subtitle="HOLD'EM · FINAL" entries={podium} />
       <Text style={styles.trophy}>💰</Text>
       <Text style={styles.title}>
         {champ ? `${nameOf(champ.playerId)} ${champ.playerId === playerId ? "win" : "wins"}!` : "Game over"}

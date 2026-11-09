@@ -8,6 +8,7 @@ import {
 } from "react-native";
 import { Group, ImposterGameState } from "../../../shared/types";
 import { useImposterGame } from "../logic/useImposterGame";
+import { EndPodium, type PodiumEntry } from "../../../shared/components/WinnerPodium";
 
 type Props = {
   group: Group;
@@ -95,8 +96,20 @@ export default function ResultScreen({ group, playerId }: Props) {
 
   const config = resultConfig[resultForMe];
 
+  // 🏆 The winning side takes the top step.
+  const crew = players.filter((p) => !gameState.imposterIds.includes(p.id));
+  const crewSide = { id: "crew", name: "The Crew", members: crew, score: allCaught ? "Caught the imposter" : "Fooled", color: "#4FC3F7" };
+  const impSide = {
+    id: "imposters",
+    name: imposters.length > 1 ? "The Imposters" : "The Imposter",
+    members: imposters,
+    score: allCaught ? "Caught" : "Got away with it",
+    color: "#E63946",
+  };
+  const podium: PodiumEntry[] = allCaught ? [{ ...crewSide, rank: 1 }, { ...impSide, rank: 2 }] : [{ ...impSide, rank: 1 }, { ...crewSide, rank: 2 }];
   return (
     <View style={[styles.container, { backgroundColor: config.bg }]}>
+      <EndPodium id={`${group.id}:imposter:${gameState.word}:${gameState.imposterIds.join(",")}:${gameState.eliminatedPlayers.join(",")}`} subtitle="ARE YOU THE IMPOSTER? · RESULT" entries={podium} doneLabel="See who it was →" />
       <Animated.View
         style={[
           styles.resultCard,

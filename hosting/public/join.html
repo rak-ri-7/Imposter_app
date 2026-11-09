@@ -9,31 +9,36 @@
 <meta property="og:description" content="Tap to join the group in What Game Are We Playing Today?">
 <meta property="og:image" content="https://imposter-game-a588f.web.app/img/share.jpg">
 <meta property="og:type" content="website">
-<meta name="theme-color" content="#07080A">
+<meta name="theme-color" content="#2A1236">
 <style>
   /* ── Edit these when the app is in the stores ───────────────────── */
   /* (the links themselves are in the script below) */
-  :root { --bg:#07080A; --panel:rgba(23,25,28,.94); --line:#2D3137; --gold:#C9A45C; --ink:#121110; --ivory:#ECE7DD; --muted:#A9A49A; }
+  :root { --bg:#2A1236; --panel:rgba(58,28,72,.96); --line:#55305F; --gold:#C9A45C; --btn:#FFC83D; --btnlip:#D18F00; --sun:#F2C66D; --ink:#121110; --ivory:#FFFFFF; --muted:#C9AFCF; }
+  /* Fredoka (SIL Open Font License, see /fonts/Fredoka-OFL.txt): the app's display font */
+  @font-face { font-family:"Fredoka"; src:url(/fonts/Fredoka-Bold.ttf) format("truetype"); font-weight:700; font-display:swap; }
+  @font-face { font-family:"Fredoka"; src:url(/fonts/Fredoka-SemiBold.ttf) format("truetype"); font-weight:600; font-display:swap; }
   * { box-sizing:border-box; }
   html,body { margin:0; height:100%; background:var(--bg); color:var(--ivory);
     font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   .wall { position:fixed; inset:-30%; display:flex; justify-content:center; gap:14px; transform:rotate(-15deg); opacity:.8; pointer-events:none; }
-  .col { display:flex; flex-direction:column; gap:14px; animation: drift 60s linear infinite alternate; }
+  .col { display:flex; flex-direction:column; gap:14px; animation: drift 90s linear infinite alternate; }
   .col:nth-child(2n) { animation-direction: alternate-reverse; margin-top:-120px; }
   .col img { width:min(30vw,160px); aspect-ratio:2/3; object-fit:cover; border-radius:14px; }
   @keyframes drift { to { transform: translateY(-25%); } }
   @media (prefers-reduced-motion: reduce) { .col { animation:none; } }
-  .shade { position:fixed; inset:0; background:linear-gradient(to bottom, rgba(7,8,10,.3), rgba(7,8,10,.5) 35%, rgba(7,8,10,.95) 62%, #07080A); }
+  .shade { position:fixed; inset:0; background:linear-gradient(to bottom, rgba(42,18,54,.25), rgba(42,18,54,.5) 35%, rgba(42,18,54,.95) 62%, #2A1236); }
   main { position:relative; min-height:100%; max-width:460px; margin:0 auto; padding:24px 20px 36px;
     display:flex; flex-direction:column; justify-content:flex-end; gap:14px; }
-  h1 { font-size:30px; line-height:1.15; margin:0; text-align:center; font-weight:900; }
-  .sub { color:var(--muted); text-align:center; margin:0 0 6px; }
+  h1 { font-family:"Fredoka", system-ui, sans-serif; font-size:34px; line-height:1.12; margin:0; text-align:center; font-weight:700; }
+  h1 span { color:var(--sun); }
+  .games { font-family:"Fredoka", system-ui, sans-serif; font-weight:600; color:var(--sun); text-align:center; font-size:13px; letter-spacing:2px; margin:0; }
+  .sub { font-family:"Fredoka", system-ui, sans-serif; font-weight:600; color:var(--muted); text-align:center; margin:0 0 6px; }
   .card { background:var(--panel); border:1px solid var(--line); border-radius:18px; padding:18px; text-align:center; }
   .label { color:var(--muted); font-size:12px; font-weight:800; letter-spacing:2px; }
-  .code { color:var(--gold); font-size:44px; font-weight:900; letter-spacing:8px; margin:6px 0 2px; }
+  .code { font-family:"Fredoka", system-ui, sans-serif; color:var(--sun); font-size:44px; font-weight:900; letter-spacing:8px; margin:6px 0 2px; }
   .copy { background:none; border:1px solid var(--line); color:var(--ivory); border-radius:10px; padding:8px 14px; font-weight:700; font-size:14px; }
-  .btn { display:block; width:100%; text-align:center; text-decoration:none; border-radius:14px; padding:17px; font-size:17px; font-weight:800; border:0; }
-  .primary { background:var(--gold); color:var(--ink); }
+  .btn { font-family:"Fredoka", system-ui, sans-serif; display:block; width:100%; text-align:center; text-decoration:none; border-radius:14px; padding:17px; font-size:17px; font-weight:800; border:0; }
+  .primary { background:var(--btn); color:#2A1800; box-shadow:0 4px 0 var(--btnlip); }
   .secondary { background:var(--panel); color:var(--ivory); border:1px solid var(--line); }
   .hint { color:var(--muted); font-size:13px; text-align:center; line-height:1.5; margin:0; }
   .hidden { display:none; }
@@ -41,18 +46,18 @@
 </head>
 <body>
 <div class="wall" aria-hidden="true">
-  <div class="col"><img src="/img/imposter.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""></div>
-  <div class="col"><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""><img src="/img/imposter.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""></div>
-  <div class="col"><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""><img src="/img/imposter.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""></div>
-  <div class="col"><img src="/img/imposter.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""></div>
-  <div class="col"><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""><img src="/img/imposter.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""></div>
-  <div class="col"><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""><img src="/img/imposter.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""></div>
+  <div class="col"><img src="/img/imposter.jpg" alt=""><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""><img src="/img/holdem-deck.jpg" alt=""><img src="/img/stop-the-timer.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/card-stats.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""></div>
+  <div class="col"><img src="/img/bomb-story.jpg" alt=""><img src="/img/holdem-deck.jpg" alt=""><img src="/img/stop-the-timer.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/card-stats.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""><img src="/img/imposter.jpg" alt=""><img src="/img/roof-race.jpg" alt=""></div>
+  <div class="col"><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""><img src="/img/holdem-deck.jpg" alt=""><img src="/img/stop-the-timer.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/card-stats.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""><img src="/img/imposter.jpg" alt=""></div>
+  <div class="col"><img src="/img/holdem-deck.jpg" alt=""><img src="/img/stop-the-timer.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/card-stats.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""><img src="/img/imposter.jpg" alt=""><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""></div>
+  <div class="col"><img src="/img/bomb-story.jpg" alt=""><img src="/img/holdem-deck.jpg" alt=""><img src="/img/stop-the-timer.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/card-stats.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""><img src="/img/imposter.jpg" alt=""><img src="/img/roof-race.jpg" alt=""></div>
+  <div class="col"><img src="/img/stop-the-timer.jpg" alt=""><img src="/img/quiz-board.jpg" alt=""><img src="/img/card-stats.jpg" alt=""><img src="/img/court-of-thieves.jpg" alt=""><img src="/img/match-the-following.jpg" alt=""><img src="/img/imposter.jpg" alt=""><img src="/img/roof-race.jpg" alt=""><img src="/img/bomb-story.jpg" alt=""><img src="/img/holdem-deck.jpg" alt=""></div>
 </div>
 <div class="shade"></div>
 
 <main>
-  <h1>You're invited!</h1>
-  <p class="sub">Party games for all ages, on everyone's phone.</p>
+  <h1>You're invited!<br><span>Come play.</span></h1>
+  <p class="sub">Pull up a chair. Someone’s already cheating.</p>
 
   <div class="card" id="codeCard">
     <div class="label">GROUP CODE</div>

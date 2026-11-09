@@ -13,6 +13,7 @@ import {
     endTimerGame,
     calculateRanking,
 } from './game';
+import { haptics } from "../../../shared/haptics";
 
 // How much of the gap between a server timestamp and this device's clock we
 // accept as real network delay. Anything beyond that is treated as clock
@@ -150,6 +151,7 @@ export const useTimerGame = (group: Group | null, playerId: string) => {
     };
 
     const handleStop = async () => {
+        haptics.press();
         if (!group || phase !== 'running' || hasStopped) return;
         setLocalStopped(true);
         try {

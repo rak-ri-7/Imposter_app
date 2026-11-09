@@ -12,6 +12,12 @@ import {
   Image,
 } from "react-native";
 import { POSTER_BY_GAME } from "../assets/posters";
+import { TILE_ART_BY_GAME } from "../assets/tiles";
+
+// The menu is two tiles per row; a lone last tile gets an empty partner so
+// it stays tile-sized (a stretched tile blows its picture up and crops it).
+const SPACER_ID = "__spacer";
+const padToPairs = <T extends { id: string }>(xs: T[]): T[] => (xs.length % 2 ? [...xs, { id: SPACER_ID } as T] : xs);
 import { display, displaySemi } from "../theme/fonts";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RouteProp, useIsFocused } from "@react-navigation/native";
@@ -23,6 +29,7 @@ import ThemeSheet from "../components/ThemeSheet";
 import LeaveGroupSheet from "../components/LeaveGroupSheet";
 import { inviteMessage, inviteUrl } from "../config/invite";
 import { useChat } from "../hooks/useChat";
+import VoiceButton from "../voice/VoiceButton";
 import { statusColor, useOnlineStatus } from "../hooks/useOnlineStatus";
 import { RootStackParamList } from "../../../App";
 import { useGroup } from "../hooks/useGroup";
@@ -48,6 +55,7 @@ import PlayerSelectModal from "../components/PlayerSelectModal";
 import { denseRanks, rankMedal } from "../utils/ranking";
 import { AllTimeRow, getProfile, loadAllTime, setRealName } from "../firebase/profiles";
 import BackLink from "../components/BackLink";
+import { haptics } from "../haptics";
 
 // Leaderboard slides: 🏆 Session → one per game played this session →
 // 🌍 All-time (everyone you've played with, across sessions, merged by
@@ -449,6 +457,13 @@ export default function GameMenuScreen({ navigation, route }: Props) {
               </View>
             )}
           </TouchableOpacity>
+          {/* 🎙️ Group voice (only in builds that have it) */}
+          <VoiceButton
+            groupId={groupId}
+            style={[styles.standBtn, { flex: 0.42 }, T.standBtn]}
+            textStyle={[styles.standBtnText, T.standBtnText]}
+            compact
+          />
         </View>
       </View>
 
@@ -497,7 +512,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
       </ScrollView>
       <FlatList
         contentContainerStyle={minimized ? { paddingBottom: 120 } : undefined}
-        data={games.filter((g) =>
+        data={padToPairs(games.filter((g) =>
           filter === "all"
             ? true
             : filter === "fit"
@@ -507,7 +522,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
                 : filter === "teams"
                   ? usesTeams(g)
                   : g.kind === filter,
-        )}
+        ))}
         keyExtractor={(item) => item.id}
         numColumns={2}
         columnWrapperStyle={styles.row}
@@ -515,6 +530,8 @@ export default function GameMenuScreen({ navigation, route }: Props) {
           <Text style={[styles.filterEmpty, T.filterEmpty]}>No games match that yet. Try another filter.</Text>
         }
         renderItem={({ item }) => {
+          // An odd tile out keeps tile width (instead of stretching across).
+          if ((item.id as string) === SPACER_ID) return <View style={{ flex: 1 }} />;
           const available = item.available !== false;
           const fit = fitFor(item, group.players.length);
           // A game that can't be played right now is faded INSIDE a solid
@@ -523,7 +540,11 @@ export default function GameMenuScreen({ navigation, route }: Props) {
           return (
             <TouchableOpacity
               style={styles.gameCard}
-              onPress={() => available && setInfo(item)}
+              onPress={() => {
+                if (!available) return;
+                haptics.tap();
+                setInfo(item);
+              }}
               disabled={!available}
               accessibilityHint="Shows how the game works"
             >
@@ -536,10 +557,11 @@ export default function GameMenuScreen({ navigation, route }: Props) {
                   <Text style={styles.newBadgeText}>NEW</Text>
                 </View>
               ) : null}
-              {/* The game's poster across the top of the tile */}
+              {/* The game's tile picture (our avatars acting it out) across the
+                  top; the painted poster is kept for the info sheet. */}
               <View style={[styles.posterWrap, faded && styles.gameInnerFaded]}>
-                {POSTER_BY_GAME[item.id] ? (
-                  <Image source={POSTER_BY_GAME[item.id]} style={styles.posterImg} resizeMode="cover" />
+                {TILE_ART_BY_GAME[item.id] ?? POSTER_BY_GAME[item.id] ? (
+                  <Image source={(TILE_ART_BY_GAME[item.id] ?? POSTER_BY_GAME[item.id])!} style={styles.posterImg} resizeMode="cover" />
                 ) : (
                   <View style={[styles.posterImg, styles.posterEmpty]}>
                     <Text style={styles.gameEmoji}>{item.emoji}</Text>

@@ -1,5 +1,5 @@
-import { useEffect } from "react";
-import { NavigationContainer } from "@react-navigation/native";
+import { useEffect, useState } from "react";
+import { NavigationContainer, useNavigationContainerRef } from "@react-navigation/native";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { PaperProvider } from "react-native-paper";
 import { SafeAreaProvider } from "react-native-safe-area-context";
@@ -26,6 +26,9 @@ import QuizPassScreen from "./src/games/quiz-board/QuizPassScreen";
 import { preloadSounds } from "./src/shared/audio/sounds";
 import { useFonts } from "expo-font";
 import { FONT_FILES } from "./src/shared/theme/fonts";
+import GameIntro, { type CurrentRoute } from "./src/shared/components/GameIntro";
+import { VoiceProvider } from "./src/shared/voice/VoiceProvider";
+import VoiceBar from "./src/shared/voice/VoiceBar";
 
 export type RootStackParamList = {
   Home: { joinCode?: string } | undefined;
@@ -74,12 +77,21 @@ export default function App() {
   // The display font (Fredoka). A blink at start-up; if it ever fails to
   // load, the app carries on with the phone's own font.
   const [fontsLoaded, fontError] = useFonts(FONT_FILES);
+  // Which screen is showing, so the "now playing" intro knows when a game begins.
+  const navRef = useNavigationContainerRef<RootStackParamList>();
+  const [route, setRoute] = useState<CurrentRoute>();
+  const trackRoute = () => {
+    const r = navRef.getCurrentRoute();
+    setRoute(r ? { name: r.name, key: r.key } : undefined);
+  };
   if (!fontsLoaded && !fontError) return null;
 
   return (
     <SafeAreaProvider>
     <PaperProvider>
-      <NavigationContainer linking={linking}>
+      {/* 🎙️ One group voice call for the whole app (it follows you between screens) */}
+      <VoiceProvider currentRoute={route?.name}>
+      <NavigationContainer linking={linking} ref={navRef} onReady={trackRoute} onStateChange={trackRoute}>
         <Stack.Navigator
           screenOptions={{
             headerShown: false,
@@ -118,7 +130,10 @@ export default function App() {
           <Stack.Screen name="MtfPass" component={MtfPassScreen} options={{ gestureEnabled: false }} />
           <Stack.Screen name="QuizPass" component={QuizPassScreen} options={{ gestureEnabled: false }} />
         </Stack.Navigator>
+        <VoiceBar />
+        <GameIntro route={route} />
       </NavigationContainer>
+      </VoiceProvider>
     </PaperProvider>
     </SafeAreaProvider>
   );

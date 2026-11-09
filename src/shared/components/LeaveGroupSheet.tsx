@@ -14,6 +14,7 @@ import { games } from "../../games/registry";
 import PixelAvatar from "../avatars/PixelAvatar";
 import { avatarIdFor } from "../avatars/sprites";
 import { display, displaySemi } from "../theme/fonts";
+import { useVoice } from "../voice/VoiceProvider";
 
 type Props = {
   visible: boolean;
@@ -31,6 +32,7 @@ const RED = "#E63946";
 
 export default function LeaveGroupSheet({ visible, onClose, group, playerId, tone = "light" }: Props) {
   const navigation = useNavigation<any>();
+  const voice = useVoice();
   const c = TONES[tone];
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +66,7 @@ export default function LeaveGroupSheet({ visible, onClose, group, playerId, ton
     try {
       await leaveGroup(group.id, playerId, isHost, group.players);
       await clearSession();
+      voice.leave(); // leaving the group ends its voice call too
       onClose();
       // Start clean: drop every screen of this group (including a minimised
       // game still waiting underneath).

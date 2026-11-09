@@ -173,7 +173,9 @@ const styles = StyleSheet.create({
   },
   hostBadgeText: { color: "#9A7432", fontSize: 10, fontWeight: "800" },
   confirmBtn: {
-    backgroundColor: "#C9A45C", // the one "go" button: gold, like Play and Continue
+    backgroundColor: "#FFC83D", // the main button colour (sunshine), with a darker lip underneath
+    borderBottomWidth: 4,
+    borderBottomColor: "#D18F00",
     borderRadius: 14,
     padding: 16,
     alignItems: "center",

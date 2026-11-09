@@ -25,6 +25,7 @@ import { isAuctionRound } from "../../logic/timer/bombAuction";
 import BombAuctionPanel from "./BombAuctionPanel";
 import PixelAvatar from "../../../../shared/avatars/PixelAvatar";
 import { avatarIdFor } from "../../../../shared/avatars/sprites";
+import { haptics } from "../../../../shared/haptics";
 
 type Props = {
   group: Group;
@@ -299,6 +300,7 @@ export default function BombPlayScreen({ group, playerId }: Props) {
     }
     setPassing(true);
     try {
+      haptics.press();
       const res = await passBomb(
         group,
         playerId,

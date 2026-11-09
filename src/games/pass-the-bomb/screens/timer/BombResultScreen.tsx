@@ -14,6 +14,7 @@ import { standingsOrder } from "../../logic/timer/placings";
 import { RUNNER_UP_SCORE_BONUS } from "../../logic/timer/bombHelpers";
 import { FP_PER_POINT } from "../../data/betOdds";
 import { ACHIEVEMENTS, AchievementId, rewardText } from "../../data/achievements";
+import { EndPodium, type PodiumEntry } from "../../../../shared/components/WinnerPodium";
 
 type Props = {
   group: Group;
@@ -55,8 +56,18 @@ export default function BombResultScreen({ group, playerId }: Props) {
     gameState.lives,
   ).map((id) => group.players.find((p) => p.id === id)!);
 
+  // 🏆 Winner on top, then whoever lasted longest.
+  const podium: PodiumEntry[] = standings.slice(0, 3).map((p, i) => ({
+    id: p.id,
+    name: p.name,
+    avatar: p.avatar,
+    rank: i + 1,
+    score: i === 0 ? "Last one standing" : `${i === 1 ? "2nd" : "3rd"} out last`,
+  }));
+
   return (
     <View style={styles.container}>
+      <EndPodium id={winner ? `${group.id}:bomb:${standings.map((p) => p.id).join(",")}` : null} subtitle="THAT OLD BOMB STORY · FINAL" entries={podium} />
       <Animated.View
         style={[
           styles.winnerCard,

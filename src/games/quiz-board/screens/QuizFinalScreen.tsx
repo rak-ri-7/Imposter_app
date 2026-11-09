@@ -7,6 +7,7 @@ import type { QuizBoardCtx } from "../logic/useQuizBoard";
 import { finishQuizBoard, standings, teamStandings } from "../logic/game";
 import { RetroButton } from "../components";
 import { QB, bevel, digitText, displayText } from "../theme";
+import { EndPodium, podiumEntries } from "../../../shared/components/WinnerPodium";
 
 type Props = { group: Group; playerId: string; ctx: QuizBoardCtx };
 
@@ -39,8 +40,22 @@ export default function QuizFinalScreen({ group, playerId, ctx }: Props) {
   const medal = (rank: number) =>
     rank === 1 ? "🥇" : rank === 2 ? "🥈" : rank === 3 ? "🥉" : `${rank}.`;
 
+  // 🏆 Teams on the podium in team mode; players otherwise.
+  const podium = !played
+    ? []
+    : teamMode
+      ? teamStandings(gs.money, gs.teams!).filter((r) => r.rank <= 3).map((r) => ({
+          id: r.team.id,
+          name: r.team.name,
+          rank: r.rank,
+          color: r.team.color,
+          score: formatRupees(r.money),
+          members: r.team.memberIds.map((id) => group.players.find((p) => p.id === id) ?? { id, name: nameOf(id) }),
+        }))
+      : podiumEntries(rows, group.players, (r) => formatRupees(r.money));
   return (
     <View style={styles.container}>
+      <EndPodium id={`${group.id}:quiz:${rows.map((r) => r.playerId + r.money).join(",")}`} subtitle="QUIZ BOARD · FINAL" entries={podium} />
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.marquee}>
           <Text style={displayText(32, QB.gold)}>Final Standings</Text>

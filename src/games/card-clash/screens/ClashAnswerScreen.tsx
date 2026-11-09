@@ -15,6 +15,7 @@ import ClashCardView from "../components/ClashCardView";
 import PileBar from "../components/PileBar";
 import { FoilFill } from "../components/Foil";
 import { CC, GOLD_FRAME, SERIF } from "../theme";
+import { haptics } from "../../../shared/haptics";
 
 type Props = { group: Group; gs: ClashGameState; playerId: string };
 
@@ -76,7 +77,7 @@ export default function ClashAnswerScreen({ group, gs, playerId }: Props) {
   const clash = async () => {
     if (!mustTap || tapped || sending) return;
     setSending(true);
-    Vibration.vibrate(60);
+    haptics.press();
     try {
       await markReady(group.id, playerId, gs.round);
     } finally {
