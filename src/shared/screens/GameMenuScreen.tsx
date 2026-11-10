@@ -29,7 +29,7 @@ import ThemeSheet from "../components/ThemeSheet";
 import LeaveGroupSheet from "../components/LeaveGroupSheet";
 import { inviteMessage, inviteUrl } from "../config/invite";
 import { useChat } from "../hooks/useChat";
-import VoiceButton from "../voice/VoiceButton";
+import TalkButton from "../voice/TalkButton";
 import { statusColor, useOnlineStatus } from "../hooks/useOnlineStatus";
 import { RootStackParamList } from "../../../App";
 import { useGroup } from "../hooks/useGroup";
@@ -56,6 +56,8 @@ import { denseRanks, rankMedal } from "../utils/ranking";
 import { AllTimeRow, getProfile, loadAllTime, setRealName } from "../firebase/profiles";
 import BackLink from "../components/BackLink";
 import { haptics } from "../haptics";
+import { useBottomInset } from "../hooks/useSafeBottom";
+import CoachMarks from "../components/CoachMarks";
 
 // Leaderboard slides: 🏆 Session → one per game played this session →
 // 🌍 All-time (everyone you've played with, across sessions, merged by
@@ -82,6 +84,13 @@ export default function GameMenuScreen({ navigation, route }: Props) {
   const online = useOnlineStatus(groupId, playerId, (group?.players ?? []).map((p) => p.id), isFocused);
   // The game whose details are open, and the filter chip picked.
   const [info, setInfo] = useState<GameDefinition | null>(null);
+  // 👉 First-time tour: what each button up top does
+  const tourMe = useRef<View>(null);
+  const tourTheme = useRef<View>(null);
+  const tourInvite = useRef<View>(null);
+  const tourBoard = useRef<View>(null);
+  const tourTalk = useRef<View>(null);
+  const tourTile = useRef<View>(null);
   const [filter, setFilter] = useState<"all" | "fit" | "quick" | GameKind>("all");
   const anyBest = !!group && games.some((g) => fitFor(g, group.players.length) === "best");
   // Players left and the "Best for" chip went away while it was picked.
@@ -139,6 +148,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
   // player came here to check the board or chat): then it stays a mini
   // player until they tap it.
   const minimized = useMinimizedRoute(group);
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   useEffect(() => {
     const target = routeForGame(group?.currentGame);
     if (!target || minimized || !isFocused) return;
@@ -391,7 +401,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
         {(() => {
           const me = group.players.find((p) => p.id === playerId);
           return (
-            <TouchableOpacity style={styles.meChip} onPress={() => setSheet("me")} accessibilityLabel="Your profile and settings">
+            <TouchableOpacity ref={tourMe as any} style={styles.meChip} onPress={() => setSheet("me")} accessibilityLabel="Your profile and settings">
               <View>
                 <PixelAvatar avatar={me ? avatarIdFor(me, group.players) : undefined} playerId={playerId} size={40} />
                 {isHost && <Text style={styles.meCrown}>👑</Text>}
@@ -407,6 +417,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
         })()}
         <View style={{ flex: 1 }} />
         <TouchableOpacity
+          ref={tourTheme as any}
           style={styles.themeBtn}
           onPress={() => setSheet("theme")}
           accessibilityLabel={`Group theme: ${theme.name}`}
@@ -414,6 +425,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
           <Text style={styles.themeBtnText}>🎨</Text>
         </TouchableOpacity>
         <TouchableOpacity
+          ref={tourInvite as any}
           style={styles.inviteChip}
           onPress={() =>
             Share.share({
@@ -437,7 +449,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
           </Text>
         </TouchableOpacity>
         <View style={styles.standBtns}>
-          <TouchableOpacity style={[styles.standBtn, { flex: 1.45 }, T.standBtn]} onPress={() => setSheet("board")}>
+          <TouchableOpacity ref={tourBoard as any} style={[styles.standBtn, { flex: 1.45 }, T.standBtn]} onPress={() => setSheet("board")}>
             <Text style={[styles.standBtnText, T.standBtnText]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
               🏆 Leaderboard
             </Text>
@@ -447,23 +459,16 @@ export default function GameMenuScreen({ navigation, route }: Props) {
               👥 Players ({group.players.length})
             </Text>
           </TouchableOpacity>
-          <TouchableOpacity style={[styles.standBtn, { flex: 0.8 }, T.standBtn]} onPress={() => setSheet("chat")}>
-            <Text style={[styles.standBtnText, T.standBtnText]} numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.75}>
-              💬 Chat
-            </Text>
-            {chat.unread > 0 && (
-              <View style={styles.unreadBadge}>
-                <Text style={styles.unreadText}>{chat.unread > 9 ? "9+" : chat.unread}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-          {/* 🎙️ Group voice (only in builds that have it) */}
-          <VoiceButton
-            groupId={groupId}
-            style={[styles.standBtn, { flex: 0.42 }, T.standBtn]}
-            textStyle={[styles.standBtnText, T.standBtnText]}
-            compact
-          />
+          {/* 💬 Chat and 🎙️ voice, in one drop-down */}
+          <View ref={tourTalk} collapsable={false} style={{ flex: 0.95 }}>
+            <TalkButton
+              groupId={groupId}
+              unread={chat.unread}
+              onChat={() => setSheet("chat")}
+              style={[styles.standBtn, T.standBtn]}
+              textStyle={[styles.standBtnText, T.standBtnText]}
+            />
+          </View>
         </View>
       </View>
 
@@ -511,7 +516,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
         ))}
       </ScrollView>
       <FlatList
-        contentContainerStyle={minimized ? { paddingBottom: 120 } : undefined}
+        contentContainerStyle={{ paddingBottom: (minimized ? 120 : 16) + bottomInset }}
         data={padToPairs(games.filter((g) =>
           filter === "all"
             ? true
@@ -529,7 +534,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
         ListEmptyComponent={
           <Text style={[styles.filterEmpty, T.filterEmpty]}>No games match that yet. Try another filter.</Text>
         }
-        renderItem={({ item }) => {
+        renderItem={({ item, index }) => {
           // An odd tile out keeps tile width (instead of stretching across).
           if ((item.id as string) === SPACER_ID) return <View style={{ flex: 1 }} />;
           const available = item.available !== false;
@@ -539,6 +544,7 @@ export default function GameMenuScreen({ navigation, route }: Props) {
           const faded = !available || fit === "short";
           return (
             <TouchableOpacity
+              ref={index === 0 ? (tourTile as any) : undefined}
               style={styles.gameCard}
               onPress={() => {
                 if (!available) return;
@@ -600,8 +606,32 @@ export default function GameMenuScreen({ navigation, route }: Props) {
         }}
       />
 
+      {/* 👉 First-time tour (once per phone) */}
+      <CoachMarks
+        storageKey="tour.gameMenu.v1"
+        paused={!isFocused || sheet !== null || info !== null || showModeModal || showPlayerSelect || leaving}
+        steps={[
+          { target: tourMe, title: "This is you", text: "Tap here to change your avatar and name, and see your points." },
+          { target: tourTheme, title: "Group themes", text: "Pick a wallpaper and colours. It changes the look for everyone in the group." },
+          { target: tourInvite, title: "Invite friends", text: "Share this code or link so friends can join from their phones." },
+          { target: tourBoard, title: "Leaderboard", text: "Everyone's points from tonight's games, game by game." },
+          {
+            target: tourTalk,
+            title: "Chat & group call",
+            text: "Text the group, or join a voice call. The call only starts when you pick \u201cJoin voice chat\u201d.",
+          },
+          {
+            target: tourTile,
+            title: "The games",
+            text: isHost
+              ? "Tap a game to see how it's played, then start it for everyone."
+              : "Tap a game to see how it's played. The host starts the game for everyone.",
+          },
+        ]}
+      />
+
       {/* The minimised game, bottom right */}
-      <MiniGame group={group} playerId={playerId} />
+      <MiniGame group={group} playerId={playerId} bottom={24 + bottomInset} />
 
       <ChatSheet
         visible={sheet === "chat"}

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
 import { Group, ImposterGameState } from "../../../shared/types";
 import { useImposterGame } from "../logic/useImposterGame";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -9,6 +10,7 @@ type Props = {
 };
 
 export default function WordRevealScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { isHost, isImposter, handleBeginDescribe } = useImposterGame(
     group,
     playerId,
@@ -17,7 +19,7 @@ export default function WordRevealScreen({ group, playerId }: Props) {
   const gameState = group.gameState as ImposterGameState;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <Text style={styles.title}>Your Role</Text>
 
       <View style={styles.roleBox}>

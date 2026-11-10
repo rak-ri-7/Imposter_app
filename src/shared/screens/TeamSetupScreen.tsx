@@ -16,6 +16,7 @@ import { saveTeams } from "../firebase/groups";
 import { Team } from "../types";
 import { display } from "../theme/fonts";
 import BackLink from "../components/BackLink";
+import { padBottom, useBottomInset } from "../hooks/useSafeBottom";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "TeamSetup">;
@@ -28,6 +29,7 @@ const TEAM_NAMES = ["Team A", "Team B", "Team C", "Team D"];
 const generateTeamId = () => Math.random().toString(36).substring(2, 8);
 
 export default function TeamSetupScreen({ navigation, route }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { groupId } = route.params;
   const { group } = useGroup(groupId);
   const [teams, setTeams] = useState<Team[]>(() => {
@@ -162,7 +164,7 @@ export default function TeamSetupScreen({ navigation, route }: Props) {
 
   if (mode === "pick") {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <BackLink onPress={() => navigation.goBack()} />
 
         <Text style={styles.title}>👥 Play as Teams</Text>
@@ -203,7 +205,7 @@ export default function TeamSetupScreen({ navigation, route }: Props) {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <BackLink onPress={() => setMode("pick")} />
 
       <Text style={styles.title}>👥 Set Up Teams</Text>

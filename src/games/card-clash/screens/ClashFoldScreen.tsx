@@ -13,12 +13,14 @@ import ClashCardView, { MiniCard } from "../components/ClashCardView";
 import FlipCard from "../components/FlipCard";
 import PileBar from "../components/PileBar";
 import { CC, SERIF } from "../theme";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: ClashGameState; playerId: string };
 
 const AUTO_SEND_EARLY_MS = 1500;
 
 export default function ClashFoldScreen({ group, gs, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const f = gs.fold!;
   const { width: screenW } = useWindowDimensions();
   const nameOf = (id: string) =>
@@ -80,7 +82,7 @@ export default function ClashFoldScreen({ group, gs, playerId }: Props) {
     const flipped = elapsed > 900;
     const decided = elapsed > 1700;
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <ScrollView contentContainerStyle={styles.content}>
           <PileBar group={group} gs={gs} playerId={playerId} />
           <View style={styles.titleBox}>
@@ -178,7 +180,7 @@ export default function ClashFoldScreen({ group, gs, playerId }: Props) {
   const open = openStats(gs);
   const bluffOk = canCallBluff(gs);
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <Text style={styles.round}>CLASH {gs.round}</Text>

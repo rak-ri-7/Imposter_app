@@ -8,10 +8,12 @@ import { finishQuizBoard, standings, teamStandings } from "../logic/game";
 import { RetroButton } from "../components";
 import { QB, bevel, digitText, displayText } from "../theme";
 import { EndPodium, podiumEntries } from "../../../shared/components/WinnerPodium";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; playerId: string; ctx: QuizBoardCtx };
 
 export default function QuizFinalScreen({ group, playerId, ctx }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { gs, isHost, nameOf } = ctx;
   const [busy, setBusy] = useState(false);
   if (!gs) return null;
@@ -54,7 +56,7 @@ export default function QuizFinalScreen({ group, playerId, ctx }: Props) {
         }))
       : podiumEntries(rows, group.players, (r) => formatRupees(r.money));
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <EndPodium id={`${group.id}:quiz:${rows.map((r) => r.playerId + r.money).join(",")}`} subtitle="QUIZ BOARD · FINAL" entries={podium} />
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.marquee}>

@@ -22,6 +22,7 @@ import { CHAT_MAX_LEN, ChatMessage, deleteChatMessage, sendChatMessage } from '.
 import PixelAvatar from '../avatars/PixelAvatar';
 import { avatarIdFor } from '../avatars/sprites';
 import { display } from '../theme/fonts';
+import { padBottom, useBottomInset } from "../hooks/useSafeBottom";
 
 type Props = {
     visible: boolean;
@@ -43,6 +44,7 @@ const clock = (ms: number) => {
 };
 
 export default function ChatSheet({ visible, onClose, group, playerId, messages, blocked, onSeen, onRetry }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
     const [draft, setDraft] = useState('');
     const [cooling, setCooling] = useState(false);
     const isHost = group.hostId === playerId;
@@ -90,7 +92,7 @@ export default function ChatSheet({ visible, onClose, group, playerId, messages,
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
             <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
                 <Pressable style={styles.dismiss} onPress={onClose} />
-                <View style={styles.sheet}>
+                <View style={[styles.sheet, padBottom(styles.sheet, bottomInset)]}>
                     <View style={styles.handle} />
                     <View style={styles.header}>
                         <Text style={styles.title}>💬 Group chat</Text>

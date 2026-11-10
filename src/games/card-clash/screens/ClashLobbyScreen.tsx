@@ -9,6 +9,7 @@ import type { ClashDeckId } from "../data/types";
 import { ClashLength, DEFAULT_HAND, HAND_SIZES, startCardClash } from "../logic/game";
 import { CC, SERIF } from "../theme";
 import HowToPlay from "../../../shared/components/HowToPlay";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 // A showcase card for each deck tile.
 const SHOWCASE: Record<ClashDeckId, { id: string; stat: string; value: string }> = {
@@ -38,6 +39,7 @@ const RULES = [
 ];
 
 export default function ClashLobbyScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const isHost = group.hostId === playerId;
   const [deck, setDeck] = useState<ClashDeckId>("countries");
   const [hand, setHand] = useState<number>(DEFAULT_HAND);
@@ -57,7 +59,7 @@ export default function ClashLobbyScreen({ group, playerId }: Props) {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={[styles.content, padBottom(styles.content, bottomInset)]}>
       <Text style={styles.title}>🃏 Card Stats Callout!</Text>
       <Text style={styles.sub}>{group.players.length} players</Text>
       <HowToPlay game="card-clash" details={RULES} theme={{ text: CC.text, muted: CC.textMuted, accent: CC.gold, sheet: CC.bg, panel: CC.panel, sheetText: CC.text, sheetMuted: CC.textMuted }} />

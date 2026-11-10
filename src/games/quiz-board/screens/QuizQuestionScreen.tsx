@@ -28,12 +28,14 @@ import {
 import { RetroButton, RoundOutcome, WinnerPicker } from "../components";
 import { QB, bevel, digitText, displayText } from "../theme";
 import { haptics } from "../../../shared/haptics";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; playerId: string; ctx: QuizBoardCtx };
 
 const LETTERS = ["A", "B", "C", "D"];
 
 export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { gs, phase, isHost, remainingMs, queue, hasBuzzed, myPick, nameOf, teams, myTeam, watching, answeredForMe } = ctx;
   // Team mode: a teammate already answered/buzzed for us, or we're watching.
   const teamBlocked = !!teams && (watching || !!answeredForMe);
@@ -127,7 +129,7 @@ export default function QuizQuestionScreen({ group, playerId, ctx }: Props) {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       {/* top line: category and value */}
       <View style={styles.topLine}>
         <Text numberOfLines={1} style={[displayText(14), styles.flex]}>

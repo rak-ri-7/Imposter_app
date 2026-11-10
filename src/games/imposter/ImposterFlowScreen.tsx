@@ -24,6 +24,7 @@ import VoteScreen from "./screens/VoteScreen";
 import ResultScreen from "./screens/ResultScreen";
 import PixelAvatar from "../../shared/avatars/PixelAvatar";
 import { avatarIdFor } from "../../shared/avatars/sprites";
+import { padBottom, useBottomInset } from "../../shared/hooks/useSafeBottom";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "ImposterFlow">;
@@ -36,6 +37,7 @@ export default function ImposterFlowScreen({ navigation, route }: Props) {
   const [settings, setSettings] = useState<ImposterSettings>({
     imposterCount: 1,
     hintsEnabled: true,
+    wordSet: "india",
   });
 
   // ── When a player drops out ───────────────────────────────────────
@@ -140,6 +142,7 @@ function ImposterLobby({
 }) {
   const { isHost, handleStartGame, loading } = useImposterGame(group, playerId);
   const maxImposters = Math.max(1, Math.floor(group.players.length / 3));
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
 
   const onStart = async () => {
     if (group.players.length < 3) {
@@ -155,7 +158,7 @@ function ImposterLobby({
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <Text style={styles.lobbyTitle}>🕵️ Are You the Imposter?</Text>
       <Text style={styles.lobbySubtitle}>Ready to play?</Text>
 

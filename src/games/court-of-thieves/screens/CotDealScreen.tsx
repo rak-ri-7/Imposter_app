@@ -19,6 +19,7 @@ import { TEMPLATES, fillTemplate, type CotTemplate } from "../logic/templates";
 import { cotReply, cotRespond, cotSend } from "../logic/game";
 import { CT, rupees, seatColor } from "../theme";
 import { useServerNow } from "../../../shared/hooks/useServerNow";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: CotGameState; playerId: string };
 
@@ -46,6 +47,7 @@ const GROUPS: { id: CotTemplate["group"]; label: string }[] = [
 type Compose = { mode: "new" } | { mode: "reply"; thread: CotThread };
 
 export default function CotDealScreen({ group, gs, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const now = useServerNow(250);
   const [compose, setCompose] = useState<Compose | null>(null);
   const [busy, setBusy] = useState(false);
@@ -100,7 +102,7 @@ export default function CotDealScreen({ group, gs, playerId }: Props) {
   const respond = (t: CotThread, m: CotMsg, choice: OfferChoice) => send(() => cotRespond(group.id, playerId, t.id, m.id, choice));
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <View style={styles.header}>
         <View>
           <Text style={styles.title}>🤝 Deals</Text>

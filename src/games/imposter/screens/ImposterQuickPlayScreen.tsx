@@ -12,12 +12,13 @@ import {
 } from "react-native";
 import { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RootStackParamList } from "../../../../App";
-import { pickRandomWordEntry } from "../data/words";
+import { pickRandomWordEntry, WORD_SETS, type WordSet } from "../data/words";
 import {
   getLocalSession,
   updateLocalScores,
 } from "../../../shared/utils/localSession";
 import { EndPodium, type PodiumEntry } from "../../../shared/components/WinnerPodium";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = {
   navigation: NativeStackNavigationProp<
@@ -36,6 +37,7 @@ type Player = {
 type Phase =
   | "setup"
   | "loading"
+  | "words"
   | "cover"
   | "reveal"
   | "describe-cover"
@@ -47,13 +49,17 @@ type Phase =
   | "result";
 
 // Uses the same word bank as online Imposter.
-const pickRandomWord = (): string => pickRandomWordEntry([]).word;
+const pickRandomWord = (set: WordSet): string => pickRandomWordEntry([], set).word;
 
 export default function ImposterPassThePhoneScreen({ navigation }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const [phase, setPhase] = useState<Phase>("loading");
   const [players, setPlayers] = useState<Player[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [word, setWord] = useState("");
+  // Which words this session: picked once, kept for "Play again"
+  const [wordSet, setWordSet] = useState<WordSet | null>(null);
+  const namesRef = useRef<string[]>([]);
   const [imposterIndex, setImposterIndex] = useState(-1);
   const [timer, setTimer] = useState(30);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -93,11 +99,17 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
       navigation.goBack();
       return;
     }
-    initGame(session.players.map((p) => p.name));
+    namesRef.current = session.players.map((p) => p.name);
+    goToPhase("words");
   };
 
-  const initGame = (validNames: string[]) => {
-    const selectedWord = pickRandomWord();
+  const chooseWords = (set: WordSet) => {
+    setWordSet(set);
+    initGame(namesRef.current, set);
+  };
+
+  const initGame = (validNames: string[], set: WordSet = wordSet ?? "india") => {
+    const selectedWord = pickRandomWord(set);
     const selectedImposterIndex = Math.floor(Math.random() * validNames.length);
 
     const initialPlayers: Player[] = validNames.map((name) => ({
@@ -262,15 +274,33 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
   if (phase === "loading") {
     return (
       <View
-        style={[
-          styles.container,
-          { alignItems: "center", justifyContent: "center" },
-        ]}
+        style={[styles.container,
+          { alignItems: "center", justifyContent: "center" }, padBottom(styles.container, bottomInset)]}
       >
         <ActivityIndicator size="large" color="#E63946" />
       </View>
     );
   }
+  // Pick the words: local or worldwide
+  if (phase === "words") {
+    return (
+      <Animated.View style={[styles.container, { opacity: fadeAnim, justifyContent: "center" }, padBottom(styles.container, bottomInset)]}>
+        <Text style={styles.title}>🕵️ Which words?</Text>
+        <Text style={styles.subtitle}>Pick what suits your group</Text>
+        {WORD_SETS.map((s) => (
+          <TouchableOpacity key={s.id} style={styles.setCard} onPress={() => chooseWords(s.id)}>
+            <Text style={styles.setEmoji}>{s.emoji}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.setLabel}>{s.label}</Text>
+              <Text style={styles.setBlurb}>{s.blurb}</Text>
+            </View>
+            <Text style={styles.setArrow}>›</Text>
+          </TouchableOpacity>
+        ))}
+      </Animated.View>
+    );
+  }
+
   // if (phase === "setup") {
   //   return (
   //     <View style={styles.container}>
@@ -328,7 +358,7 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
   if (phase === "cover") {
     return (
       <Animated.View
-        style={[styles.container, styles.coverContainer, { opacity: fadeAnim }]}
+        style={[styles.container, styles.coverContainer, { opacity: fadeAnim }, padBottom(styles.container, bottomInset)]}
       >
         <Text style={styles.coverEmoji}>📱</Text>
         <Text style={styles.coverTitle}>Pass the phone to</Text>
@@ -351,7 +381,7 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
   if (phase === "reveal") {
     const currentPlayer = players[currentIndex];
     return (
-      <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+      <Animated.View style={[styles.container, { opacity: fadeAnim }, padBottom(styles.container, bottomInset)]}>
         <Text style={styles.revealGreeting}>Hey {currentPlayer.name}!</Text>
 
         {currentPlayer.isImposter ? (
@@ -394,7 +424,7 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
   if (phase === "describe-cover") {
     return (
       <Animated.View
-        style={[styles.container, styles.coverContainer, { opacity: fadeAnim }]}
+        style={[styles.container, styles.coverContainer, { opacity: fadeAnim }, padBottom(styles.container, bottomInset)]}
       >
         <Text style={styles.coverEmoji}>🎤</Text>
         <Text style={styles.coverTitle}>Pass the phone to</Text>
@@ -413,7 +443,7 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
   if (phase === "describe") {
     const isUrgent = timer <= 10;
     return (
-      <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+      <Animated.View style={[styles.container, { opacity: fadeAnim }, padBottom(styles.container, bottomInset)]}>
         <Text style={styles.describeTitle}>
           {players[currentIndex]?.name}'s turn
         </Text>
@@ -450,7 +480,7 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
   if (phase === "vote-cover") {
     return (
       <Animated.View
-        style={[styles.container, styles.coverContainer, { opacity: fadeAnim }]}
+        style={[styles.container, styles.coverContainer, { opacity: fadeAnim }, padBottom(styles.container, bottomInset)]}
       >
         <Text style={styles.coverEmoji}>🗳️</Text>
         <Text style={styles.coverTitle}>Pass the phone to</Text>
@@ -472,7 +502,7 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
   if (phase === "imposter-guess-cover") {
     return (
       <Animated.View
-        style={[styles.container, styles.coverContainer, { opacity: fadeAnim }]}
+        style={[styles.container, styles.coverContainer, { opacity: fadeAnim }, padBottom(styles.container, bottomInset)]}
       >
         <Text style={styles.coverEmoji}>🕵️</Text>
         <Text style={styles.coverTitle}>Pass the phone to</Text>
@@ -494,7 +524,7 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
   // IMPOSTER GUESS PHASE
   if (phase === "imposter-guess") {
     return (
-      <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+      <Animated.View style={[styles.container, { opacity: fadeAnim }, padBottom(styles.container, bottomInset)]}>
         <Text style={styles.voteTitle}>What's the word, {imposterName}?</Text>
         <Text style={styles.voteSubtitle}>
           You were caught! Guess the word correctly to steal the win.
@@ -530,7 +560,7 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
   if (phase === "vote") {
     const currentPlayer = players[currentIndex];
     return (
-      <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+      <Animated.View style={[styles.container, { opacity: fadeAnim }, padBottom(styles.container, bottomInset)]}>
         <Text style={styles.voteTitle}>
           {currentPlayer.name}, who is the imposter?
         </Text>
@@ -579,7 +609,7 @@ export default function ImposterPassThePhoneScreen({ navigation }: Props) {
       : [{ ...crewSide, rank: 1, score: "Found the imposter" }, { ...impSide, rank: 2, score: "Caught" }];
 
     return (
-      <Animated.View style={[styles.container, { opacity: fadeAnim }]}>
+      <Animated.View style={[styles.container, { opacity: fadeAnim }, padBottom(styles.container, bottomInset)]}>
         <EndPodium id={`imposter-pass:${runId}:${word}:${imposterName}`} subtitle="ARE YOU THE IMPOSTER? · RESULT" entries={podium} doneLabel="See who it was →" />
         <Text style={styles.resultEmoji}>{caughtCorrectly ? "🎉" : "😈"}</Text>
         <Text style={styles.resultTitle}>
@@ -754,6 +784,21 @@ const styles = StyleSheet.create({
     color: "#888",
     fontSize: 14,
   },
+  setCard: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 14,
+    backgroundColor: "#16213E",
+    borderRadius: 16,
+    padding: 18,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: "#0F3460",
+  },
+  setEmoji: { fontSize: 32 },
+  setLabel: { color: "#fff", fontSize: 18, fontWeight: "bold" },
+  setBlurb: { color: "#999", fontSize: 13, marginTop: 2 },
+  setArrow: { color: "#FFD700", fontSize: 28, fontWeight: "bold" },
   startBtn: {
     backgroundColor: "#E63946",
     borderRadius: 14,

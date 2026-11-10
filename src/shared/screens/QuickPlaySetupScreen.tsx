@@ -16,12 +16,14 @@ import {
 } from "../utils/localSession";
 import { display } from "../theme/fonts";
 import BackLink from "../components/BackLink";
+import { padBottom, useBottomInset } from "../hooks/useSafeBottom";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "QuickPlaySetup">;
 };
 
 export default function QuickPlaySetupScreen({ navigation }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const [playerNames, setPlayerNames] = useState<string[]>(["", "", ""]);
 
   useEffect(() => {
@@ -100,7 +102,7 @@ export default function QuickPlaySetupScreen({ navigation }: Props) {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <BackLink dark onPress={() => navigation.goBack()} />
 
       <Text style={styles.title}>Players</Text>

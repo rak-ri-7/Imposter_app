@@ -25,6 +25,7 @@ import {
 } from "../../../../shared/sounds/soundManager";
 import BombHotPotatoScreen from "./BombHotPotatoScreen";
 import { hpDudLine } from "../../logic/timer/hotPotatoDuel";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; playerId: string };
 
@@ -45,6 +46,7 @@ const MODE_INFO: Record<
 };
 
 export default function BombGhostTournamentScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const tournament = gameState.ghostTournament;
   const activeQuiz = gameState.activeQuiz;
@@ -212,7 +214,7 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
 
   if (!tournament) {
     return (
-      <View style={styles.centerContainer}>
+      <View style={[styles.centerContainer, padBottom(styles.centerContainer, bottomInset)]}>
         <Text style={styles.waitingText}>Wrapping up the challenge...</Text>
       </View>
     );
@@ -262,7 +264,7 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
       Math.ceil(((tournament.nextStageAt ?? now) - now) / 1000),
     );
     return (
-      <View style={styles.centerContainer}>
+      <View style={[styles.centerContainer, padBottom(styles.centerContainer, bottomInset)]}>
         <Text style={styles.title}>👻 GHOST CHALLENGE</Text>
         <Text style={styles.subtitle}>
           The shadows demand a duel for a life.
@@ -342,7 +344,7 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
     if (dudId) {
       const dud = hpDudLine(tournament.lastDudLine);
       return (
-        <View style={styles.centerContainer}>
+        <View style={[styles.centerContainer, padBottom(styles.centerContainer, bottomInset)]}>
           <Text style={styles.bigEmoji}>{dud.emoji}</Text>
           <Text style={styles.title}>IT'S A DUD!</Text>
           <Text style={styles.dudTitle}>{dud.title}</Text>
@@ -359,7 +361,7 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
     }
     const outId = tournament.lastEliminatedId;
     return (
-      <View style={styles.centerContainer}>
+      <View style={[styles.centerContainer, padBottom(styles.centerContainer, bottomInset)]}>
         <Text style={styles.bigEmoji}>💥</Text>
         <Text style={styles.title}>
           {outId
@@ -385,7 +387,7 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
     const winnerIsCutter = winnerId === tournament.wireCutterId;
 
     return (
-      <View style={styles.centerContainer}>
+      <View style={[styles.centerContainer, padBottom(styles.centerContainer, bottomInset)]}>
         <Text style={styles.bigEmoji}>{winnerIsCutter ? "🛡️" : "👻"}</Text>
         <Text style={styles.title}>
           {winnerIsCutter
@@ -422,14 +424,14 @@ export default function BombGhostTournamentScreen({ group, playerId }: Props) {
   // ── Quiz question ─────────────────────────────────────────────────
   if (!activeQuiz) {
     return (
-      <View style={styles.centerContainer}>
+      <View style={[styles.centerContainer, padBottom(styles.centerContainer, bottomInset)]}>
         <Text style={styles.waitingText}>Next question loading...</Text>
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <Text style={styles.title}>👻 GHOST CHALLENGE</Text>
       {!!modeName && <Text style={styles.modeTag}>{modeName}</Text>}
       {renderPool()}

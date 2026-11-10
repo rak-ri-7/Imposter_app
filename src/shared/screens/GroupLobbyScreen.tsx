@@ -269,10 +269,10 @@ export default function GroupLobbyScreen({ navigation, route }: Props) {
         </Text>
       )}
       <TouchableOpacity
-        style={[styles.continueBtn, !isHost && styles.continueBtnGuest, { marginBottom: bottomSpace }]}
+        style={[styles.continueBtn, { marginBottom: bottomSpace }]}
         onPress={() => navigation.navigate("GameMenu", { groupId, playerId })}
       >
-        <Text style={[styles.continueBtnText, !isHost && styles.continueBtnTextGuest]}>
+        <Text style={styles.continueBtnText}>
           {isHost ? "Continue to Games →" : "Browse the games →"}
         </Text>
       </TouchableOpacity>

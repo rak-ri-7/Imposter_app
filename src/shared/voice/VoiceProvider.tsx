@@ -192,9 +192,13 @@ export function VoiceProvider({ children, currentRoute }: { children: ReactNode;
     const room = roomRef.current;
     roomRef.current = null;
     if (room) {
-      room.removeAllListeners?.();
-      room.disconnect().catch(() => {});
-      lk?.rn.AudioSession.stopAudioSession().catch(() => {});
+      try {
+        room.removeAllListeners?.();
+        room.disconnect()?.catch?.(() => {});
+        lk?.rn.AudioSession.stopAudioSession()?.catch?.(() => {});
+      } catch {
+        /* already gone */
+      }
     }
     setPeople([]);
     setGroupId(null);

@@ -12,6 +12,7 @@ import {
   resolveFastestFingerQuestion,
   chooseFastestFingerLoser,
 } from "../../logic/timer/Fastestfinger";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -19,6 +20,7 @@ type Props = {
 };
 
 export default function BombFastestFingerScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const isHost = group.hostId === playerId;
   const activeQuiz = gameState.activeQuiz;
@@ -125,7 +127,7 @@ export default function BombFastestFingerScreen({ group, playerId }: Props) {
   // for the brief moment before the next one lands) ──────────────────────
   if (!activeQuiz) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <HolderBanner />
         <Text style={styles.loadingText}>Next question loading...</Text>
       </View>
@@ -139,7 +141,7 @@ export default function BombFastestFingerScreen({ group, playerId }: Props) {
 
     if (isChooser) {
       return (
-        <View style={styles.container}>
+        <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
           <HolderBanner />
           <Text style={styles.choiceTitle}>⚡ You call it</Text>
           <Text style={styles.choiceSubtitle}>Pick who takes the bomb</Text>
@@ -160,7 +162,7 @@ export default function BombFastestFingerScreen({ group, playerId }: Props) {
     }
 
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <HolderBanner />
         <Text style={styles.waitingBig}>
           {getPlayerName(chooserId)} is deciding who takes the bomb...
@@ -171,7 +173,7 @@ export default function BombFastestFingerScreen({ group, playerId }: Props) {
 
   // ── Normal question view ────────────────────────────────────────
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <HolderBanner />
 
       <View style={styles.header}>

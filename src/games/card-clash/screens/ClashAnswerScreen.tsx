@@ -16,10 +16,12 @@ import PileBar from "../components/PileBar";
 import { FoilFill } from "../components/Foil";
 import { CC, GOLD_FRAME, SERIF } from "../theme";
 import { haptics } from "../../../shared/haptics";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: ClashGameState; playerId: string };
 
 export default function ClashAnswerScreen({ group, gs, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const c = gs.called!;
   const { width: screenW } = useWindowDimensions();
   const isDefence = c.stage === "defence";
@@ -116,7 +118,7 @@ export default function ClashAnswerScreen({ group, gs, playerId }: Props) {
   const cardW = Math.min(380, screenW - 32);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <Text style={styles.round}>CLASH {gs.round}</Text>

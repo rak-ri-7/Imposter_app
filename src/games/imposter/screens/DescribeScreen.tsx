@@ -9,6 +9,7 @@ import {
 import { Group, ImposterGameState } from "../../../shared/types";
 import { useImposterGame } from "../logic/useImposterGame";
 import TimerBar from "../../../shared/components/TimerBar";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -16,6 +17,7 @@ type Props = {
 };
 
 export default function DescribeScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const {
     isHost,
     isImposter,
@@ -58,7 +60,7 @@ export default function DescribeScreen({ group, playerId }: Props) {
   const totalPlayers = players.length;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <View style={styles.header}>
         <Text style={styles.turnLabel}>TURN</Text>
         <Text style={styles.turnCount}>

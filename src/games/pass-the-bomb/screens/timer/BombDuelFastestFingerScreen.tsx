@@ -20,12 +20,14 @@ import {
 } from "../../logic/timer/duelFastestFinger";
 import { FAILSAFE_GRACE_MS, FAILSAFE_RETRY_MS } from "../../logic/timer/game";
 import DuelSpectatorQuiz from "./DuelSpectatorQuiz";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 type Props = { group: Group; playerId: string };
 
 export default function BombDuelFastestFingerScreen({
   group,
   playerId,
 }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const isHost = group.hostId === playerId;
   const isHolder = gameState.currentHolderId === playerId;
@@ -218,7 +220,7 @@ export default function BombDuelFastestFingerScreen({
   return (
     <ScrollView
       style={styles.scroll}
-      contentContainerStyle={styles.container}
+      contentContainerStyle={[styles.container, padBottom(styles.container, bottomInset)]}
     >
       <Text style={styles.duelBanner}>⚡ FASTEST FINGER DUEL</Text>
       <Text style={styles.hint}>{hint}</Text>

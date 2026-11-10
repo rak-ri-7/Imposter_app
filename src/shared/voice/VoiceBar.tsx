@@ -105,7 +105,7 @@ export default function VoiceBar() {
     return (
       <View style={[styles.wrap, { top: insets.top + 6 }]}>
         <View style={styles.errPill}>
-          <Text style={styles.errPillText} numberOfLines={2}>
+          <Text style={styles.errPillText} numberOfLines={3}>
             🎙️ {v.error ?? "Couldn't connect to voice."}
           </Text>
           <TouchableOpacity onPress={v.retry} hitSlop={8}>
@@ -285,7 +285,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: 10,
-    maxWidth: 320,
+    maxWidth: 340,
     backgroundColor: "#2A1236",
     borderRadius: 14,
     paddingVertical: 8,

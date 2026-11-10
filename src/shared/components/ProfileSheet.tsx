@@ -25,6 +25,7 @@ import { setPlayerAvatar, setPlayerName } from '../firebase/groups';
 import { saveAvatar, savePlayerName, saveSession } from '../utils/session';
 import { isMuted, setMuted } from '../audio/sounds';
 import { display } from '../theme/fonts';
+import { padBottom, useBottomInset } from "../hooks/useSafeBottom";
 
 type Props = {
     visible: boolean;
@@ -37,6 +38,7 @@ type Props = {
 };
 
 export default function ProfileSheet({ visible, onClose, group, playerId, realName, onSaveRealName, onLeave }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
     const me = group.players.find((p) => p.id === playerId) ?? group.benchedPlayers?.find((p) => p.id === playerId);
     const isHost = group.hostId === playerId;
     const [picking, setPicking] = useState(false);
@@ -107,7 +109,7 @@ export default function ProfileSheet({ visible, onClose, group, playerId, realNa
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
             <KeyboardAvoidingView style={styles.overlay} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
                 <Pressable style={styles.dismiss} onPress={onClose} />
-                <View style={styles.sheet}>
+                <View style={[styles.sheet, padBottom(styles.sheet, bottomInset)]}>
                     <View style={styles.handle} />
                     <View style={styles.header}>
                         <Text style={styles.title}>👤 You</Text>

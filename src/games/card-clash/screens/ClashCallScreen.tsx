@@ -44,6 +44,7 @@ import PileBar, { Rect } from "../components/PileBar";
 import FlyingCards, { Flight } from "../components/FlyingCards";
 import { CC, SERIF } from "../theme";
 import { haptics } from "../../../shared/haptics";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: ClashGameState; playerId: string };
 
@@ -53,6 +54,7 @@ const DRAW_DELAY = 350; // slide in, then flip
 const AUTO_SEND_EARLY_MS = 1500;
 
 export default function ClashCallScreen({ group, gs, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { width: screenW } = useWindowDimensions();
   const isCaller = gs.callerId === playerId;
   const myPile = gs.piles[playerId] ?? [];
@@ -245,7 +247,7 @@ export default function ClashCallScreen({ group, gs, playerId }: Props) {
   const cardW = Math.min(380, screenW - 32);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <Text style={styles.round}>

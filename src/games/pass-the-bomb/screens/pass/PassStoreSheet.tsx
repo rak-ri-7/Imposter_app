@@ -39,6 +39,7 @@ import {
   PRICE_AUDIT,
 } from "../../logic/pass/passGame";
 import PassLuckyCentre from "./PassLuckyCentre";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   visible: boolean;
@@ -68,6 +69,7 @@ export default function PassStoreSheet({
   group,
   playerId,
 }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gs = group.gameState as PassGameState;
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<{ text: string; ok: boolean } | null>(null);
@@ -144,7 +146,7 @@ export default function PassStoreSheet({
           activeOpacity={1}
           onPress={onClose}
         />
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, padBottom(styles.sheet, bottomInset)]}>
           <View style={styles.header}>
             <Text style={styles.title}>
               {STORE.icon} The {STORE.name}

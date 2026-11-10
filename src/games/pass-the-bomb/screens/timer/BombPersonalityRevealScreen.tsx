@@ -5,10 +5,12 @@ import {
   playSound,
   pickRevealSound,
 } from "../../../../shared/sounds/soundManager";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; playerId: string };
 
 export default function BombPersonalityRevealScreen({ group }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const [scaleAnim] = useState(new Animated.Value(0.6));
   const [fadeAnim] = useState(new Animated.Value(0));
@@ -31,7 +33,7 @@ export default function BombPersonalityRevealScreen({ group }: Props) {
   }, []);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <Animated.View
         style={{
           opacity: fadeAnim,

@@ -19,10 +19,12 @@ import {
   closeTrialByCombat,
   decideDuelFastestFinger,
 } from "../../logic/timer/duelFastestFinger";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; playerId: string };
 
 export default function BombTbcDuelScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const isHost = group.hostId === playerId;
   const challenge = gameState.tbcChallenge;
@@ -217,7 +219,7 @@ export default function BombTbcDuelScreen({ group, playerId }: Props) {
     const iWon = winnerId === playerId;
 
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <Text style={styles.duelBanner}>⚔️ TRIAL BY COMBAT — DECIDED</Text>
         <Text style={styles.resultEmoji}>
           {iLost ? "💥" : iWon ? "🏆" : "⚔️"}
@@ -254,7 +256,7 @@ export default function BombTbcDuelScreen({ group, playerId }: Props) {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <Text style={styles.duelBanner}>⚔️ TRIAL BY COMBAT</Text>
       <Text style={styles.hint}>{hint}</Text>
 

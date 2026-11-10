@@ -18,6 +18,7 @@ import { doubleMoneyActive } from "../logic/board";
 import { MoneyStrip, RetroButton, RoundOutcome } from "../components";
 import { QB, bevel, digitText, displayText } from "../theme";
 import { haptics } from "../../../shared/haptics";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; playerId: string; ctx: QuizBoardCtx };
 
@@ -25,6 +26,7 @@ const GAP = 4;
 const SIDE = 10;
 
 export default function QuizBoardScreen({ group, playerId, ctx }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { gs, isHost, canPick, nameOf, lastRound } = ctx;
   const { width } = useWindowDimensions();
   const [busy, setBusy] = useState(false);
@@ -62,7 +64,7 @@ export default function QuizBoardScreen({ group, playerId, ctx }: Props) {
     );
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <View style={styles.header}>
         <Text style={displayText(myPick ? 22 : 16, myPick ? QB.gold : QB.white)}>
           {myPick ? "Your pick!" : `${nameOf(gs.pickerId)} is picking`}

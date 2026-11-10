@@ -2,6 +2,7 @@
 // a header row (question number on the left, the timer on the right).
 import type { ReactNode } from "react";
 import { View, Text, ScrollView, StyleSheet } from "react-native";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 import { HAND, MF } from "../theme";
 
 type Props = {
@@ -15,6 +16,9 @@ type Props = {
 
 export default function Paper({ kicker, right, urgent, children, footer, scroll = true }: Props) {
   const body = <View style={styles.body}>{children}</View>;
+  // Keep the last thing on the page clear of the phone's bottom bar
+  const bottomInset = useBottomInset();
+  const tail = footer ? 0 : bottomInset;
   return (
     <View style={styles.sheet}>
       <View style={styles.margin} pointerEvents="none" />
@@ -23,13 +27,13 @@ export default function Paper({ kicker, right, urgent, children, footer, scroll 
         {right ? <Text style={[styles.timer, urgent && { color: MF.wrong }]}>{right}</Text> : null}
       </View>
       {scroll ? (
-        <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+        <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.scroll, { paddingBottom: 24 + tail }]} keyboardShouldPersistTaps="handled">
           {body}
         </ScrollView>
       ) : (
-        <View style={{ flex: 1 }}>{body}</View>
+        <View style={{ flex: 1, paddingBottom: tail }}>{body}</View>
       )}
-      {footer ? <View style={styles.footer}>{footer}</View> : null}
+      {footer ? <View style={[styles.footer, padBottom(styles.footer, bottomInset)]}>{footer}</View> : null}
     </View>
   );
 }

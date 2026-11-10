@@ -12,6 +12,7 @@ import { games } from "../../games/registry";
 import type { GameType } from "../types";
 import StepSlides from "./StepSlides";
 import { display, displaySemi } from "../theme/fonts";
+import { padBottom, useBottomInset } from "../hooks/useSafeBottom";
 
 export type HowToTheme = {
   text: string;   // the hook line
@@ -35,6 +36,7 @@ type Props = {
 };
 
 export default function HowToPlay({ game, theme: t, hook, details, detailsTitle = "ALL THE DETAILS", center, children }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const [open, setOpen] = useState(false);
   const def = games.find((g) => g.id === game);
   const line = hook ?? def?.hook;
@@ -50,7 +52,7 @@ export default function HowToPlay({ game, theme: t, hook, details, detailsTitle 
       <Modal visible={open} transparent animationType="slide" onRequestClose={() => setOpen(false)}>
         <View style={styles.overlay}>
           <Pressable style={{ flex: 1, minHeight: 80 }} onPress={() => setOpen(false)} />
-          <View style={[styles.sheet, { backgroundColor: t.sheet }]}>
+          <View style={[styles.sheet, { backgroundColor: t.sheet }, padBottom(styles.sheet, bottomInset)]}>
             <View style={styles.handle} />
             <View style={styles.header}>
               <Text style={[styles.title, { color: t.sheetText }]}>

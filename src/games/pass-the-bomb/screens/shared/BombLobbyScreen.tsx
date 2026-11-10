@@ -33,6 +33,7 @@ import {
 } from "../../logic/pass/passGame";
 import PixelAvatar from "../../../../shared/avatars/PixelAvatar";
 import { avatarIdFor } from "../../../../shared/avatars/sprites";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type GameMode = "timer" | "pass";
 
@@ -62,6 +63,7 @@ type Props = {
 };
 
 export default function BombLobbyScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const [gameMode, setGameMode] = useState<GameMode | null>(null); // nothing pre-selected
   const [passStackText, setPassStackText] = useState(
     String(PASS_STACK_DEFAULT),
@@ -265,7 +267,7 @@ export default function BombLobbyScreen({ group, playerId }: Props) {
   );
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <BombCollectionModal
         group={group}
         visible={showCollection}

@@ -16,6 +16,7 @@ import {
 } from "../../../../shared/sounds/soundManager";
 import { beginGhostTournament } from "../../logic/timer/ghostTournament";
 import { hpDudLine } from "../../logic/timer/hotPotatoDuel";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -23,6 +24,7 @@ type Props = {
 };
 
 export default function BombExplodedScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const isHost = group.hostId === playerId;
   const [scaleAnim] = useState(new Animated.Value(0));
@@ -79,7 +81,7 @@ export default function BombExplodedScreen({ group, playerId }: Props) {
     }
   }, []);
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <Animated.View
         style={[
           styles.content,

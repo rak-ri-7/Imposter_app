@@ -11,6 +11,7 @@ import { Group, PassGameState } from "../../../../shared/types";
 import { sideOf, walletOf, CURRENCY } from "../../logic/pass/passGame";
 import { LUCKY } from "../../logic/pass/passPerks";
 import PassLuckyCentre from "./PassLuckyCentre";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   visible: boolean;
@@ -27,6 +28,7 @@ export default function PassLuckySheet({
   group,
   playerId,
 }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gs = group.gameState as PassGameState;
   const funds = walletOf(gs, sideOf(gs, playerId));
 
@@ -40,7 +42,7 @@ export default function PassLuckySheet({
       <View style={styles.backdrop}>
         {/* Tap outside to close — a sibling, not a parent, so it can't steal scrolls. */}
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} />
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, padBottom(styles.sheet, bottomInset)]}>
           <View style={styles.header}>
             <Text style={styles.title}>
               {LUCKY.icon} {LUCKY.name}

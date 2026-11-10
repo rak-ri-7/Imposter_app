@@ -33,6 +33,7 @@ import {
   pickGhostPresenceSound,
   stopSound,
 } from "../../../../shared/sounds/soundManager";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -181,6 +182,7 @@ function TypewriterText({ text, style }: { text: string; style?: any }) {
 }
 
 export default function BombPanicScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const isHolder = gameState.currentHolderId === playerId;
   const isHost = group.hostId === playerId;
@@ -610,6 +612,7 @@ export default function BombPanicScreen({ group, playerId }: Props) {
     <Animated.View
       style={[
         styles.container,
+        padBottom(styles.container, bottomInset),
         {
           backgroundColor: flashAnim.interpolate({
             inputRange: [0, 1],

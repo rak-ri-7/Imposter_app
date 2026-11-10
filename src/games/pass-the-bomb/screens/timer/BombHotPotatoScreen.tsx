@@ -22,6 +22,7 @@ import {
   HpMood,
 } from "../../logic/timer/hotPotatoDuel";
 import { FAILSAFE_GRACE_MS, FAILSAFE_RETRY_MS } from "../../logic/timer/game";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -72,6 +73,7 @@ export default function BombHotPotatoScreen({
   subtitle = "Final duel · no clock, no wires",
   watchText,
 }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const isHost = group.hostId === playerId;
   const nameOf = (id?: string) =>
@@ -262,7 +264,7 @@ export default function BombHotPotatoScreen({
     !isHolder && !!holderId && !lazy && hpOutOfPasses(gameState, holderId);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <Text style={styles.banner}>{title}</Text>
       <Text style={styles.sub}>{subtitle}</Text>
 

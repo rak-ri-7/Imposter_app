@@ -6,10 +6,12 @@ import { rankMedal } from "../../../shared/utils/ranking";
 import { CLASH_CAP, MIN_CLASHES_FOR_ALL, clashStandings, clashesPlayed, finishCardClash, hostCalledTime } from "../logic/game";
 import { CC, SERIF } from "../theme";
 import { EndPodium, podiumEntries } from "../../../shared/components/WinnerPodium";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: ClashGameState; playerId: string };
 
 export default function ClashOverScreen({ group, gs, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const isHost = group.hostId === playerId;
   const [busy, setBusy] = useState(false);
   const rows = clashStandings(gs, group.players);
@@ -21,7 +23,7 @@ export default function ClashOverScreen({ group, gs, playerId }: Props) {
 
   const podium = podiumEntries(rows, group.players, (r) => (r.cards > 0 ? `${r.cards} cards` : `out in clash ${r.outRound ?? "?"}`));
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={[styles.content, padBottom(styles.content, bottomInset)]}>
       <EndPodium id={`${group.id}:clash:${rows.map((r) => r.playerId + r.cards).join(",")}:${played}`} subtitle="CARD STATS CALLOUT · FINAL" entries={podium} />
       <Text style={styles.trophy}>🏆</Text>
       <Text style={styles.title}>

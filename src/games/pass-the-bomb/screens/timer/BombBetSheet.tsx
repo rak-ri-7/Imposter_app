@@ -19,6 +19,7 @@ import {
   BET_CHARGES_PER_TICKET,
 } from "../../data/betOdds";
 import { placeMatchBet } from "../../logic/timer/betEngine";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -216,9 +217,10 @@ export default function BombBetSheet({
         : "No pass. No seat.";
 
   const profitNow = Math.floor(stakeNow * (multiplier ?? 1) + 1e-9) - stakeNow;
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       {/* the bulb over the door */}
       <View pointerEvents="none" style={styles.glow} />
 

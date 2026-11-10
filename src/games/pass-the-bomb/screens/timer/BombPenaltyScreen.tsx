@@ -19,6 +19,7 @@ import {
   explosionSoundForRound,
   pickDefuseSound,
 } from "../../../../shared/sounds/soundManager";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -26,6 +27,7 @@ type Props = {
 };
 
 export default function BombPenaltyScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const isHost = group.hostId === playerId;
   const isAccused = gameState.penaltyPlayerId === playerId;
@@ -114,7 +116,7 @@ export default function BombPenaltyScreen({ group, playerId }: Props) {
   // gameState.tbcChallenge) — this screen has nothing left to show.
   if (tbcInProgress) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <Text style={styles.verdictTag}>⚔️ TRIAL BY COMBAT</Text>
         <Text style={styles.waitingText}>Preparing the duel...</Text>
       </View>
@@ -124,7 +126,7 @@ export default function BombPenaltyScreen({ group, playerId }: Props) {
   if (resolved) {
     const caught = gameState.penaltyResult === "caught";
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <Text style={styles.resultEmoji}>{caught ? "💥" : "🧯"}</Text>
         <Text
           style={[
@@ -164,7 +166,7 @@ export default function BombPenaltyScreen({ group, playerId }: Props) {
   // ── Opponent picker sub-view ─────────────────────────────────────
   if (showOpponentPicker) {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <Text style={styles.verdictTag}>⚔️ CHOOSE YOUR OPPONENT</Text>
         <Text style={styles.subtitle}>
           Pick one of the players who voted you guilty
@@ -199,15 +201,13 @@ export default function BombPenaltyScreen({ group, playerId }: Props) {
 
   return (
     <Animated.View
-      style={[
-        styles.container,
+      style={[styles.container,
         {
           backgroundColor: flashAnim.interpolate({
             inputRange: [0, 1],
             outputRange: ["#0D0D0D", "#2A0000"],
           }),
-        },
-      ]}
+        }, padBottom(styles.container, bottomInset)]}
     >
       <Text style={styles.verdictTag}>🔨 GUILTY VERDICT</Text>
       <Text style={styles.title}>⚡ Emergency Defusal</Text>

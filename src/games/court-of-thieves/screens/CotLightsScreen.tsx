@@ -6,6 +6,7 @@ import type { CotGameState, Group } from "../../../shared/types";
 import Room from "../components/Room";
 import { CT, rupees } from "../theme";
 import { useServerNow } from "../../../shared/hooks/useServerNow";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: CotGameState; playerId: string };
 
@@ -20,9 +21,10 @@ export default function CotLightsScreen({ group, gs, playerId }: Props) {
   const deltas: Record<string, number> = {};
   for (const id of gs.seats) deltas[id] = (last?.after[id] ?? 0) - (last?.before[id] ?? 0);
   const changed = gs.seats.filter((id) => deltas[id] !== 0);
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
 
   return (
-    <ScrollView style={{ flex: 1, backgroundColor: CT.lit }} contentContainerStyle={styles.content}>
+    <ScrollView style={{ flex: 1, backgroundColor: CT.lit }} contentContainerStyle={[styles.content, padBottom(styles.content, bottomInset)]}>
       <Text style={styles.title}>💡 Lights on!</Text>
       <View style={styles.pill}>
         <Text style={styles.pillText}>

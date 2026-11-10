@@ -9,6 +9,7 @@ import {
   restorableDuelLife,
   restoreDuelLife,
 } from "../../logic/timer/game";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -18,6 +19,7 @@ type Props = {
 };
 
 export default function DuelRestoreBar({ group, playerId, droppedDuringDuel }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gs = group.gameState as BombGameState;
   const nameOf = (id: string) =>
     group.players.find((p) => p.id === id)?.name ?? "A player";
@@ -25,7 +27,7 @@ export default function DuelRestoreBar({ group, playerId, droppedDuringDuel }: P
   // Already restored this round: tell everyone who did it.
   if (gs.lifeRestored && gs.lifeRestored.round === gs.roundNumber) {
     return (
-      <View style={styles.bar}>
+      <View style={[styles.bar, { marginBottom: 10 + bottomInset }]}>
         <Text style={styles.text}>
           💚 {nameOf(gs.lifeRestored.playerId)}'s life was restored by{" "}
           {gs.lifeRestored.byPlayerId === playerId
@@ -53,7 +55,7 @@ export default function DuelRestoreBar({ group, playerId, droppedDuringDuel }: P
     );
 
   return (
-    <View style={styles.bar}>
+    <View style={[styles.bar, { marginBottom: 10 + bottomInset }]}>
       <Text style={styles.text}>
         📶 {droppedNames} lost connection during the duel
       </Text>

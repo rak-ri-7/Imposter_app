@@ -42,6 +42,7 @@ import PassPerkNews from "./PassPerkNews";
 import { LUCKY, ticketsAllowed } from "../../logic/pass/passPerks";
 import PassLuckySheet from "./PassLuckySheet";
 import { playSound } from "../../../../shared/sounds/soundManager";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 // Set this to one of your existing "wrong answer" sound keys.
 const WRONG_SOUND = "wrong-answer";
@@ -50,6 +51,7 @@ const RIGHT_SOUND = "right-answer";
 type Props = { group: Group; playerId: string };
 
 export default function PassPlayScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gs = group.gameState as PassGameState;
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
@@ -588,7 +590,7 @@ export default function PassPlayScreen({ group, playerId }: Props) {
   }
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <View style={styles.headerRow}>
         <Text style={styles.round}>
           ROUND {gs.round}

@@ -22,6 +22,7 @@ import { sessionTeamSides } from "../../../shared/utils/teams";
 import { RetroButton } from "../components";
 import { QB, bevel, displayText } from "../theme";
 import HowToPlay from "../../../shared/components/HowToPlay";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; playerId: string };
 
@@ -47,6 +48,7 @@ const RULES: Record<QuizBoardMode, string[]> = {
 };
 
 export default function QuizLobbyScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const isHost = group.hostId === playerId;
   const [mode, setMode] = useState<QuizBoardMode>("options");
   const [size, setSize] = useState<QuizBoardSize>("full");
@@ -121,7 +123,7 @@ export default function QuizLobbyScreen({ group, playerId }: Props) {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <ScrollView contentContainerStyle={styles.scroll}>
         <View style={styles.marquee}>
           <Text style={displayText(40, QB.gold)}>Quiz Board</Text>

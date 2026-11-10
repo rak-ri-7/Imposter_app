@@ -12,6 +12,7 @@ import { useTimerGame } from "../logic/useTimerGame";
 import { useRunningDistractions } from "../hooks/useRunningDistractions";
 import DistractionOverlay from "../components/DistractionOverlay";
 import { useAmbientSounds } from "../hooks/useAmbientSounds";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -19,6 +20,7 @@ type Props = {
 };
 
 export default function TimerRunningScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { hasStopped, handleStop, gameState, timerStartMs } = useTimerGame(group, playerId);
   const [pulseAnim] = useState(new Animated.Value(1));
   const stoppedCount = Object.keys(gameState?.stops ?? {}).length;
@@ -56,7 +58,7 @@ export default function TimerRunningScreen({ group, playerId }: Props) {
   });
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       {!hasStopped ? (
         <>
           <Text style={styles.tapHint}>

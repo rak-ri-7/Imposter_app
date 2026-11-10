@@ -9,6 +9,7 @@ import { MENU_THEMES, type MenuTheme } from "../themes/menuThemes";
 import { setGroupTheme } from "../firebase/groups";
 import { sendChatMessage } from "../firebase/chat";
 import { display } from "../theme/fonts";
+import { padBottom, useBottomInset } from "../hooks/useSafeBottom";
 
 type Props = { visible: boolean; onClose: () => void; group: Group; playerId: string };
 
@@ -64,6 +65,7 @@ const Preview = memo(function Preview({ theme, w, h, showArt }: { theme: MenuThe
 });
 
 export default function ThemeSheet({ visible, onClose, group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { width } = useWindowDimensions();
   const cols = 3;
   const tileW = Math.floor((Math.min(width, 520) - 32 - (cols - 1) * 10) / cols);
@@ -94,7 +96,7 @@ export default function ThemeSheet({ visible, onClose, group, playerId }: Props)
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
       <View style={styles.overlay}>
         <Pressable style={{ flex: 1, minHeight: 60 }} onPress={onClose} />
-        <View style={styles.sheet}>
+        <View style={[styles.sheet, padBottom(styles.sheet, bottomInset)]}>
           <View style={styles.handle} />
           <View style={styles.header}>
             <View style={{ flex: 1 }}>

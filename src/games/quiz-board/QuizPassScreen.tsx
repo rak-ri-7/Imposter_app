@@ -29,6 +29,7 @@ import { QB, bevel, digitText, displayText } from "./theme";
 import { addLocalPoints, useLocalPlayers } from "../../shared/passPhone/useLocalPlayers";
 import HandOff from "../../shared/passPhone/HandOff";
 import { EndPodium, type PodiumEntry } from "../../shared/components/WinnerPodium";
+import { padBottom, useBottomInset } from "../../shared/hooks/useSafeBottom";
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, "QuizPass"> };
 
@@ -41,6 +42,7 @@ const GAP = 4;
 const SIDE = 10;
 
 export default function QuizPassScreen({ navigation }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const players = useLocalPlayers();
   const { width } = useWindowDimensions();
   const [phase, setPhase] = useState<Phase>("setup");
@@ -168,7 +170,7 @@ export default function QuizPassScreen({ navigation }: Props) {
         return [...kept, c];
       });
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <ScrollView contentContainerStyle={styles.pad}>
           <View style={styles.marquee}>
             <Text style={displayText(36, QB.gold)}>Quiz Board</Text>
@@ -260,7 +262,7 @@ export default function QuizPassScreen({ navigation }: Props) {
     const double = doubleMoneyActive(tiles, size);
     const left = tiles.filter((t) => !t.used).length;
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <View style={styles.header}>
           <Text style={displayText(22, QB.gold)}>{picker} picks!</Text>
           <Text style={styles.hint}>Pick a tile, then hand the phone to the quizmaster</Text>
@@ -321,7 +323,7 @@ export default function QuizPassScreen({ navigation }: Props) {
     const max = goldenMaxWager(size, live.double);
     const options = [...new Set([GOLDEN_MIN_WAGER, Math.round(max / 2 / 500) * 500, max])];
     return (
-      <View style={[styles.container, styles.pad, { justifyContent: "center", gap: 14 }]}>
+      <View style={[styles.container, styles.pad, { justifyContent: "center", gap: 14 }, padBottom(styles.container, bottomInset)]}>
         <Text style={[displayText(30, QB.gold), { textAlign: "center" }]}>🌟 Golden tile!</Text>
         <Text style={[styles.rule, { textAlign: "center" }]}>
           {picker} bets before hearing the question, then answers alone. Right wins the bet, wrong loses it.
@@ -377,7 +379,7 @@ export default function QuizPassScreen({ navigation }: Props) {
     const tile = tiles[live.tileIndex];
     const leftMs = Math.max(0, endsAt - now);
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <View style={[styles.pad, { flex: 1, gap: 14 }]}>
           <Text style={displayText(14, QB.dim)}>
             {QUIZ_CATEGORIES[tile.category].emoji} {QUIZ_CATEGORIES[tile.category].label} · {formatRupees(live.value)}
@@ -420,7 +422,7 @@ export default function QuizPassScreen({ navigation }: Props) {
       });
     const who = live.isGolden ? [picker] : players;
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <ScrollView contentContainerStyle={[styles.pad, { gap: 12 }]}>
           <Text style={[displayText(14, QB.dim), { textAlign: "center" }]}>{live.prompt}</Text>
           <View style={styles.answerBox}>
@@ -458,7 +460,7 @@ export default function QuizPassScreen({ navigation }: Props) {
   const rows = standings();
   const podium: PodiumEntry[] = rounds > 0 ? rows.filter((r) => r.rank <= 3).map((r) => ({ id: r.name, name: r.name, rank: r.rank, score: formatRupees(r.money) })) : [];
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <EndPodium id={`quiz-pass:${runId}:${rows.map((r) => r.name + r.money).join(",")}`} subtitle="QUIZ BOARD · FINAL" entries={podium} />
       <ScrollView contentContainerStyle={[styles.pad, { gap: 8 }]}>
         <View style={styles.marquee}>

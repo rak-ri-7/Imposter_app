@@ -24,20 +24,22 @@ export default {
       const auth = request.headers.get("Authorization") || "";
       const idToken = auth.startsWith("Bearer ") ? auth.slice(7) : "";
       const user = await verifyFirebaseToken(idToken, env.FIREBASE_PROJECT_ID);
-      if (!user) return json({ error: "unauthenticated" }, 401);
+      if (!user) return fail("unauthenticated", 401, idToken ? "sign-in token not accepted" : "no sign-in token");
 
       // 2. Are they in this group?
       const body = await request.json().catch(() => ({}));
       const groupId = typeof body.groupId === "string" ? body.groupId : "";
-      if (!/^[A-Za-z0-9_-]{1,64}$/.test(groupId)) return json({ error: "invalid-argument" }, 400);
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(groupId)) return fail("invalid-argument", 400, `bad group id`);
       const group = await readGroup(env.FIREBASE_PROJECT_ID, groupId, idToken);
-      if (!group) return json({ error: "not-found" }, 404);
+      if (!group) return fail("not-found", 404, `group ${groupId} not found`);
       const me = group.players.find((p) => p.id === user.uid);
-      if (!me) return json({ error: "permission-denied" }, 403);
+      if (!me) return fail("permission-denied", 403, `player not in group ${groupId}`);
 
       // 3. The pass
       const room = `group-${groupId}`;
-      const token = await signLiveKitToken(env.LIVEKIT_API_KEY, env.LIVEKIT_API_SECRET, {
+      const apiKey = cleanSecret(env.LIVEKIT_API_KEY, "LIVEKIT_API_KEY");
+      const apiSecret = cleanSecret(env.LIVEKIT_API_SECRET, "LIVEKIT_API_SECRET");
+      const token = await signLiveKitToken(apiKey, apiSecret, {
         identity: user.uid,
         name: (me.name || "Player").slice(0, 40),
         metadata: JSON.stringify({ avatar: me.avatar ?? null }),
@@ -45,13 +47,25 @@ export default {
       });
       return json({ url: env.LIVEKIT_URL, room, token });
     } catch (e) {
-      return json({ error: "internal" }, 500);
+      return fail("internal", 500);
     }
   },
 };
 
+// A refusal: a short code the app turns into a friendly message.
+const fail = (code, status) => json({ error: code }, status);
+
 const json = (data, status = 200) =>
   new Response(JSON.stringify(data), { status, headers: { "Content-Type": "application/json", "Cache-Control": "no-store" } });
+
+// Forgive common paste slips: spaces/new lines, quotes, or the whole
+// "LIVEKIT_API_SECRET=..." line pasted instead of just the value.
+function cleanSecret(raw, name) {
+  let v = String(raw ?? "").trim();
+  if (v.startsWith(`${name}=`)) v = v.slice(name.length + 1).trim();
+  v = v.replace(/^["']|["']$/g, "");
+  return v;
+}
 
 // ── base64url helpers ────────────────────────────────────────────────────
 const enc = new TextEncoder();
@@ -72,7 +86,7 @@ let jwksCache = { keys: null, until: 0 };
 async function googleKeys() {
   if (jwksCache.keys && Date.now() < jwksCache.until) return jwksCache.keys;
   const res = await fetch(GOOGLE_JWKS);
-  if (!res.ok) throw new Error("jwks");
+  if (!res.ok) throw new Error(`fetching Google's sign-in keys failed (${res.status})`);
   const { keys } = await res.json();
   const maxAge = Number((res.headers.get("Cache-Control") || "").match(/max-age=(\d+)/)?.[1] || 3600);
   jwksCache = { keys, until: Date.now() + Math.min(maxAge, 6 * 3600) * 1000 };
@@ -109,7 +123,7 @@ async function readGroup(projectId, groupId, idToken) {
   const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/groups/${groupId}`;
   const res = await fetch(url, { headers: { Authorization: `Bearer ${idToken}` } });
   if (res.status === 404) return null;
-  if (!res.ok) throw new Error(`firestore ${res.status}`);
+  if (!res.ok) throw new Error(`reading the group from Firestore failed (${res.status}): ${(await res.text()).slice(0, 80)}`);
   const doc = await res.json();
   const values = doc.fields?.players?.arrayValue?.values || [];
   const players = values.map((v) => {
@@ -121,7 +135,8 @@ async function readGroup(projectId, groupId, idToken) {
 
 // ── 3. LiveKit pass (an HS256-signed JWT in LiveKit's format) ────────────
 async function signLiveKitToken(apiKey, apiSecret, { identity, name, metadata, room }) {
-  if (!apiKey || !apiSecret) throw new Error("missing LiveKit secrets");
+  if (!apiKey) throw new Error("LIVEKIT_API_KEY secret is not set");
+  if (!apiSecret) throw new Error("LIVEKIT_API_SECRET secret is not set");
   const now = Math.floor(Date.now() / 1000);
   const header = { alg: "HS256", typ: "JWT" };
   const claims = {

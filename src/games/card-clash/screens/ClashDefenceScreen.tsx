@@ -12,6 +12,7 @@ import ClashCardView, { MiniCard } from "../components/ClashCardView";
 import PileBar from "../components/PileBar";
 import { FoilFill } from "../components/Foil";
 import { CC, GOLD_FRAME, SERIF } from "../theme";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: ClashGameState; playerId: string };
 
@@ -20,6 +21,7 @@ type Props = { group: Group; gs: ClashGameState; playerId: string };
 const AUTO_SEND_EARLY_MS = 1500;
 
 export default function ClashDefenceScreen({ group, gs, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const d = gs.defence!;
   const { width: screenW } = useWindowDimensions();
   const isDefender = d.defenderId === playerId;
@@ -74,7 +76,7 @@ export default function ClashDefenceScreen({ group, gs, playerId }: Props) {
   const bigW = Math.min(380, screenW - 32);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <ScrollView contentContainerStyle={styles.content}>
         <View style={styles.header}>
           <Text style={styles.round}>CLASH {gs.round}</Text>

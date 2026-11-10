@@ -7,10 +7,12 @@ import type { CotGameState, Group } from "../../../shared/types";
 import { ROLE_INFO, total } from "../logic/engine";
 import { CT, rupees, seatColor } from "../theme";
 import { useServerNow } from "../../../shared/hooks/useServerNow";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: CotGameState; playerId: string };
 
 export default function CotRoleScreen({ gs, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const now = useServerNow(250);
   const [hidden, setHidden] = useState(false);
   const role = gs.roles[playerId];
@@ -19,7 +21,7 @@ export default function CotRoleScreen({ gs, playerId }: Props) {
   const col = seatColor(gs.seats, playerId);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <Text style={styles.round}>
         Round {gs.round} of {gs.roundsTotal}
       </Text>

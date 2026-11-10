@@ -11,6 +11,7 @@ import { POSTER_BY_GAME } from '../assets/posters';
 import { sendChatMessage } from '../firebase/chat';
 import StepSlides from './StepSlides';
 import { display } from '../theme/fonts';
+import { padBottom, useBottomInset } from "../hooks/useSafeBottom";
 
 type Props = {
     game: GameDefinition | null;
@@ -21,6 +22,7 @@ type Props = {
 };
 
 export default function GameInfoSheet({ game, onClose, group, playerId, onPlay }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
     const [asked, setAsked] = useState<string | null>(null);
     if (!game) return null;
     const isHost = group.hostId === playerId;
@@ -49,7 +51,7 @@ export default function GameInfoSheet({ game, onClose, group, playerId, onPlay }
         <Modal visible transparent animationType="slide" onRequestClose={onClose}>
             <View style={styles.overlay}>
                 <Pressable style={styles.dismiss} onPress={onClose} />
-                <View style={styles.sheet}>
+                <View style={[styles.sheet, padBottom(styles.sheet, bottomInset)]}>
                     <ScrollView bounces={false} contentContainerStyle={{ paddingBottom: 12 }}>
                         <View style={styles.banner}>
                             {poster ? (

@@ -17,6 +17,7 @@ import { ACHIEVEMENTS, AchievementId, rewardText } from "../../data/achievements
 import BombBetSheet, { betPickLabel } from "./BombBetSheet";
 import { settleBets } from "../../logic/timer/betEngine";
 import { liarOffset } from "../../logic/timer/liarClock";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -61,6 +62,7 @@ const verdictInfo = (
 };
 
 export default function BombReplayScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const isHost = group.hostId === playerId;
   const [fadeAnim] = useState(new Animated.Value(0));
@@ -227,7 +229,7 @@ export default function BombReplayScreen({ group, playerId }: Props) {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <View style={styles.headerRow}>
         <Text style={[styles.title, achCount === 0 && styles.titleTwoIcons]}>
           🎬 Round {gameState.roundNumber} Replay

@@ -14,6 +14,7 @@ import PixelAvatar from "../avatars/PixelAvatar";
 import { playSound, stopSound } from "../audio/sounds";
 import { haptics } from "../haptics";
 import { display, displaySemi } from "../theme/fonts";
+import { padBottom, useBottomInset } from "../hooks/useSafeBottom";
 
 export type PodiumMember = { id: string; name: string; avatar?: string | null };
 export type PodiumEntry = {
@@ -69,6 +70,7 @@ const clampIn = (clock: Animated.Value, a: number, b: number, from = 0, to = 1, 
   clock.interpolate({ inputRange: [a, b], outputRange: [from, to], extrapolate: "clamp", easing });
 
 export default function WinnerPodium({ visible, title, subtitle, entries, onDone, doneLabel = "See full results →" }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { width, height } = useWindowDimensions();
   const clock = useRef(new Animated.Value(0)).current;
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
@@ -129,7 +131,7 @@ export default function WinnerPodium({ visible, title, subtitle, entries, onDone
   const stepW = Math.min(118, Math.floor((width - gutter * 2 - 16) / 3));
   const centreX = width / 2;
   const xFor = { 1: centreX - stepW / 2, 2: centreX - stepW * 1.5 - 8, 3: centreX + stepW / 2 + 8 } as const;
-  const floor = 112; // podium bottom, above the button
+  const floor = 112 + bottomInset; // podium bottom, above the button
 
   // Confetti: one burst from the winner's step, two cannons from the sides.
   const confetti = useMemo(() => {
@@ -282,7 +284,7 @@ export default function WinnerPodium({ visible, title, subtitle, entries, onDone
           );
         })}
 
-        <Animated.View style={[styles.btnWrap, { opacity: clampIn(clock, BUTTON_AT, BUTTON_AT + 400) }]}>
+        <Animated.View style={[styles.btnWrap, { bottom: 40 + bottomInset }, { opacity: clampIn(clock, BUTTON_AT, BUTTON_AT + 400) }]}>
           <TouchableOpacity style={styles.btn} onPress={onDone} accessibilityRole="button">
             <Text style={styles.btnText}>{doneLabel}</Text>
           </TouchableOpacity>

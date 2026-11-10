@@ -14,6 +14,7 @@ import { startTimerGame } from "../logic/game";
 import HowToPlay from "../../../shared/components/HowToPlay";
 import PixelAvatar from "../../../shared/avatars/PixelAvatar";
 import { avatarIdFor } from "../../../shared/avatars/sprites";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -21,6 +22,7 @@ type Props = {
 };
 
 export default function TimerLobbyScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { isHost, loading } = useTimerGame(group, playerId);
   // Teams set up in the game menu? The host can play this as teams.
   const teams = sessionTeamSides(group);
@@ -35,7 +37,7 @@ export default function TimerLobbyScreen({ group, playerId }: Props) {
   };
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <Text style={styles.title}>⏱️ Stop the Timer</Text>
       <Text style={styles.subtitle}>Mental math + timing challenge</Text>
 

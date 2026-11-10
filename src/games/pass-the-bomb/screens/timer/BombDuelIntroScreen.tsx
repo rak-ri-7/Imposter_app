@@ -13,6 +13,7 @@ import { Group, BombGameState } from "../../../../shared/types";
 import { markDuelReady, setDuelMode, startDuel } from "../../logic/timer/game";
 import DuelBetCard from "./DuelBetCard";
 import { DuelAnnounceToast, HotPotatoMoodsToast } from "./DuelToasts";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -55,6 +56,7 @@ const DUEL_RULES: Record<DuelMode, { title: string; lines: string[] }> = {
 };
 
 export default function BombDuelIntroScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const activePlayers = group.players.filter(
     (p) => !gameState.ghosts.includes(p.id),
@@ -165,7 +167,7 @@ export default function BombDuelIntroScreen({ group, playerId }: Props) {
     {toast === "moods" && <HotPotatoMoodsToast onClose={() => setToast(null)} />}
     <ScrollView
       style={styles.scroll}
-      contentContainerStyle={styles.container}
+      contentContainerStyle={[styles.container, padBottom(styles.container, bottomInset)]}
     >
       <Animated.View
         style={[

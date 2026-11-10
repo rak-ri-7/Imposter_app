@@ -18,6 +18,7 @@ import DistractionOverlay from "./components/DistractionOverlay";
 import HandOff from "../../shared/passPhone/HandOff";
 import { addLocalPoints, rotate, useLocalPlayers } from "../../shared/passPhone/useLocalPlayers";
 import { EndPodium, type PodiumEntry } from "../../shared/components/WinnerPodium";
+import { padBottom, useBottomInset } from "../../shared/hooks/useSafeBottom";
 
 type Props = { navigation: NativeStackNavigationProp<RootStackParamList, "TimerPass"> };
 
@@ -55,6 +56,7 @@ const medal = (place: number, missed: boolean) =>
   missed ? "—" : place === 1 ? "🥇" : place === 2 ? "🥈" : place === 3 ? "🥉" : `${place}.`;
 
 export default function TimerPassScreen({ navigation }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const players = useLocalPlayers();
   const [phase, setPhase] = useState<Phase>("intro");
   const [distractions, setDistractions] = useState(true);
@@ -206,7 +208,7 @@ export default function TimerPassScreen({ navigation }: Props) {
   // ── Intro ─────────────────────────────────────────────────────────
   if (phase === "intro") {
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <ScrollView contentContainerStyle={styles.scroll}>
           <Text style={styles.title}>⏱️ Stop the Timer</Text>
           <Text style={styles.subtitle}>Pass the phone · {players.length} players</Text>
@@ -263,7 +265,7 @@ export default function TimerPassScreen({ navigation }: Props) {
     const size = text.length <= 20 ? 48 : text.length <= 45 ? 34 : text.length <= 80 ? 26 : 22;
     const color = { easy: "#4CAF50", medium: "#FFD700", hard: "#E63946" }[current.q.difficulty];
     return (
-      <View style={[styles.container, styles.center]}>
+      <View style={[styles.container, styles.center, padBottom(styles.container, bottomInset)]}>
         <View style={styles.header}>
           <Text style={styles.roundLabel}>{current.name.toUpperCase()} · ROUND {round}</Text>
           <View style={[styles.diffBadge, { borderColor: color }]}>
@@ -288,7 +290,7 @@ export default function TimerPassScreen({ navigation }: Props) {
   // ── Hidden timer ──────────────────────────────────────────────────
   if (phase === "running") {
     return (
-      <View style={[styles.container, styles.center]}>
+      <View style={[styles.container, styles.center, padBottom(styles.container, bottomInset)]}>
         <Text style={styles.tapHint}>Tap when you think the timer matches your answer!</Text>
         <Animated.View style={{ transform: [{ scale: pulse }] }}>
           <TouchableOpacity style={styles.stopBtn} onPress={stop}>
@@ -305,7 +307,7 @@ export default function TimerPassScreen({ navigation }: Props) {
   if (phase === "stopped" && current) {
     const last = turnIdx + 1 >= order.length;
     return (
-      <View style={[styles.container, styles.center]}>
+      <View style={[styles.container, styles.center, padBottom(styles.container, bottomInset)]}>
         <Text style={{ fontSize: 64 }}>{current.stoppedAt === null ? "⏰" : "✋"}</Text>
         <Text style={styles.stoppedTitle}>{current.stoppedAt === null ? "Out of time!" : "Stopped!"}</Text>
         <Text style={styles.subHint}>Keep your time to yourself. All the results show at the end of the round.</Text>
@@ -321,7 +323,7 @@ export default function TimerPassScreen({ navigation }: Props) {
     const rows = rankTurns(turns);
     const winners = rows.filter((r) => r.place === 1 && r.stoppedAt !== null);
     return (
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <Text style={styles.roundTitle}>ROUND {round} RESULTS</Text>
         {winners.length > 0 ? (
           <View style={styles.winnerBox}>
@@ -376,7 +378,7 @@ export default function TimerPassScreen({ navigation }: Props) {
     .map(([name, pts]) => ({ id: name, name, rank: board.findIndex(([, p]) => p === pts) + 1, score: `${pts} pts` }))
     .filter((e) => e.rank <= 3);
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <EndPodium id={`timer-pass:${runId}:${board.map(([n, p]) => n + p).join(",")}`} subtitle="STOP THE TIMER · FINAL" entries={podium} />
       <Text style={styles.title}>🏁 Game over</Text>
       <Text style={styles.subtitle}>

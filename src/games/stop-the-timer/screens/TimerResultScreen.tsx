@@ -10,6 +10,7 @@ import {
 import { Group, TimerGameState } from "../../../shared/types";
 import { useTimerGame } from "../logic/useTimerGame";
 import { teamRanking, teamsStillPlaying } from "../logic/game";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -62,6 +63,7 @@ const joinNames = (names: string[]) =>
     : `${names.slice(0, -1).join(", ")} & ${names[names.length - 1]}`;
 
 export default function TimerResultScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { isHost, getRanking, handleNextRound, handleEndGame, loading } =
     useTimerGame(group, playerId);
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -112,7 +114,7 @@ export default function TimerResultScreen({ group, playerId }: Props) {
   );
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <Animated.View
         style={{
           opacity: fadeAnim,

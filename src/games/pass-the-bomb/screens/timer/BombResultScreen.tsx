@@ -15,6 +15,7 @@ import { RUNNER_UP_SCORE_BONUS } from "../../logic/timer/bombHelpers";
 import { FP_PER_POINT } from "../../data/betOdds";
 import { ACHIEVEMENTS, AchievementId, rewardText } from "../../data/achievements";
 import { EndPodium, type PodiumEntry } from "../../../../shared/components/WinnerPodium";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -22,6 +23,7 @@ type Props = {
 };
 
 export default function BombResultScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const isHost = group.hostId === playerId;
   const [fadeAnim] = useState(new Animated.Value(0));
@@ -66,7 +68,7 @@ export default function BombResultScreen({ group, playerId }: Props) {
   }));
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <EndPodium id={winner ? `${group.id}:bomb:${standings.map((p) => p.id).join(",")}` : null} subtitle="THAT OLD BOMB STORY · FINAL" entries={podium} />
       <Animated.View
         style={[

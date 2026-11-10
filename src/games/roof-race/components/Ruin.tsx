@@ -3,6 +3,7 @@
 // right), a scrolling body and a pinned footer for the big buttons.
 import type { ReactNode } from 'react';
 import { View, Text, ScrollView, StyleSheet } from 'react-native';
+import { padBottom, useBottomInset } from '../../../shared/hooks/useSafeBottom';
 import { RR } from '../theme';
 
 type Props = {
@@ -18,6 +19,9 @@ type Props = {
 export default function Ruin({ kicker, right, children, footer, paper, scroll = true, tint }: Props) {
     const bg = tint ?? (paper ? RR.parchment : RR.bg);
     const body = <View style={styles.body}>{children}</View>;
+    // Keep the last thing on the page clear of the phone's bottom bar
+    const bottomInset = useBottomInset();
+    const tail = footer ? 0 : bottomInset;
     return (
         <View style={[styles.screen, { backgroundColor: bg }]}>
             <View style={styles.head}>
@@ -27,13 +31,13 @@ export default function Ruin({ kicker, right, children, footer, paper, scroll = 
                 {right ?? null}
             </View>
             {scroll ? (
-                <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.scroll} keyboardShouldPersistTaps="handled">
+                <ScrollView style={{ flex: 1 }} contentContainerStyle={[styles.scroll, { paddingBottom: 24 + tail }]} keyboardShouldPersistTaps="handled">
                     {body}
                 </ScrollView>
             ) : (
-                <View style={{ flex: 1 }}>{body}</View>
+                <View style={{ flex: 1, paddingBottom: tail }}>{body}</View>
             )}
-            {footer ? <View style={[styles.footer, { backgroundColor: bg, borderColor: paper ? RR.parchmentLine : RR.line }]}>{footer}</View> : null}
+            {footer ? <View style={[styles.footer, { backgroundColor: bg, borderColor: paper ? RR.parchmentLine : RR.line }, padBottom(styles.footer, bottomInset)]}>{footer}</View> : null}
         </View>
     );
 }

@@ -1,5 +1,6 @@
 import { View, Text, TouchableOpacity, StyleSheet, Switch } from "react-native";
 import { ImposterSettings } from "../../../shared/types";
+import { WORD_SETS } from "../data/words";
 
 type Props = {
   settings: ImposterSettings;
@@ -23,6 +24,30 @@ export default function ImposterSettingsPanel({
   return (
     <View style={styles.container}>
       <Text style={styles.title}>⚙️ Game Settings</Text>
+
+      {/* Which words: local or worldwide */}
+      <Text style={styles.label}>Words</Text>
+      <Text style={styles.labelSub}>Pick what suits your group</Text>
+      <View style={styles.setRow}>
+        {WORD_SETS.map((s) => {
+          const on = (settings.wordSet ?? "india") === s.id;
+          return (
+            <TouchableOpacity
+              key={s.id}
+              style={[styles.setCard, on && styles.setCardOn]}
+              onPress={() => onChange({ ...settings, wordSet: s.id })}
+              accessibilityRole="radio"
+              accessibilityState={{ selected: on }}
+            >
+              <Text style={styles.setEmoji}>{s.emoji}</Text>
+              <Text style={[styles.setLabel, on && styles.setLabelOn]}>{s.label}</Text>
+              <Text style={styles.setBlurb}>{s.blurb}</Text>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      <View style={styles.divider} />
 
       <View style={styles.row}>
         <View style={styles.labelBox}>
@@ -120,6 +145,22 @@ const styles = StyleSheet.create({
     fontSize: 11,
     lineHeight: 16,
   },
+  setRow: { flexDirection: "row", gap: 10, marginTop: 10 },
+  setCard: {
+    flex: 1,
+    backgroundColor: "#0F3460",
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    alignItems: "center",
+    borderWidth: 1.5,
+    borderColor: "transparent",
+  },
+  setCardOn: { borderColor: "#E63946", backgroundColor: "#2A1A3A" },
+  setEmoji: { fontSize: 22, marginBottom: 2 },
+  setLabel: { color: "#BBB", fontSize: 13, fontWeight: "700", textAlign: "center" },
+  setLabelOn: { color: "#fff" },
+  setBlurb: { color: "#888", fontSize: 10, lineHeight: 14, textAlign: "center", marginTop: 2 },
   countBtns: {
     flexDirection: "row",
     gap: 8,

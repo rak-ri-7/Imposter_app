@@ -8,10 +8,12 @@ import { MIN_ROUNDS_FOR_POINTS, roundsPlayed, standings } from "../logic/engine"
 import { finishCot } from "../logic/game";
 import { CT, rupees, seatColor } from "../theme";
 import { EndPodium, podiumEntries } from "../../../shared/components/WinnerPodium";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: CotGameState; playerId: string };
 
 export default function CotOverScreen({ group, gs, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const isHost = group.hostId === playerId;
   const [busy, setBusy] = useState(false);
   const [revealed, setRevealed] = useState(false);
@@ -28,7 +30,7 @@ export default function CotOverScreen({ group, gs, playerId }: Props) {
 
   const podium = podiumEntries(rows, group.players, (r) => `${rupees(r.real)} real`);
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={[styles.content, padBottom(styles.content, bottomInset)]}>
       {/* after the fake-money count, so it doesn't spoil the reveal */}
       <EndPodium id={revealed ? `${group.id}:cot:${rows.map((r) => r.playerId + r.real).join(",")}:${played}` : null} subtitle="COURT OF THIEVES · VERDICT" entries={podium} />
       <Text style={styles.big}>{revealed ? "🏆" : "💸"}</Text>

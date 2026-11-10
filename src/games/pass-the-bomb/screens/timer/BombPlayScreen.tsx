@@ -26,6 +26,7 @@ import BombAuctionPanel from "./BombAuctionPanel";
 import PixelAvatar from "../../../../shared/avatars/PixelAvatar";
 import { avatarIdFor } from "../../../../shared/avatars/sprites";
 import { haptics } from "../../../../shared/haptics";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -33,6 +34,7 @@ type Props = {
 };
 
 export default function BombPlayScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const isHost = group.hostId === playerId;
   const isHolder = gameState.currentHolderId === playerId;
@@ -416,7 +418,7 @@ export default function BombPlayScreen({ group, playerId }: Props) {
   const boomerangGiver = lastPass?.to === playerId ? lastPass.from : undefined;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       {/* Slim icon row — Alley + host controls only, no reserved space when unused */}
       <View style={styles.iconRow}>
         <View style={{ flex: 1 }} />

@@ -9,6 +9,7 @@ import {
 import { Group, ImposterGameState } from "../../../shared/types";
 import { useImposterGame } from "../logic/useImposterGame";
 import { EndPodium, type PodiumEntry } from "../../../shared/components/WinnerPodium";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -16,6 +17,7 @@ type Props = {
 };
 
 export default function ResultScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { isHost, handleReturnToMenu } = useImposterGame(group, playerId);
   const [fadeAnim] = useState(new Animated.Value(0));
   const [scaleAnim] = useState(new Animated.Value(0.5));
@@ -108,7 +110,7 @@ export default function ResultScreen({ group, playerId }: Props) {
   };
   const podium: PodiumEntry[] = allCaught ? [{ ...crewSide, rank: 1 }, { ...impSide, rank: 2 }] : [{ ...impSide, rank: 1 }, { ...crewSide, rank: 2 }];
   return (
-    <View style={[styles.container, { backgroundColor: config.bg }]}>
+    <View style={[styles.container, { backgroundColor: config.bg }, padBottom(styles.container, bottomInset)]}>
       <EndPodium id={`${group.id}:imposter:${gameState.word}:${gameState.imposterIds.join(",")}:${gameState.eliminatedPlayers.join(",")}`} subtitle="ARE YOU THE IMPOSTER? · RESULT" entries={podium} doneLabel="See who it was →" />
       <Animated.View
         style={[

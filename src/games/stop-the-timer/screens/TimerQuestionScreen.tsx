@@ -6,6 +6,7 @@ import { useTimerGame } from "../logic/useTimerGame";
 import { useDistractions } from "../hooks/useDistractions";
 import DistractionWrapper from "../components/DistractionWrapper";
 import DistractionOverlay from "../components/DistractionOverlay";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -13,6 +14,7 @@ type Props = {
 };
 
 export default function TimerQuestionScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { countdown } = useTimerGame(group, playerId);
   const [scaleAnim] = useState(new Animated.Value(1));
   const gameState = group.gameState as TimerGameState;
@@ -51,7 +53,7 @@ export default function TimerQuestionScreen({ group, playerId }: Props) {
     q.length <= 20 ? 48 : q.length <= 45 ? 34 : q.length <= 80 ? 26 : 22;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <View style={styles.header}>
         <Text style={styles.roundLabel}>ROUND {gameState.roundNumber}</Text>
         <View style={[styles.diffBadge, { borderColor: difficultyColor }]}>

@@ -19,12 +19,14 @@ import {
 } from "../utils/localSession";
 import { display } from "../theme/fonts";
 import BackLink from "../components/BackLink";
+import { padBottom, useBottomInset } from "../hooks/useSafeBottom";
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, "QuickPlay">;
 };
 
 export default function QuickPlayMenuScreen({ navigation }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const [session, setSession] = useState<LocalSession | null>(null);
 
   const passThePhoneGames = games.filter((g) =>
@@ -82,7 +84,7 @@ export default function QuickPlayMenuScreen({ navigation }: Props) {
   const playerRanks = denseRanks(sortedPlayers.map((p) => p.score));
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <BackLink onPress={() => navigation.goBack()} />
 
       <Text style={styles.title}>⚡ Quick Play</Text>

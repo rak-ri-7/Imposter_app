@@ -9,6 +9,7 @@ import {
 import { Group, PassGameState, PassReceipt } from "../../../../shared/types";
 import { sideById, STORE } from "../../logic/pass/passGame";
 import { TICKETS } from "../../logic/pass/passPerks";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   sideId: string | null; // whose receipts to show; null = closed
@@ -28,6 +29,7 @@ const ITEM_LABEL: Record<PassReceipt["item"], string> = {
 // Every side's Kiosk purchases are public record. Nobody is told when
 // someone buys something — but anyone can come and look.
 export default function PassReceiptsSheet({ sideId, onClose, group }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gs = group.gameState as PassGameState;
   const side = sideById(gs, sideId);
   const receipts = [...(sideId ? (gs.receipts?.[sideId] ?? []) : [])].reverse();
@@ -56,7 +58,7 @@ export default function PassReceiptsSheet({ sideId, onClose, group }: Props) {
         activeOpacity={1}
         onPress={onClose}
       >
-        <TouchableOpacity style={styles.sheet} activeOpacity={1}>
+        <TouchableOpacity style={[styles.sheet, padBottom(styles.sheet, bottomInset)]} activeOpacity={1}>
           <Text style={styles.title}>🧾 {side?.name ?? "Receipts"}</Text>
           <Text style={styles.sub}>
             Everything bought at the {STORE.name} — public record

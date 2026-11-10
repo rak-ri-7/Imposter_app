@@ -31,6 +31,7 @@ import {
   SUPER_SHIELD_PRICE,
   SUPER_SHIELD_MAX_PER_GAME,
 } from "../../logic/timer/superShield";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -86,6 +87,7 @@ function PriceTag({
 }
 
 export default function BombAlleyScreen({ group, playerId, onClose }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gameState = group.gameState as BombGameState;
   const [buying, setBuying] = useState(false);
   const [showReceipts, setShowReceipts] = useState(false);
@@ -302,7 +304,7 @@ export default function BombAlleyScreen({ group, playerId, onClose }: Props) {
     }
   };
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       {/* the streetlamp */}
       <View pointerEvents="none" style={styles.lamp} />
 

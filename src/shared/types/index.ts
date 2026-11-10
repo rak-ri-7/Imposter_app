@@ -14,6 +14,8 @@ export type GameType = 'imposter' | 'stop-the-timer' | 'pass-the-bomb' | 'quiz-b
 export type ImposterSettings = {
     imposterCount: number;
     hintsEnabled: boolean;
+    /** Which words: India & Kerala (default) or Worldwide. */
+    wordSet?: 'india' | 'world';
 };
 
 export type GameStatus =

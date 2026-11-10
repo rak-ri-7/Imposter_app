@@ -12,6 +12,7 @@ import { useImposterGame } from "../logic/useImposterGame";
 import { imposterGuess } from "../logic/game";
 import PixelAvatar from "../../../shared/avatars/PixelAvatar";
 import { avatarIdFor } from "../../../shared/avatars/sprites";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = {
   group: Group;
@@ -19,6 +20,7 @@ type Props = {
 };
 
 export default function VoteScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const {
     isHost,
     isImposter,
@@ -70,7 +72,7 @@ export default function VoteScreen({ group, playerId }: Props) {
   const activePlayerCount = activePlayers.length;
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <Text style={styles.title}>🗳️ Vote</Text>
       <Text style={styles.subtitle}>
         Round {votingRound} of {gameState.settings.imposterCount} — there{" "}

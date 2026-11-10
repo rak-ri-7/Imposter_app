@@ -8,6 +8,7 @@ import { JUDGE_REWARD } from "../logic/engine";
 import { cotDecide, cotEndTurn } from "../logic/game";
 import { CT, seatColor } from "../theme";
 import { useServerNow } from "../../../shared/hooks/useServerNow";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: CotGameState; playerId: string };
 
@@ -18,6 +19,7 @@ const AS: Record<CotSpeaker["as"], { emoji: string; label: string; job: string }
 };
 
 export default function CotTrialScreen({ group, gs, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const now = useServerNow(250);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -53,7 +55,7 @@ export default function CotTrialScreen({ group, gs, playerId }: Props) {
   );
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={[styles.content, padBottom(styles.content, bottomInset)]}>
       <Text style={styles.kicker}>ROUND {gs.round} · THE COURT</Text>
       <Text style={styles.title}>⚖️ The trial of {accusedName}</Text>
       <View style={styles.cast}>

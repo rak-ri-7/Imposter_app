@@ -10,6 +10,7 @@ import {
 } from "react-native";
 import { Player } from "../types";
 import { display } from "../theme/fonts";
+import { padBottom, useBottomInset } from "../hooks/useSafeBottom";
 
 type Props = {
   visible: boolean;
@@ -26,6 +27,7 @@ export default function PlayerSelectModal({
   onConfirm,
   onCancel,
 }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -53,7 +55,7 @@ export default function PlayerSelectModal({
       onRequestClose={onCancel}
     >
       <View style={styles.overlay}>
-        <View style={styles.box}>
+        <View style={[styles.box, padBottom(styles.box, bottomInset)]}>
           <Text style={styles.title}>Select Players</Text>
           <Text style={styles.subtitle}>
             Choose who's playing this round ({selected.size} selected, need{" "}

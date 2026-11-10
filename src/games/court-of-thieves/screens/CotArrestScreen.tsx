@@ -9,10 +9,12 @@ import { HUNCH_REWARD, WRONG_ARREST_FINE } from "../logic/engine";
 import { cotPick } from "../logic/game";
 import { CT, rupees, seatColor } from "../theme";
 import { useServerNow } from "../../../shared/hooks/useServerNow";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: CotGameState; playerId: string };
 
 export default function CotArrestScreen({ group, gs, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const now = useServerNow(250);
   const [choice, setChoice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -35,7 +37,7 @@ export default function CotArrestScreen({ group, gs, playerId }: Props) {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={[styles.content, padBottom(styles.content, bottomInset)]}>
       <View style={styles.head}>
         <Text style={styles.title}>🚨 Who did it?</Text>
         <View style={styles.timer}>

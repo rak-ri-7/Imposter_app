@@ -8,10 +8,12 @@ import { shown, thiefOf } from "../logic/engine";
 import { cotNextRound } from "../logic/game";
 import { CT, rupees, seatColor } from "../theme";
 import { useServerNow } from "../../../shared/hooks/useServerNow";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: CotGameState; playerId: string };
 
 export default function CotRoundEndScreen({ group, gs, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const isHost = group.hostId === playerId;
   const [busy, setBusy] = useState(false);
   const clock = useServerNow(500);
@@ -41,7 +43,7 @@ export default function CotRoundEndScreen({ group, gs, playerId }: Props) {
           : { emoji: "🕊️", title: `${name(accused)} cleared`, body: `Right call: ${name(accused)} ${accused === playerId ? "were" : "was"} innocent. The Thief was ${thiefName}. ${lootLine}${dealLine}.` };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={[styles.content, padBottom(styles.content, bottomInset)]}>
       <Text style={styles.round}>
         Round {gs.round} of {gs.roundsTotal}
       </Text>

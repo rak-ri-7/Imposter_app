@@ -16,10 +16,12 @@ import {
 import { passGoldenTile, placeGoldenWager } from "../logic/game";
 import { RetroButton } from "../components";
 import { QB, bevel, digitText, displayText } from "../theme";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; playerId: string; ctx: QuizBoardCtx };
 
 export default function QuizGoldenWagerScreen({ group, playerId, ctx }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const { gs, isHost, nameOf } = ctx;
   const golden = gs?.current?.golden;
   const tile = gs && gs.current ? gs.tiles[gs.current.tileIndex] : undefined;
@@ -64,7 +66,7 @@ export default function QuizGoldenWagerScreen({ group, playerId, ctx }: Props) {
   const pass = () => run(() => passGoldenTile(group.id, playerId, getServerNow()));
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <Animated.View style={[styles.marquee, { opacity: glow }]}>
         <Text style={displayText(40, QB.ink, false)}>🌟 Golden Tile!</Text>
       </Animated.View>

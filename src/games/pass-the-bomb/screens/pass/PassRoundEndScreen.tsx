@@ -26,6 +26,7 @@ import { returnToMenu } from "../../../../shared/firebase/groups";
 import PassLuckySheet from "./PassLuckySheet";
 import { LUCKY, ticketsAllowed } from "../../logic/pass/passPerks";
 import { EndPodium, type PodiumEntry } from "../../../../shared/components/WinnerPodium";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; playerId: string };
 
@@ -37,6 +38,7 @@ let lastBoomKey: string | null = null;
 
 // Shown for both 'pass-exploded' (between rounds) and 'pass-result' (game over).
 export default function PassRoundEndScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const gs = group.gameState as PassGameState;
   const [busy, setBusy] = useState(false);
   const [storeOpen, setStoreOpen] = useState(false);
@@ -138,7 +140,7 @@ export default function PassRoundEndScreen({ group, playerId }: Props) {
   }, [boom?.round, boom?.sideId, isResult]);
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <EndPodium id={isResult ? `${group.id}:bomb-pass:${standings.join(",")}` : null} subtitle="THAT OLD BOMB STORY · FINAL" entries={podium} />
       <ScrollView contentContainerStyle={styles.scroll}>
         {isResult ? (

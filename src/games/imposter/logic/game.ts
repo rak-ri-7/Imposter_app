@@ -20,7 +20,7 @@ export const startGame = async (
   settings: ImposterSettings
 ): Promise<void> => {
   const groupRef = doc(db, 'groups', group.id);
-  const entry = pickRandomWordEntry([]);
+  const entry = pickRandomWordEntry([], settings.wordSet ?? 'india');
   const imposterIds = pickImposters(
     group.players.map((p) => p.id),
     settings.imposterCount
@@ -69,12 +69,13 @@ export const nextTurn = async (
 export const useHint = async (
   groupId: string,
   word: string,
-  category: string
+  category: string,
+  wordSet: 'india' | 'world' = 'india'
 ): Promise<string> => {
   const groupRef = doc(db, 'groups', groupId);
   // The game only stores the word and category, so the clue comes from the
   // word bank. Never pass the word itself in as the hint.
-  const hintText = getHint(findWordEntry(word) ?? { word, category });
+  const hintText = getHint(findWordEntry(word, wordSet) ?? { word, category });
   await updateDoc(groupRef, {
     'gameState.hintUsed': true,
     'gameState.currentHint': hintText,

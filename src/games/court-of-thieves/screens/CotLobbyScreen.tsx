@@ -6,6 +6,7 @@ import { DEAL_OPTIONS, DEFAULT_DEAL_MS, DEFAULT_ROUNDS, MAX_PARTNERS, MIN_PLAYER
 import { startCot } from "../logic/game";
 import { CT } from "../theme";
 import HowToPlay from "../../../shared/components/HowToPlay";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; playerId: string };
 
@@ -25,6 +26,7 @@ const RULES = [
 ];
 
 export default function CotLobbyScreen({ group, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const isHost = group.hostId === playerId;
   const [rounds, setRounds] = useState<number>(DEFAULT_ROUNDS);
   const [dealMs, setDealMs] = useState<number>(DEFAULT_DEAL_MS);
@@ -43,7 +45,7 @@ export default function CotLobbyScreen({ group, playerId }: Props) {
   };
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
+    <ScrollView style={styles.container} contentContainerStyle={[styles.content, padBottom(styles.content, bottomInset)]}>
       <Text style={styles.title}>⚖️ Court of Thieves</Text>
       <Text style={styles.sub}>{group.players.length} players · the heist, the deals, the court</Text>
       <HowToPlay game="court-of-thieves" details={RULES} theme={{ text: CT.text, muted: CT.textMuted, accent: CT.gold, sheet: CT.bg, panel: CT.panel, sheetText: CT.text, sheetMuted: CT.textMuted }} />

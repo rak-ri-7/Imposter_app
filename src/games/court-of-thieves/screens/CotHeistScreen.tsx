@@ -23,6 +23,7 @@ import { cotHeistAct } from "../logic/game";
 import Room, { type RoomLook } from "../components/Room";
 import { CT, rupees, seatColor } from "../theme";
 import { useServerNow } from "../../../shared/hooks/useServerNow";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: CotGameState; playerId: string };
 
@@ -67,6 +68,7 @@ export default function CotHeistScreen({ group, gs, playerId }: Props) {
   const outageAt = gs.outageAt ?? 0;
   const lightsAt = gs.lightsAt ?? 0;
   const nameOf = (id: string) => (id === playerId ? "You" : group.players.find((p) => p.id === id)?.name ?? "Someone");
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
 
   // ── Before the dark ──
   if (now < outageAt) {
@@ -94,7 +96,7 @@ export default function CotHeistScreen({ group, gs, playerId }: Props) {
   if (early) {
     const secs = Math.max(1, Math.ceil((lightsAt - now) / 1000));
     return (
-      <View style={[styles.fill, { backgroundColor: "#211C3D" }]}>
+      <View style={[styles.fill, { backgroundColor: "#211C3D" }, padBottom(styles.fill, bottomInset)]}>
         <View style={styles.witnessBar}>
           <View style={styles.witnessPill}>
             <Text style={styles.witnessPillText}>👀 Your lights are back early!</Text>
@@ -122,7 +124,7 @@ export default function CotHeistScreen({ group, gs, playerId }: Props) {
   const look: RoomLook = flashing ? "flash" : "dark";
   const bright = flashing && now - (flashAt ?? 0) < 120;
   return (
-    <View style={[styles.fill, { backgroundColor: bright ? "#D9DEFF" : CT.bgDeep }]}>
+    <View style={[styles.fill, { backgroundColor: bright ? "#D9DEFF" : CT.bgDeep }, padBottom(styles.fill, bottomInset)]}>
       <View style={styles.darkTop}>
         <Text style={styles.darkTopText}>🔌 No power</Text>
       </View>
@@ -208,9 +210,10 @@ function ThiefView({
   } else if (atBag) status = `${nameOf(atBag)}'s bag`;
   else status = "Tap a bag to sneak over";
   const progress = view.move?.p ?? view.work?.p ?? null;
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
 
   return (
-    <View style={[styles.fill, { backgroundColor: CT.nv }]}>
+    <View style={[styles.fill, { backgroundColor: CT.nv }, padBottom(styles.fill, bottomInset)]}>
       {warning ? (
         <View style={[styles.warnBar, { opacity: flicker ? 0.25 : 1 }]}>
           <Text style={styles.warnText}>💡 The power is flickering back! {warnSecs}</Text>

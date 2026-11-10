@@ -5,6 +5,7 @@ import { Modal, View, Text, TouchableOpacity, ScrollView, StyleSheet } from "rea
 import { ACHIEVEMENTS, ALL_ACHIEVEMENTS, rewardText } from "../../data/achievements";
 import { Group } from "../../../../shared/types";
 import { ALL_QUIRK_VARIANTS, QUIRK_INFO } from "../../logic/timer/bombQuirks";
+import { padBottom, useBottomInset } from "../../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; visible: boolean; onClose: () => void };
 
@@ -20,10 +21,11 @@ export default function BombCollectionModal({ group, visible, onClose }: Props) 
   const [tab, setTab] = useState<"bombs" | "ach">("bombs");
   const achFound = group.achievementCollection ?? {};
   const achCount = ALL_ACHIEVEMENTS.filter((a) => achFound[a]).length;
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={styles.container}>
+      <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
         <Text style={styles.title}>📖 Bomb Collection</Text>
         <View style={styles.tabs}>
           <TouchableOpacity

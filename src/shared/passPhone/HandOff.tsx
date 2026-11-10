@@ -6,6 +6,7 @@
 import { useEffect, useRef } from "react";
 import { Animated, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { display } from "../theme/fonts";
+import { padBottom, useBottomInset } from "../hooks/useSafeBottom";
 
 export type HandOffTheme = { bg: string; text: string; muted: string; accent: string; accentText: string };
 
@@ -29,6 +30,7 @@ type Props = {
 };
 
 export default function HandOff({ name, emoji = "📱", hint, button = "I'm ready →", step, onReady, onQuit, theme = DARK_HANDOFF }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   // A short fade so the last player's screen never flashes into the next.
   const fade = useRef(new Animated.Value(0)).current;
   useEffect(() => {
@@ -37,7 +39,7 @@ export default function HandOff({ name, emoji = "📱", hint, button = "I'm read
   }, [name]);
 
   return (
-    <View style={[styles.container, { backgroundColor: theme.bg }]}>
+    <View style={[styles.container, { backgroundColor: theme.bg }, padBottom(styles.container, bottomInset)]}>
       <Animated.View style={[styles.inner, { opacity: fade }]}>
         {step ? <Text style={[styles.step, { color: theme.muted }]}>{step}</Text> : null}
         <Text style={styles.emoji}>{emoji}</Text>

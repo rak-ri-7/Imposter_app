@@ -28,6 +28,7 @@ import PileBar, { Rect } from "../components/PileBar";
 import FlyingCards, { Flight } from "../components/FlyingCards";
 import { FoilFill } from "../components/Foil";
 import { CC, SERIF } from "../theme";
+import { padBottom, useBottomInset } from "../../../shared/hooks/useSafeBottom";
 
 type Props = { group: Group; gs: ClashGameState; playerId: string };
 
@@ -171,6 +172,7 @@ function ClashSlot({
 }
 
 export default function ClashRevealScreen({ group, gs, playerId }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
   const last = gs.last!;
   const stage = last.stage ?? "clash";
   const isDefence = stage === "defence";
@@ -289,7 +291,7 @@ export default function ClashRevealScreen({ group, gs, playerId }: Props) {
   const spinName = last.tied ? nameOf(last.tied[Math.floor(elapsed / 110) % last.tied.length]) : "";
 
   return (
-    <View style={styles.container}>
+    <View style={[styles.container, padBottom(styles.container, bottomInset)]}>
       <ScrollView contentContainerStyle={styles.content}>
         <PileBar
           group={group}

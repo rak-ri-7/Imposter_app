@@ -5,6 +5,7 @@
 import { Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View, useWindowDimensions } from "react-native";
 import PixelAvatar from "./PixelAvatar";
 import { AVATARS } from "./sprites";
+import { padBottom, useBottomInset } from "../hooks/useSafeBottom";
 
 type Props = {
     visible: boolean;
@@ -17,6 +18,7 @@ type Props = {
 const COLS = 4;
 
 export default function AvatarPicker({ visible, selected, taken = {}, onPick, onClose }: Props) {
+  const bottomInset = useBottomInset(); // clear of the phone's bottom bar
     const { width } = useWindowDimensions();
     const inner = Math.min(width, 520) - 40 - 2; // sheet padding and border
     const cell = Math.floor((inner - (COLS - 1) * 12) / COLS) - 1;
@@ -24,7 +26,7 @@ export default function AvatarPicker({ visible, selected, taken = {}, onPick, on
         <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
             <View style={styles.overlay}>
                 <Pressable style={{ flex: 1 }} onPress={onClose} />
-                <View style={styles.sheet}>
+                <View style={[styles.sheet, padBottom(styles.sheet, bottomInset)]}>
                     <View style={styles.handle} />
                     <View style={styles.header}>
                         <Text style={styles.title}>Pick your avatar</Text>
